@@ -401,7 +401,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 		LONG delay = 0;
 		SystemParametersInfo(SPI_GETMENUSHOWDELAY, 0, &delay, 0);
 		using std::max;
-		delay = max(delay, 750);
+		delay = max(delay, IsDebuggerPresent() ? 0 : 750);
 		return delay;
 	}
 

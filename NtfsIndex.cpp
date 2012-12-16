@@ -6,6 +6,7 @@
 #include <map>
 
 #include <boost/range/algorithm/equal_range.hpp>
+#include <boost/range/algorithm/stable_sort.hpp>
 #include <boost/range/iterator_range.hpp>
 #include <boost/range/sub_range.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
@@ -55,7 +56,7 @@ public:
 		}
 		typedef std::vector<CombinedRecord> CombinedRecords;
 		boost::sub_range<CombinedRecords const> const equal_range =
-			boost::equal_range(this->index, make_pair(segmentNumber, CombinedRecord::second_type()), first_less());
+			boost::equal_range(this->index, std::make_pair(segmentNumber, CombinedRecord::second_type()), first_less());
 		for (CombinedRecords::const_iterator i = equal_range.begin(); i != equal_range.end(); ++i)
 		{
 			FileNameAttribute const &fileNameAttr = i->second.second.first;
@@ -69,24 +70,34 @@ public:
 		: volumePath(volume.GetPathOfVolume()), _event(event)
 	{
 		unsigned long const clusterSize = volume.GetClusterSize();
-		using std::make_pair;
 		boost::shared_ptr<NtfsReader> reader(NtfsReader::create(volume, pCached ? *pCached : true));
 
 		bool prevBackground = pBackground ? !*pBackground : false;
 		size_t counter = 0;
 		std::basic_string<TCHAR> localNames;
 
-		std::vector<std::pair<SegmentNumber, StandardInformationAttribute> > standardInfoAttrs;
-		std::vector<std::pair<SegmentNumber, FileNameAttribute> > fileNameAttrs;
-		std::vector<std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, DataAttribute> > > dataAttrs;
+		size_t const nFileRecords = reader->size();
+		unsigned long const denom = (std::numeric_limits<unsigned long>::max)();
+		std::pair<size_t, size_t> progress(0, nFileRecords + 5);
+
+		typedef std::vector<std::pair<SegmentNumber, StandardInformationAttribute> > StandardInfoAttrs;
+		typedef std::vector<std::pair<SegmentNumber, FileNameAttribute> > FileNameAttrs;
+		typedef std::vector<std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, DataAttribute> > > DataAttrs;
+
+		typedef StandardInfoAttrs::const_iterator StandardInfoIt;
+		typedef FileNameAttrs::const_iterator FileNameIt;
+		typedef DataAttrs::const_iterator DataIt;
+
+		StandardInfoAttrs standardInfoAttrs;
+		FileNameAttrs fileNameAttrs;
+		DataAttrs dataAttrs;
 		{
-			std::vector<std::pair<SegmentNumber, StandardInformationAttribute> > standardInfoAttrsDerived;
-			std::vector<std::pair<SegmentNumber, FileNameAttribute> > fileNameAttrsDerived;
-			std::vector<std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, DataAttribute> > > dataAttrsDerived;
+			StandardInfoAttrs standardInfoAttrsDerived;
+			FileNameAttrs fileNameAttrsDerived;
+			DataAttrs dataAttrsDerived;
 
 			typedef std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, std::basic_string<TCHAR> > > AttributeIdentifier;
 			std::map<AttributeIdentifier, long long> uncountedBytesInHigherVcns;
-			unsigned long const denom = (std::numeric_limits<unsigned long>::max)();
 
 			if (pBackground != NULL && prevBackground != *pBackground)
 			{
@@ -94,19 +105,19 @@ public:
 				SetThreadPriority(GetCurrentThread(), *pBackground ? 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/ : 0x00020000 /*THREAD_MODE_BACKGROUND_END*/);
 			}
 
-			size_t const nFileRecords = reader->size();
-			for (size_t i = 0; i < nFileRecords; i = reader->find_next(i))
+			for (size_t segmentNumber = 0; segmentNumber < nFileRecords; segmentNumber = reader->find_next(segmentNumber))
 			{
 				if (counter++ % 256 == 0) { this->_event.NtWaitForSingleObject(); }
 
+				progress.first = segmentNumber;
 				if (pCached) { reader->set_cached(*pCached); }
-				NTFS::FILE_RECORD_SEGMENT_HEADER const *pRecord = static_cast<NTFS::FILE_RECORD_SEGMENT_HEADER const *>((*reader)[i]);
+				NTFS::FILE_RECORD_SEGMENT_HEADER const *pRecord = static_cast<NTFS::FILE_RECORD_SEGMENT_HEADER const *>((*reader)[segmentNumber]);
 				if (pRecord != NULL && (pRecord->Flags & 1) != 0)
 				{
 					NTFS::FILE_RECORD_SEGMENT_HEADER const &record = *pRecord;
+					assert(record.GetSegmentNumber() == segmentNumber);
 					bool const isBase = !record.BaseFileRecordSegment;
-					SegmentNumber const baseSegment = static_cast<SegmentNumber>(isBase ? record.GetSegmentNumber() : record.BaseFileRecordSegment);
-					std::pair<size_t, size_t> const progress(static_cast<size_t>(record.GetSegmentNumber()), nFileRecords + 4);
+					SegmentNumber const baseSegment = static_cast<SegmentNumber>(isBase ? segmentNumber : record.BaseFileRecordSegment);
 					for (NTFS::ATTRIBUTE_RECORD_HEADER const *ah = record.TryGetAttributeHeader(); ah != NULL; ah = ah->TryGetNextAttributeHeader())
 					{{
 						NTFS::ATTRIBUTE_RECORD_HEADER const &ah(*ah);
@@ -138,13 +149,13 @@ public:
 							if (ah.Type == NTFS::AttributeStandardInformation)
 							{
 								NTFS::STANDARD_INFORMATION const &a = *static_cast<NTFS::STANDARD_INFORMATION const *>(ah.Resident.GetValue());
-								(isBase ? standardInfoAttrs : standardInfoAttrsDerived).push_back(make_pair(
+								(isBase ? standardInfoAttrs : standardInfoAttrsDerived).push_back(std::make_pair(
 									baseSegment,
-									make_pair(
-										make_pair(
+									std::make_pair(
+										std::make_pair(
 											winnt::NtSystem::RtlTimeToSecondsSince1980(a.CreationTime),
 											winnt::NtSystem::RtlTimeToSecondsSince1980(a.LastModificationTime)),
-										make_pair(
+										std::make_pair(
 											winnt::NtSystem::RtlTimeToSecondsSince1980(a.LastAccessTime),
 											a.FileAttributes))));
 							}
@@ -158,10 +169,10 @@ public:
 										/* Old MSVCRT doesn't do this! */
 										localNames.reserve(localNames.size() * 2);
 									}
-									(isBase ? fileNameAttrs : fileNameAttrsDerived).push_back(make_pair(
+									(isBase ? fileNameAttrs : fileNameAttrsDerived).push_back(std::make_pair(
 										baseSegment,
-										make_pair(
-											make_pair(
+										std::make_pair(
+											std::make_pair(
 												static_cast<NameOffset>(localNames.size()),
 												static_cast<NameLength>(a.FileNameLength)),
 											static_cast<SegmentNumber>(a.ParentDirectory & 0x0000FFFFFFFFFFFF))));
@@ -191,66 +202,63 @@ public:
 										localNames.append(NTFS::GetAttributeName(ah.Type));
 									}
 								}
-								(isBase ? dataAttrs : dataAttrsDerived).push_back(make_pair(
+								(isBase ? dataAttrs : dataAttrsDerived).push_back(std::make_pair(
 									baseSegment,
-									make_pair(
+									std::make_pair(
 										ah.Type,
-										make_pair(
-											make_pair(
+										std::make_pair(
+											std::make_pair(
 												static_cast<NameOffset>(cchNameOld),
 												static_cast<NameLength>(localNames.size() - cchNameOld)),
-											make_pair(
+											std::make_pair(
 												ah.IsNonResident ? ah.NonResident.DataSize : ah.Resident.ValueLength,
 												sizeOnDisk)))));
 							}
 						}
 					}}
-
-					if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first) / progress.second)) == static_cast<long>(denom))
-					{
-						return;
-					}
+				}
+				if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first) / progress.second)) == static_cast<long>(denom))
+				{
+					return;
 				}
 			}
 
-			std::pair<size_t, size_t> const progress(nFileRecords, nFileRecords + 3);
-
-			std::stable_sort(standardInfoAttrsDerived.begin(), standardInfoAttrsDerived.end(), first_less());
+			boost::stable_sort(standardInfoAttrsDerived, first_less());
 			if (size_t const n = standardInfoAttrs.size())
 			{
 				standardInfoAttrs.insert(standardInfoAttrs.end(), standardInfoAttrsDerived.begin(), standardInfoAttrsDerived.end());
 				std::inplace_merge(standardInfoAttrs.begin(), standardInfoAttrs.begin() + static_cast<ptrdiff_t>(n), standardInfoAttrs.end(), first_less());
-				if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 1) / progress.second)) == static_cast<long>(denom))
-				{
-					return;
-				}
+			}
+			if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 1) / progress.second)) == static_cast<long>(denom))
+			{
+				return;
 			}
 
-			std::stable_sort(fileNameAttrsDerived.begin(), fileNameAttrsDerived.end(), first_less());
+			boost::stable_sort(fileNameAttrsDerived, first_less());
 			if (size_t const n = fileNameAttrs.size())
 			{
 				fileNameAttrs.insert(fileNameAttrs.end(), fileNameAttrsDerived.begin(), fileNameAttrsDerived.end());
 				std::inplace_merge(fileNameAttrs.begin(), fileNameAttrs.begin() + static_cast<ptrdiff_t>(n), fileNameAttrs.end(), first_less());
-				if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 2) / progress.second)) == static_cast<long>(denom))
-				{
-					return;
-				}
+			}
+			if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 2) / progress.second)) == static_cast<long>(denom))
+			{
+				return;
 			}
 
-			std::stable_sort(dataAttrsDerived.begin(), dataAttrsDerived.end(), first_less());
+			boost::stable_sort(dataAttrsDerived, first_less());
 			if (size_t const n = dataAttrs.size())
 			{
 				dataAttrs.insert(dataAttrs.end(), dataAttrsDerived.begin(), dataAttrsDerived.end());
 				std::inplace_merge(dataAttrs.begin(), dataAttrs.begin() + static_cast<ptrdiff_t>(n), dataAttrs.end(), first_less());
-				if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 3) / progress.second)) == static_cast<long>(denom))
-				{
-					return;
-				}
+			}
+			if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 3) / progress.second)) == static_cast<long>(denom))
+			{
+				return;
 			}
 
 			for (std::map<AttributeIdentifier, long long>::const_iterator i = uncountedBytesInHigherVcns.begin(); i != uncountedBytesInHigherVcns.end(); ++i)
 			{
-				for (boost::sub_range<std::vector<std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, DataAttribute> > > > range =
+				for (boost::sub_range<DataAttrs> range =
 					boost::equal_range(dataAttrs, std::make_pair(i->first.first, std::pair<NTFS::AttributeTypeCode, DataAttribute>()), first_less());
 					!range.empty();
 					range.pop_front())
@@ -267,13 +275,14 @@ public:
 					}
 				}
 			}
+			if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 4) / progress.second)) == static_cast<long>(denom))
+			{
+				return;
+			}
 		}
 		{
 			TCHAR const *const localNames(localNames.data());
 
-			typedef std::vector<std::pair<SegmentNumber, StandardInformationAttribute> >::const_iterator StandardInfoIt;
-			typedef std::vector<std::pair<SegmentNumber, FileNameAttribute> >::const_iterator FileNameIt;
-			typedef std::vector<std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, DataAttribute> > >::const_iterator DataIt;
 			FileNameIt itFileNameAttr = fileNameAttrs.begin();
 			FileNameIt const itFileNameAttrEnd = fileNameAttrs.end();
 			DataIt itDataAttr = dataAttrs.begin();
@@ -307,13 +316,13 @@ public:
 							this->names.append(1, _T(':'));
 							this->names.append(&localNames[dataAttr.first.first], dataAttr.first.second);
 						}
-						this->index.push_back(make_pair(
+						this->index.push_back(std::make_pair(
 							segmentNumber,
-							make_pair(
+							std::make_pair(
 								standardInfoAttr,
-								make_pair(
-									make_pair(
-										make_pair(
+								std::make_pair(
+									std::make_pair(
+										std::make_pair(
 											static_cast<NameOffset>(cchNames),
 											static_cast<NameLength>(this->names.size() - cchNames)),
 										fileNameAttr.second),
@@ -321,6 +330,10 @@ public:
 					}
 				}
 			}
+		}
+		if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(progress.first + 5) / progress.second)) == static_cast<long>(denom))
+		{
+			return;
 		}
 	}
 

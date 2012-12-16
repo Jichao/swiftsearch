@@ -198,7 +198,7 @@
 			ConfigurationType="1"
 			UseOfATL="1"
 			CharacterSet="1"
-			WholeProgramOptimization="1"
+			WholeProgramOptimization="0"
 			>
 			<Tool
 				Name="VCPreBuildEventTool"
@@ -226,6 +226,7 @@
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;NDEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
 				UsePrecompiledHeader="2"
 				WarningLevel="4"
+				DebugInformationFormat="3"
 				CompileAs="0"
 				DisableSpecificWarnings="4820"
 				ForcedIncludeFiles=""
@@ -246,6 +247,7 @@
 				AdditionalDependencies="&quot;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib&quot;"
 				AdditionalLibraryDirectories=""
 				UACExecutionLevel="2"
+				GenerateDebugInformation="true"
 				RandomizedBaseAddress="0"
 				FixedBaseAddress="2"
 				DataExecutionPrevention="0"
@@ -282,7 +284,7 @@
 			ConfigurationType="1"
 			UseOfATL="1"
 			CharacterSet="1"
-			WholeProgramOptimization="1"
+			WholeProgramOptimization="0"
 			>
 			<Tool
 				Name="VCPreBuildEventTool"
@@ -312,6 +314,7 @@
 				OpenMP="true"
 				UsePrecompiledHeader="2"
 				WarningLevel="4"
+				DebugInformationFormat="3"
 				CompileAs="0"
 				DisableSpecificWarnings="4820"
 				ForcedIncludeFiles=""
@@ -333,6 +336,7 @@
 				AdditionalLibraryDirectories=""
 				UACExecutionLevel="2"
 				DelayLoadDLLs=""
+				GenerateDebugInformation="true"
 				RandomizedBaseAddress="0"
 				FixedBaseAddress="2"
 				DataExecutionPrevention="0"

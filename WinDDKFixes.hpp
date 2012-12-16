@@ -268,7 +268,7 @@ using std::codecvt;
 #pragma pop_macro("min")
 
 #pragma push_macro("_set_se_translator")
-_se_translator_function __cdecl __set_se_translator(_se_translator_function f)
+extern "C" __inline _se_translator_function __cdecl __set_se_translator(_se_translator_function f)
 {
 	_se_translator_function (__cdecl *p_set_se_translator)(_se_translator_function f) = &_set_se_translator;
 	return p_set_se_translator(f);
