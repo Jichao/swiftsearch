@@ -1314,8 +1314,9 @@ private:
 						CProgressDialog::WaitWithMessageLoop(NULL, CProgressDialog::UPDATE_INTERVAL);
 						if (dlg.ShouldUpdate())
 						{
-							std::basic_string<TCHAR> const text = tformat(_T("Reading file table... %5.1f%% done"), 100 * static_cast<double>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)());
-							dlg.SetProgressText(boost::make_iterator_range(text.data(), text.data() + text.size()));
+							TCHAR text[256];
+							_stprintf(text, _T("Reading file table... %3u%% done"), static_cast<unsigned long>(100 * static_cast<unsigned long long>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)()));
+							dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
 							dlg.SetProgress(pThread->progress(), (std::numeric_limits<unsigned long>::max)());
 						}
 					}
@@ -1386,6 +1387,11 @@ private:
 		return this->DoModal(reinterpret_cast<HWND>(hWndParent));
 	}
 
+	void OnHelpAbout(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		this->MessageBox(_T("© Mehrdad Niknami"), _T("About"), MB_ICONINFORMATION);
+	}
+
 	void OnFileFitColumns(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
 	{
 		WTL::CListViewCtrl &wndListView = this->lvFiles;
@@ -1419,6 +1425,7 @@ private:
 		MSG_WM_CLOSE(OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)
+		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)
 		COMMAND_HANDLER_EX(IDOK, BN_CLICKED, OnSearch)
 		COMMAND_HANDLER_EX(IDC_COMBODRIVE, CBN_SELCHANGE, OnSearchParamsChange)
 		COMMAND_HANDLER_EX(IDC_COMBODRIVE, CBN_EDITCHANGE, OnSearchParamsChange)

@@ -125,6 +125,10 @@ BEGIN
         MENUITEM "Fit &Columns to Window",      ID_FILE_FITCOLUMNS
         MENUITEM "E&xit",                       ID_FILE_EXIT
     END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About",                      ID_HELP_ABOUT
+    END
 END
 
 #endif    // English (U.S.) resources
