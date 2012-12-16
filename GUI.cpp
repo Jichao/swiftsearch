@@ -94,18 +94,18 @@ struct DataRow
 	size_t i;
 	DataRow(NtfsIndex const *pIndex = NULL, size_t const i = static_cast<size_t>(-1)) : pIndex(pIndex), i(i) { }
 	NtfsIndex::CombinedRecord const &record() const { return this->pIndex->at(this->i); }
-	std::basic_string<TCHAR> name() const
+	std::basic_string<TCHAR> &name(std::basic_string<TCHAR> &s) const
 	{
-		boost::iterator_range<TCHAR const *> const name = this->pIndex->get_name(this->record().second.second.first.first);
-		return std::basic_string<TCHAR>(name.begin(), name.end());
+		this->pIndex->get_name_by_index(this->i, s);
+		return s;
 	}
-	unsigned long parent() const { return this->record().second.second.first.second; }
+	unsigned long parent() const { return this->record().second.second.second.first; }
 	long long creationTime() const { return RtlSecondsSince1980ToTime(this->record().second.first.first.first); }
 	long long modificationTime() const { return RtlSecondsSince1980ToTime(this->record().second.first.first.second); }
 	long long accessTime() const { return RtlSecondsSince1980ToTime(this->record().second.first.second.first); }
 	unsigned long attributes() const { return this->record().second.first.second.second; }
-	long long size() const { return this->record().second.second.second.first; }
-	long long sizeOnDisk() const { return this->record().second.second.second.second; }
+	long long size() const { return this->record().second.second.second.second.first; }
+	long long sizeOnDisk() const { return this->record().second.second.second.second.second; }
 };
 
 struct Wow64Disable
@@ -954,16 +954,19 @@ private:
 		path.erase(path.begin(), path.end());
 		try
 		{
-			for (;;)
+			while (segmentNumber != 5)
 			{
 				size_t const cchPrev = path.size();
-				unsigned long const parentSegmentNumber = index.get_name(segmentNumber, path);
+				segmentNumber = index.get_name(segmentNumber, path);
 				if (path.size() > cchPrev)
 				{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
-				if (parentSegmentNumber == segmentNumber)
-				{ break; }
-				segmentNumber = parentSegmentNumber;
 				path.append(1, _T('\\'));
+			}
+			{
+				size_t const cchPrev = path.size();
+				path += index.volumePath();
+				if (path.size() > cchPrev)
+				{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
 			}
 		}
 		catch (std::domain_error const &ex)
@@ -984,13 +987,13 @@ private:
 
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0 && (pLV->item.mask & LVIF_TEXT) != 0)
 		{
-			std::basic_string<TCHAR> path;
+			std::basic_string<TCHAR> name, path;
 			switch (pLV->item.iSubItem)
 			{
 			case COLUMN_INDEX_NAME:
-				_tcsncpy(pLV->item.pszText, row.name().c_str(), pLV->item.cchTextMax);
+				_tcsncpy(pLV->item.pszText, row.name(name).c_str(), pLV->item.cchTextMax);
 				{
-					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + row.name(), pLV->item.iItem, row.attributes(), true);
+					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + row.name(name), pLV->item.iItem, row.attributes(), true);
 					if (iImage >= 0) { pLV->item.iImage = iImage; }
 				}
 				break;
@@ -1095,6 +1098,24 @@ private:
 	}
 
 	template<class StrCmp>
+	class NameComparator
+	{
+		std::basic_string<TCHAR> name1, name2;
+		StrCmp cmp;
+	public:
+		NameComparator(StrCmp const &cmp) : cmp(cmp) { }
+		bool operator()(DataRow const &a, DataRow const &b)
+		{
+			name1.erase(name1.begin(), name1.end());
+			name2.erase(name2.begin(), name2.end());
+			return this->cmp(a.name(name1), b.name(name2));
+		}
+	};
+
+	template<class StrCmp>
+	NameComparator<StrCmp> name_comparator(StrCmp const &cmp) { return NameComparator<StrCmp>(cmp); }
+
+	template<class StrCmp>
 	class PathComparator
 	{
 		std::basic_string<TCHAR> path1, path2;
@@ -1106,10 +1127,7 @@ private:
 	};
 
 	template<class StrCmp>
-	PathComparator<StrCmp> path_comparator(StrCmp const &cmp)
-	{
-		return PathComparator<StrCmp>(cmp);
-	}
+	PathComparator<StrCmp> path_comparator(StrCmp const &cmp) { return PathComparator<StrCmp>(cmp); }
 
 	LRESULT OnFilesListColumnClick(LPNMHDR pnmh)
 	{
@@ -1129,7 +1147,7 @@ private:
 				// TODO: Compare paths case-insensitively
 				switch (pLV->iSubItem)
 				{
-				case COLUMN_INDEX_NAME: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::name, _1), iless(loc)))); break;
+				case COLUMN_INDEX_NAME: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(name_comparator(iless(loc)))); break;
 				case COLUMN_INDEX_PATH: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(path_comparator(iless(loc)))); break;
 				case COLUMN_INDEX_SIZE: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::size, _1)))); break;
 				case COLUMN_INDEX_SIZE_ON_DISK: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::sizeOnDisk, _1)))); break;
@@ -1334,13 +1352,14 @@ private:
 						{
 							if (dlg.HasUserCancelled())
 							{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
-							boost::iterator_range<TCHAR const *> const name = index->get_name(index->at(i).second.second.first.first);
+							tempName.erase(tempName.begin(), tempName.end());
+							index->get_name_by_index(i, tempName);
 							if (dlg.ShouldUpdate())
 							{
 								dlg.SetProgress(i, index->size());
-								dlg.SetProgressText(name);
+								dlg.SetProgressText(boost::make_iterator_range(tempName.data(), tempName.data() + tempName.size()));
 							}
-							if (wildcard(pattern.begin(), pattern.end(), name.begin(), name.end(), tchar_ci_traits()))
+							if (wildcard(pattern.begin(), pattern.end(), tempName.begin(), tempName.end(), tchar_ci_traits()))
 							{
 								this->rows.push_back(DataRow(index, i));
 							}
