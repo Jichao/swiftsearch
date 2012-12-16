@@ -272,7 +272,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
-				CommandLine="Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(OutDir)\..\x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1"
+				CommandLine="Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1"
 			/>
 		</Configuration>
 		<Configuration
@@ -445,7 +445,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
-				CommandLine="Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(OutDir)\..\x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1"
+				CommandLine="Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1"
 			/>
 		</Configuration>
 		<Configuration
