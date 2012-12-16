@@ -428,7 +428,7 @@ public:
 		}
 	}
 
-	bool ShouldUpdate()
+	bool ShouldUpdate() const
 	{
 		unsigned long const tickCount = GetTickCount();
 		return tickCount - this->lastUpdateTime >= UPDATE_INTERVAL;
@@ -993,7 +993,7 @@ private:
 			case COLUMN_INDEX_NAME:
 				_tcsncpy(pLV->item.pszText, row.name(name).c_str(), pLV->item.cchTextMax);
 				{
-					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + row.name(name), pLV->item.iItem, row.attributes(), true);
+					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + name, pLV->item.iItem, row.attributes(), true);
 					if (iImage >= 0) { pLV->item.iImage = iImage; }
 				}
 				break;
