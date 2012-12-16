@@ -398,11 +398,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 
 	DWORD GetMinDelay() const
 	{
-		LONG delay = 0;
-		SystemParametersInfo(SPI_GETMENUSHOWDELAY, 0, &delay, 0);
-		using std::max;
-		delay = max(delay, IsDebuggerPresent() ? 0 : 750);
-		return delay;
+		return IsDebuggerPresent() ? 0 : 100;
 	}
 
 public:
@@ -1258,15 +1254,35 @@ private:
 
 			class SetUncached
 			{
-				bool prev;
-				bool volatile *pCached;
+				bool prevCached, prevBackground;
+				NtfsIndexThread *pThread;
 				SetUncached(SetUncached const &) { throw std::logic_error(""); }
 				SetUncached &operator =(SetUncached const &) { throw std::logic_error(""); }
 			public:
-				SetUncached(bool volatile *pCached = NULL)
-					: pCached(pCached), prev(pCached ? *pCached : false) { if (pCached) { *pCached = false; } }
-				~SetUncached() { if (pCached) { *pCached = prev; } }
-				void swap(SetUncached &other) { using std::swap; swap(this->prev, other.prev); swap(this->pCached, other.pCached); }
+				SetUncached(NtfsIndexThread *pThread = NULL)
+					: pThread(pThread), prevCached(pThread ? pThread->cached() : false), prevBackground(pThread ? pThread->background() : false)
+				{
+					if (pThread)
+					{
+						pThread->cached() = false;
+						pThread->background() = false;
+					}
+				}
+				~SetUncached()
+				{
+					if (pThread)
+					{
+						pThread->cached() = prevCached;
+						pThread->background() = prevBackground;
+					}
+				}
+				void swap(SetUncached &other)
+				{
+					using std::swap;
+					swap(this->pThread, other.pThread);
+					swap(this->prevCached, other.prevCached);
+					swap(this->prevBackground, other.prevBackground);
+				}
 			};
 			class SetBackground
 			{
@@ -1274,23 +1290,8 @@ private:
 				SetBackground(SetBackground const &) { throw std::logic_error(""); }
 				SetBackground &operator =(SetBackground const &) { throw std::logic_error(""); }
 			public:
-				SetBackground(NtfsIndexThread *pThread = NULL)
-					: pThread(pThread)
-				{
-					if (pThread)
-					{
-						ResetEvent(reinterpret_cast<HANDLE>(pThread->event()));
-						SetThreadPriority(reinterpret_cast<HANDLE>(pThread->thread()), 0x20000 /*THREAD_MODE_BACKGROUND_END*/);
-					}
-				}
-				~SetBackground()
-				{
-					if (pThread)
-					{
-						SetEvent(reinterpret_cast<HANDLE>(pThread->event()));
-						SetThreadPriority(reinterpret_cast<HANDLE>(pThread->thread()), 0x10000 /*THREAD_MODE_BACKGROUND_BEGIN*/);
-					}
-				}
+				SetBackground(NtfsIndexThread *pThread = NULL) : pThread(pThread) { if (pThread) { ResetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
+				~SetBackground() { if (pThread) { SetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
 				void swap(SetBackground &other) { using std::swap; swap(this->pThread, other.pThread); }
 			};
 			boost::scoped_array<SetBackground> suspendedThreads(new SetBackground[this->drives.size()]);
@@ -1303,7 +1304,7 @@ private:
 			}
 			if (pThread)
 			{
-				SetUncached(&pThread->cached()).swap(setUncached);
+				SetUncached(pThread).swap(setUncached);
 				CProgressDialog dlg(*this);
 				NtfsIndex *index = pThread->index();
 				if (!index)

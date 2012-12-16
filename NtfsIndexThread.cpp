@@ -83,7 +83,7 @@ public:
 	unsigned int operator()()
 	{
 		Sleep((37 * GetCurrentThreadId()) % 100);
-		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+		//SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 		unsigned int r = 0;
 		winnt::NtFile volume;
 		std::basic_string<TCHAR> ntPath;

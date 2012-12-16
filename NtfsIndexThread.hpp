@@ -11,6 +11,7 @@ class __declspec(novtable) NtfsIndexThread
 {
 public:
 	virtual ~NtfsIndexThread() { }
+	virtual volatile bool &background() = 0;
 	virtual volatile bool &cached() = 0;
 	virtual NtfsIndex *index() const = 0;
 	virtual std::basic_string<TCHAR> const &drive() const = 0;
