@@ -122,7 +122,7 @@ public:
 	unsigned int process()
 	{
 		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-		//SetThreadPriority(GetCurrentThread(), 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/);
+		SetThreadPriority(GetCurrentThread(), 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/);
 		DWORD result = 0;
 		CoInit const com(this->coInitialize);
 		if (!USE_WINDOW_MESSAGES)
