@@ -29,6 +29,8 @@
 typedef long long _Longlong;
 typedef unsigned long long _ULonglong;
 
+#include <math.h>  // ::ceil
+
 namespace std
 {
 	using ::intptr_t;
@@ -36,6 +38,7 @@ namespace std
 	using ::memset;
 	using ::abort;
 	using ::strerror;
+	using ::ceil;
 	using ::va_list;
 
 	template<class T>

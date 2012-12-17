@@ -9,6 +9,7 @@
 #include <iterator>
 #include <string>
 
+#include <boost/range/algorithm/copy.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
 
 #include "NtfsIndex.hpp"
@@ -86,10 +87,11 @@ public:
 		//SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 		unsigned int r = 0;
 		winnt::NtFile volume;
-		std::basic_string<TCHAR> ntPath;
 		try
 		{
-			ntPath = winnt::NtFile::RtlDosPathNameToNtPathName((this->_drive + _T("\\$Volume")).c_str());
+			std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName(this->_drive.c_str());
+			while (!ntPath.empty() && ntPath[ntPath.size() - 1] == _T('\\')) { ntPath.resize(ntPath.size() - 1); }
+			ntPath += _T("\\$Volume");
 			volume = winnt::NtFile::NtOpenFile(
 				ntPath,
 				winnt::Access::QueryAttributes | winnt::Access::Read | winnt::Access::Synchronize,
@@ -98,15 +100,14 @@ public:
 		catch (CStructured_Exception &ex) { r = ex.GetSENumber(); }
 		if (volume.get())
 		{
-			std::basic_string<TCHAR> name = volume.GetWin32Path();
 			std::string s = "Worker thread for drive: ";
-			std::copy(name.begin(), name.end(), std::inserter(s, s.end()));
+			boost::copy(this->_drive, std::inserter(s, s.end()));
 			SetThreadName(s.c_str());
 			boost::shared_ptr<NtfsIndex> old;
 			boost::atomic_compare_exchange(
 				&this->_index,
 				&old,
-				boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_event, &this->_progress, &this->_cached, &this->_background)));
+				boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_drive, this->_event, &this->_progress, &this->_cached, &this->_background)));
 		}
 		return r;
 	}

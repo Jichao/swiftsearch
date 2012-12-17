@@ -23,6 +23,7 @@
 #include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/algorithm/reverse.hpp>
 #include <boost/range/algorithm/stable_sort.hpp>
+#include <boost/range/as_literal.hpp>
 #include <boost/range/iterator_range.hpp>
 #include <boost/range/join.hpp>
 #include <boost/range/sub_range.hpp>
@@ -96,7 +97,8 @@ struct DataRow
 	size_t i;
 	DataRow(NtfsIndex const *pIndex = NULL, size_t const i = static_cast<size_t>(-1)) : pIndex(pIndex), i(i) { }
 	NtfsIndex::CombinedRecord const &record() const { return this->pIndex->at(this->i); }
-	boost::iterator_range<TCHAR const *> file_name() const { return this->pIndex->get_name_by_index(this->i).first; }
+	boost::iterator_range<TCHAR const *> file_name() const
+	{ return this->pIndex->get_name_by_index(this->i).first; }
 	boost::iterator_range<TCHAR const *> stream_name() const { return this->pIndex->get_name_by_index(this->i).second; }
 	std::basic_string<TCHAR> combined_name() const
 	{
@@ -145,7 +147,16 @@ bool wildcard(It1 patBegin, It1 const patEnd, It2 strBegin, It2 const strEnd, Tr
 {
 	(void)tr;
 	if (patBegin == patEnd) { throw std::domain_error("Invalid string!"); }
-	if (strBegin == strEnd) { throw std::domain_error("Invalid string!"); }
+	if (strBegin == strEnd)
+	{
+		while (patBegin != patEnd)
+		{
+			if (*patBegin == _T('*'))
+			{ ++patBegin; }
+			else { return false; }
+		}
+		return true;
+	}
 	//http://xoomer.virgilio.it/acantato/dev/wildcard/wildmatch.html
 	It2 s(strBegin);
 	It1 p(patBegin);
@@ -975,29 +986,6 @@ private:
 		this->lvFiles.SetWindowTheme(L"Explorer", NULL);
 		this->txtFileName.SetCueBannerText(_T("Enter the file name here"));
 
-		std::basic_string<TCHAR> logicalDrives(GetLogicalDriveStrings(0, NULL) + 1, _T('\0'));
-		logicalDrives.resize(GetLogicalDriveStrings(static_cast<DWORD>(logicalDrives.size()) - 1, &logicalDrives[0]));
-		this->cmbDrive.SetCurSel(-1);
-		int iSel = 0;
-		TCHAR windowsDir[MAX_PATH] = {0};
-		windowsDir[GetWindowsDirectory(windowsDir, sizeof(windowsDir) / sizeof(*windowsDir))] = _T('\0');
-		for (LPCTSTR drive = logicalDrives.c_str(); *drive != _T('\0'); drive += _tcslen(drive) + 1)
-		{
-			//if (IsDriveReady(drive))
-			{
-				TCHAR fsName[MAX_PATH];
-				if (GetVolumeInformation(drive, NULL, 0, NULL, 0, NULL, fsName, sizeof(fsName) / sizeof(*fsName)) && _tcsicmp(fsName, _T("NTFS")) == 0)
-				{
-					int index = this->cmbDrive.AddString(drive);
-					if (drive[0] != _T('\0') && drive[0] == windowsDir[0] && drive[1] == _T(':'))
-					{
-						iSel = index;
-					}
-				}
-			}
-		}
-		this->cmbDrive.SetCurSel(iSel);
-
 		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_GRIDLINES | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | 0x80000000 /*LVS_EX_COLUMNOVERFLOW*/ /*| 0x10000000 LVS_EX_AUTOSIZECOLUMNS*/);
 		this->lvFiles.InsertColumn(COLUMN_INDEX_NAME, _T("Name"), LVCFMT_LEFT, 170);
 		this->lvFiles.InsertColumn(COLUMN_INDEX_PATH, _T("Directory"), LVCFMT_LEFT, 468);
@@ -1021,10 +1009,30 @@ private:
 				SetProcessAffinityMask(GetCurrentProcess(), 1 << (GetCurrentProcessorNumber != NULL ? GetCurrentProcessorNumber() : 0));
 			}
 		}
+
+		std::basic_string<TCHAR> logicalDrives(GetLogicalDriveStrings(0, NULL) + 1, _T('\0'));
+		logicalDrives.resize(GetLogicalDriveStrings(static_cast<DWORD>(logicalDrives.size()) - 1, &logicalDrives[0]));
+		this->cmbDrive.SetCurSel(-1);
+		int iSel = 0;
+		TCHAR windowsDir[MAX_PATH] = {0};
+		windowsDir[GetWindowsDirectory(windowsDir, sizeof(windowsDir) / sizeof(*windowsDir))] = _T('\0');
 		for (LPCTSTR drive = logicalDrives.c_str(); *drive != _T('\0'); drive += _tcslen(drive) + 1)
 		{
-			this->drives.push_back(std::auto_ptr<NtfsIndexThread>(NtfsIndexThread::create(drive)));
+			//if (IsDriveReady(drive))
+			{
+				TCHAR fsName[MAX_PATH];
+				if (GetVolumeInformation(drive, NULL, 0, NULL, 0, NULL, fsName, sizeof(fsName) / sizeof(*fsName)) && _tcsicmp(fsName, _T("NTFS")) == 0)
+				{
+					this->drives.push_back(std::auto_ptr<NtfsIndexThread>(NtfsIndexThread::create(drive)));
+					int index = this->cmbDrive.AddString(drive);
+					if (drive[0] != _T('\0') && drive[0] == windowsDir[0] && drive[1] == _T(':'))
+					{
+						iSel = index;
+					}
+				}
+			}
 		}
+		this->cmbDrive.SetCurSel(iSel);
 
 		this->OnSearchParamsChange(CBN_SELCHANGE, IDC_COMBODRIVE, this->cmbDrive);
 		return TRUE;
@@ -1246,7 +1254,8 @@ private:
 			}
 			{
 				size_t const cchPrev = path.size();
-				path += index.volumePath();
+				std::basic_string<TCHAR> const &drive = index.drive();
+				path.append(drive.begin(), trimdirsep(drive.begin(), drive.end()));
 				if (path.size() > cchPrev)
 				{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
 			}
@@ -1275,7 +1284,7 @@ private:
 			case COLUMN_INDEX_NAME:
 				_tcsncpy(pLV->item.pszText, row.combined_name().c_str(), pLV->item.cchTextMax);
 				{
-					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + row.combined_name(), pLV->item.iItem, row.attributes(), true);
+					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + (boost::equal(row.file_name(), boost::as_literal(_T("."))) ? _T("") : row.combined_name()), pLV->item.iItem, row.attributes(), true);
 					if (iImage >= 0) { pLV->item.iImage = iImage; }
 				}
 				break;
@@ -1412,9 +1421,21 @@ private:
 	public:
 		PathComparator(StrCmp const &cmp) : cmp(cmp) { }
 		bool operator()(DataRow const &a, DataRow const &b)
-		{ return this->cmp(GetPath(*a.pIndex, a.parent(), path1), GetPath(*b.pIndex, b.parent(), path2)); }
+		{
+			GetPath(*a.pIndex, a.parent(), path1);
+			GetPath(*b.pIndex, b.parent(), path2);
+			return this->cmp(
+				boost::make_iterator_range(path1.data(), path1.data() + static_cast<ptrdiff_t>(path1.size())),
+				boost::make_iterator_range(path2.data(), path2.data() + static_cast<ptrdiff_t>(path2.size())));
+		}
 		bool operator()(DataRow const &a, DataRow const &b) const
-		{ return this->cmp(GetPath(*a.pIndex, a.parent(), path1), GetPath(*b.pIndex, b.parent(), path2)); }
+		{
+			GetPath(*a.pIndex, a.parent(), path1);
+			GetPath(*b.pIndex, b.parent(), path2);
+			return this->cmp(
+				boost::make_iterator_range(path1.data(), path1.data() + static_cast<ptrdiff_t>(path1.size())),
+				boost::make_iterator_range(path2.data(), path2.data() + static_cast<ptrdiff_t>(path2.size())));
+		}
 	};
 
 	template<class StrCmp>

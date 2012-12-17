@@ -4,12 +4,15 @@
 #include "NtfsIndex.hpp"
 
 #include <map>
+#include <queue>
+#include <set>
 #include <vector>
 
 #include <boost/range/algorithm/equal_range.hpp>
 #include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/iterator_range.hpp>
 #include <boost/range/sub_range.hpp>
+#include <boost/unordered/unordered_map.hpp>
 
 #include "CComCritSecLock.hpp"
 #include "NTFS (1).h"
@@ -35,7 +38,7 @@ class NtfsIndexImpl : public NtfsIndex
 	typedef FileNameAttrs::const_iterator FileNameIt;
 	typedef DataAttrs::const_iterator DataIt;
 
-	std::basic_string<TCHAR> _volumePath;
+	std::basic_string<TCHAR> _win32Path;
 	std::basic_string<TCHAR> names;
 	typedef std::vector<CombinedRecord> CombinedRecords;
 	CombinedRecords index;
@@ -109,243 +112,331 @@ public:
 		throw std::domain_error("Could not find name for file record.");
 	}
 
-	NtfsIndexImpl(winnt::NtFile volume, winnt::NtEvent event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground)
-		: _volumePath(volume.GetPathOfVolume()), _event(event)
+	NtfsIndexImpl(winnt::NtFile volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground)
+		: _win32Path(win32Path), _event(event)
 	{
+		struct ProgressReporter
+		{
+			NtfsReader *reader;
+			bool prevBackground;
+			winnt::NtEvent event;
+			unsigned long volatile *const pProgress;
+			bool volatile *pCached;
+			bool volatile *pBackground;
+			size_t counter;
+			ProgressReporter(NtfsReader *reader, winnt::NtEvent event, unsigned long volatile *const pProgress, bool volatile *pCached, bool volatile *pBackground)
+				: reader(reader), prevBackground(pBackground ? !*pBackground : false), event(event), pProgress(pProgress), pCached(pCached), pBackground(pBackground), counter(0) { }
+			void operator()(unsigned long long const numerator, unsigned long long const denominator)
+			{
+				size_t const waitInterval = 256;
+				if (pCached) { reader->set_cached(*pCached); }
+				if (pBackground != NULL && prevBackground != *pBackground)
+				{
+					prevBackground = *pBackground;
+					SetThreadPriority(GetCurrentThread(), *pBackground ? 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/ : 0x00020000 /*THREAD_MODE_BACKGROUND_END*/);
+				}
+				if (counter++ % waitInterval == 0) { event.NtWaitForSingleObject(); }
+				unsigned long const denom = (std::numeric_limits<unsigned long>::max)();
+				if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * numerator / denominator)) == static_cast<long>(denom))
+				{
+					throw CStructured_Exception(ERROR_CANCELLED, NULL);
+				}
+			}
+		};
+
 		unsigned long const clusterSize = volume.GetClusterSize();
 		std::auto_ptr<NtfsReader> const reader(NtfsReader::create(volume, pCached ? *pCached : true));
+		ProgressReporter progressReporter(reader.get(), event, pProgress, pCached, pBackground);
 
-		bool prevBackground = pBackground ? !*pBackground : false;
-		size_t counter = 0;
-		size_t const waitInterval = 256;
-
-		size_t const nFileRecords = reader->size();
-		this->names.reserve(nFileRecords * 12);
-		unsigned long const denom = (std::numeric_limits<unsigned long>::max)();
-
-		StandardInfoAttrs standardInfoAttrs;
-		FileNameAttrs fileNameAttrs;
-		DataAttrs dataAttrs;
-
-		StandardInfoAttrsDerived standardInfoAttrsDerived;
-		FileNameAttrsDerived fileNameAttrsDerived;
-		DataAttrsDerived dataAttrsDerived;
-
-		typedef std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, std::basic_string<TCHAR> > > AttributeIdentifier;
-
-		for (size_t segmentNumber = 0; segmentNumber < nFileRecords; segmentNumber = reader->find_next(segmentNumber))
+		try
 		{
-			if (pBackground != NULL && prevBackground != *pBackground)
-			{
-				prevBackground = *pBackground;
-				SetThreadPriority(GetCurrentThread(), *pBackground ? 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/ : 0x00020000 /*THREAD_MODE_BACKGROUND_END*/);
-			}
-			if (counter++ % waitInterval == 0) { this->_event.NtWaitForSingleObject(); }
-			if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(segmentNumber) / (nFileRecords * 2))) == static_cast<long>(denom)) { return; }
+			size_t const nFileRecords = reader->size();
+			this->names.reserve(nFileRecords * 12);
 
-			if (pCached) { reader->set_cached(*pCached); }
-			NTFS::FILE_RECORD_SEGMENT_HEADER const *pRecord = static_cast<NTFS::FILE_RECORD_SEGMENT_HEADER const *>((*reader)[segmentNumber]);
-			if (pRecord != NULL && (pRecord->Flags & 1) != 0)
+			StandardInfoAttrs standardInfoAttrs;
+			FileNameAttrs fileNameAttrs;
+			DataAttrs dataAttrs;
+
+			StandardInfoAttrsDerived standardInfoAttrsDerived;
+			FileNameAttrsDerived fileNameAttrsDerived;
+			DataAttrsDerived dataAttrsDerived;
+
+			typedef boost::unordered_multimap<SegmentNumber, std::pair<SegmentNumber, unsigned short> > Children;
+			Children children;
+			typedef std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, std::basic_string<TCHAR> > > AttributeIdentifier;
+
+			children.reserve(nFileRecords);
+			for (size_t segmentNumber = 0; segmentNumber < nFileRecords; segmentNumber = reader->find_next(segmentNumber))
 			{
-				NTFS::FILE_RECORD_SEGMENT_HEADER const &record = *pRecord;
-				assert(record.GetSegmentNumber() == segmentNumber);
-				bool const isBase = !record.BaseFileRecordSegment;
-				SegmentNumber const baseSegment = static_cast<SegmentNumber>(isBase ? segmentNumber : record.BaseFileRecordSegment);
-				for (NTFS::ATTRIBUTE_RECORD_HEADER const *ah = record.TryGetAttributeHeader(); ah != NULL; ah = ah->TryGetNextAttributeHeader())
-				{{
-					NTFS::ATTRIBUTE_RECORD_HEADER const &ah(*ah);
-					long long sizeOnDisk = ah.IsNonResident ? 0 : ah.Length;
-					if (ah.IsNonResident)
-					{
-						LONGLONG currentLcn = 0;
-						LONGLONG nextVcn = ah.NonResident.LowestVCN;
-						LONGLONG currentVcn = nextVcn;
-						for (unsigned char const *pRun = ah.NonResident.GetMappingPairs(); *pRun != 0; pRun += NTFS::RunLength(pRun))
+				progressReporter(nFileRecords * 0 + segmentNumber, nFileRecords * 3);
+				NTFS::FILE_RECORD_SEGMENT_HEADER const *pRecord = static_cast<NTFS::FILE_RECORD_SEGMENT_HEADER const *>((*reader)[segmentNumber]);
+				if (pRecord != NULL && (pRecord->Flags & 1) != 0)
+				{
+					NTFS::FILE_RECORD_SEGMENT_HEADER const &record = *pRecord;
+					assert(record.GetSegmentNumber() == segmentNumber);
+					bool const isBase = !record.BaseFileRecordSegment;
+					SegmentNumber const baseSegment = static_cast<SegmentNumber>(isBase ? segmentNumber : record.BaseFileRecordSegment);
+					for (NTFS::ATTRIBUTE_RECORD_HEADER const *ah = record.TryGetAttributeHeader(); ah != NULL; ah = ah->TryGetNextAttributeHeader())
+					{{
+						NTFS::ATTRIBUTE_RECORD_HEADER const &ah(*ah);
+						long long sizeOnDisk = 0;
+						if (ah.IsNonResident)
 						{
-							LONGLONG const runCount = NTFS::RunCount(pRun);
-							nextVcn += runCount;
-							currentLcn += NTFS::RunDeltaLCN(pRun);
-							if (currentLcn != 0 ||
-								ah.Type == NTFS::AttributeData && baseSegment == 0x000000000007 /* $Boot is a special case */)
-							{ sizeOnDisk += runCount * clusterSize; }
-							currentVcn = nextVcn;
-						}
-					}
-					static TCHAR const I30[] = { _T('$'), _T('I'), _T('3'), _T('0') };
-					bool const isI30 = ah.NameLength == sizeof(I30) / sizeof(*I30) && memcmp(I30, ah.GetName(), ah.NameLength) == 0;
-					if (ah.Type == NTFS::AttributeStandardInformation)
-					{
-						NTFS::STANDARD_INFORMATION const &a = *static_cast<NTFS::STANDARD_INFORMATION const *>(ah.Resident.GetValue());
-						StandardInfoAttrs::value_type const v = std::make_pair(
-							baseSegment,
-							std::make_pair(
-								std::make_pair(
-									winnt::NtSystem::RtlTimeToSecondsSince1980(a.CreationTime),
-									winnt::NtSystem::RtlTimeToSecondsSince1980(a.LastModificationTime)),
-								std::make_pair(
-									winnt::NtSystem::RtlTimeToSecondsSince1980(a.LastAccessTime),
-									a.FileAttributes)));
-						if (isBase) { standardInfoAttrs.push_back(v); }
-						else { standardInfoAttrsDerived.insert(v); }
-					}
-					if (ah.Type == NTFS::AttributeFileName)
-					{
-						NTFS::FILENAME_INFORMATION const &a = *static_cast<NTFS::FILENAME_INFORMATION const *>(ah.Resident.GetValue());
-						if (a.Flags != 2)
-						{
-							if (this->names.size() + a.FileNameLength > this->names.capacity())
+							LONGLONG currentLcn = 0;
+							LONGLONG nextVcn = ah.NonResident.LowestVCN;
+							LONGLONG currentVcn = nextVcn;
+							for (unsigned char const *pRun = ah.NonResident.GetMappingPairs(); *pRun != 0; pRun += NTFS::RunLength(pRun))
 							{
-								/* Old MSVCRT doesn't do this! */
-								this->names.reserve(this->names.size() * 2);
+								LONGLONG const runCount = NTFS::RunCount(pRun);
+								nextVcn += runCount;
+								currentLcn += NTFS::RunDeltaLCN(pRun);
+								if (currentLcn != 0 ||
+									ah.Type == NTFS::AttributeData && baseSegment == 0x000000000007 /* $Boot is a special case */)
+								{ sizeOnDisk += runCount * clusterSize; }
+								currentVcn = nextVcn;
 							}
-							FileNameAttrs::value_type const v = std::make_pair(
+						}
+						static TCHAR const I30[] = { _T('$'), _T('I'), _T('3'), _T('0') };
+						bool const isI30 = ah.NameLength == sizeof(I30) / sizeof(*I30) && memcmp(I30, ah.GetName(), ah.NameLength) == 0;
+						if (ah.Type == NTFS::AttributeStandardInformation)
+						{
+							NTFS::STANDARD_INFORMATION const &a = *static_cast<NTFS::STANDARD_INFORMATION const *>(ah.Resident.GetValue());
+							StandardInfoAttrs::value_type const v = std::make_pair(
 								baseSegment,
 								std::make_pair(
 									std::make_pair(
-										static_cast<NameOffset>(this->names.size()),
-										static_cast<NameLength>(a.FileNameLength)),
-									static_cast<SegmentNumber>(a.ParentDirectory & 0x0000FFFFFFFFFFFF)));
-							if (isBase) { fileNameAttrs.push_back(v); }
-							else { fileNameAttrsDerived.insert(v); }
-							this->names.append(a.FileName, a.FileNameLength);
+										winnt::NtSystem::RtlTimeToSecondsSince1980(a.CreationTime),
+										winnt::NtSystem::RtlTimeToSecondsSince1980(a.LastModificationTime)),
+									std::make_pair(
+										winnt::NtSystem::RtlTimeToSecondsSince1980(a.LastAccessTime),
+										a.FileAttributes)));
+							if (isBase) { standardInfoAttrs.push_back(v); }
+							else { standardInfoAttrsDerived.insert(v); }
 						}
-					}
-					if (ah.Type == NTFS::AttributeData ||
-						ah.Type == NTFS::AttributeIndexAllocation ||
-						(
-							ah.Type == NTFS::AttributeIndexRoot
-							? (static_cast<NTFS::INDEX_ROOT const *>(ah.Resident.GetValue())->Header.Flags & 1) == 0
-							: !isI30 && ah.NameLength > 0 && (ah.Type != NTFS::AttributeLoggedUtilityStream || ah.IsNonResident)
-						))
-					{
-						size_t const cchNameOld = this->names.size();
-						if (!(ah.NameLength == 0 && ah.Type == NTFS::AttributeData || isI30 && (ah.Type == NTFS::AttributeIndexRoot || ah.Type == NTFS::AttributeIndexAllocation)))
+						if (ah.Type == NTFS::AttributeFileName)
 						{
-							if (this->names.size() + 1 /* ':' */ + ah.NameLength + 64 /* max attribute name length */ > this->names.capacity())
+							NTFS::FILENAME_INFORMATION const &a = *static_cast<NTFS::FILENAME_INFORMATION const *>(ah.Resident.GetValue());
+							if (a.Flags != 2)
 							{
-								/* Old MSVCRT doesn't do this! */
-								this->names.reserve((this->names.size() + MAX_PATH) * 2);
-							}
-							this->names.append(ah.GetName(), ah.NameLength);
-							if (ah.Type != NTFS::AttributeData && ah.Type != NTFS::AttributeIndexRoot && ah.Type != NTFS::AttributeIndexAllocation)
-							{
-								this->names.append(1, _T(':'));
-								this->names.append(NTFS::GetAttributeName(ah.Type));
+								if (this->names.size() + a.FileNameLength > this->names.capacity())
+								{
+									/* Old MSVCRT doesn't do this! */
+									this->names.reserve(this->names.size() * 2);
+								}
+								SegmentNumber const parentSegmentNumber = static_cast<SegmentNumber>(a.ParentDirectory & 0x0000FFFFFFFFFFFF);
+								FileNameAttrs::value_type const v = std::make_pair(
+									baseSegment,
+									std::make_pair(
+										std::make_pair(
+											static_cast<NameOffset>(this->names.size()),
+											static_cast<NameLength>(a.FileNameLength)),
+										parentSegmentNumber));
+								if (isBase) { fileNameAttrs.push_back(v); }
+								else { fileNameAttrsDerived.insert(v); }
+								this->names.append(a.FileName, a.FileNameLength);
+								if (record.LinkCount > 0)
+								{
+									children.insert(std::make_pair(parentSegmentNumber, std::make_pair(baseSegment, record.LinkCount)));
+								}
 							}
 						}
-						DataAttrs::value_type const v = std::make_pair(
-							baseSegment,
-							std::make_pair(
-								ah.Type,
+						if (ah.Type == NTFS::AttributeData ||
+							ah.Type == NTFS::AttributeIndexAllocation ||
+							(
+								ah.Type == NTFS::AttributeIndexRoot
+								? (static_cast<NTFS::INDEX_ROOT const *>(ah.Resident.GetValue())->Header.Flags & 1) == 0
+								: !isI30 && ah.NameLength > 0 && (ah.Type != NTFS::AttributeLoggedUtilityStream || ah.IsNonResident)
+							))
+						{
+							size_t const cchNameOld = this->names.size();
+							if (!(ah.NameLength == 0 && ah.Type == NTFS::AttributeData || isI30 && (ah.Type == NTFS::AttributeIndexRoot || ah.Type == NTFS::AttributeIndexAllocation)))
+							{
+								if (this->names.size() + 1 /* ':' */ + ah.NameLength + 64 /* max attribute name length */ > this->names.capacity())
+								{
+									/* Old MSVCRT doesn't do this! */
+									this->names.reserve((this->names.size() + MAX_PATH) * 2);
+								}
+								this->names.append(ah.GetName(), ah.NameLength);
+								if (ah.Type != NTFS::AttributeData && ah.Type != NTFS::AttributeIndexRoot && ah.Type != NTFS::AttributeIndexAllocation)
+								{
+									this->names.append(1, _T(':'));
+									this->names.append(NTFS::GetAttributeName(ah.Type));
+								}
+							}
+							DataAttrs::value_type const v = std::make_pair(
+								baseSegment,
 								std::make_pair(
+									ah.Type,
 									std::make_pair(
-										static_cast<NameOffset>(cchNameOld),
-										static_cast<NameLength>(this->names.size() - cchNameOld)),
-									std::make_pair(
-										ah.IsNonResident ? ah.NonResident.DataSize : ah.Resident.ValueLength,
-										sizeOnDisk))));
-						
-						bool found = false;
-						if (ah.IsNonResident)
-						{
-							class DupeChecker
+										std::make_pair(
+											static_cast<NameOffset>(cchNameOld),
+											static_cast<NameLength>(this->names.size() - cchNameOld)),
+										std::make_pair(
+											ah.IsNonResident ? ((baseSegment == 0x000000000008 /* $BadClus */) ? sizeOnDisk : ah.NonResident.DataSize) : ah.Resident.ValueLength,
+											sizeOnDisk))));
+							
+							bool found = false;
+							if (ah.IsNonResident)
 							{
-								DupeChecker &operator =(DupeChecker const &) { throw std::logic_error(""); }
-								std::basic_string<TCHAR> const &names;
-								NTFS::ATTRIBUTE_RECORD_HEADER const &ah;
-								DataAttrs::value_type const &v;
-							public:
-								DupeChecker(std::basic_string<TCHAR> const &names, NTFS::ATTRIBUTE_RECORD_HEADER const &ah, DataAttrs::value_type const &v)
-									: names(names), ah(ah), v(v) { }
-								bool operator()(DataAttrs::value_type::second_type &attr)
+								class DupeChecker
 								{
-									bool found = false;
-									if (attr.first == ah.Type &&
-										boost::equal(
-											boost::make_iterator_range(ah.GetName(), ah.GetName() + ah.NameLength),
-											boost::make_iterator_range(
-												names.data() + attr.second.first.first,
-												names.data() + attr.second.first.first + attr.second.first.second)))
+									DupeChecker &operator =(DupeChecker const &) { throw std::logic_error(""); }
+									std::basic_string<TCHAR> const &names;
+									NTFS::ATTRIBUTE_RECORD_HEADER const &ah;
+									DataAttrs::value_type const &v;
+								public:
+									DupeChecker(std::basic_string<TCHAR> const &names, NTFS::ATTRIBUTE_RECORD_HEADER const &ah, DataAttrs::value_type const &v)
+										: names(names), ah(ah), v(v) { }
+									bool operator()(DataAttrs::value_type::second_type &attr)
 									{
-										if (ah.NonResident.LowestVCN == 0)
+										bool found = false;
+										if (attr.first == ah.Type &&
+											boost::equal(
+												boost::make_iterator_range(ah.GetName(), ah.GetName() + ah.NameLength),
+												boost::make_iterator_range(
+													names.data() + attr.second.first.first,
+													names.data() + attr.second.first.first + attr.second.first.second)))
 										{
-											long long const oldSizeOnDisk = attr.second.second.second;
-											attr = v.second;
-											attr.second.second.second += oldSizeOnDisk;
+											if (ah.NonResident.LowestVCN == 0)
+											{
+												long long const oldSizeOnDisk = attr.second.second.second;
+												attr = v.second;
+												attr.second.second.second += oldSizeOnDisk;
+											}
+											else { attr.second.second.second += v.second.second.second.second; }
+											found = true;
 										}
-										else
-										{
-											attr.second.second.second += v.second.second.second.second;
-										}
-										found = true;
+										return found;
 									}
-									return found;
-								}
-							} dupeChecker(this->names, ah, v);
-							if (!found)
-							{
-								for (boost::iterator_range<DataAttrs::iterator> range = boost::equal_range(dataAttrs, std::make_pair(baseSegment, std::pair<NTFS::AttributeTypeCode, DataAttribute>()), first_less()); !range.empty(); range.pop_front())
+								} dupeChecker(this->names, ah, v);
+								if (!found)
 								{
-									found |= dupeChecker(range.front().second);
-									if (found) { break; }
+									for (boost::iterator_range<DataAttrs::iterator> range = boost::equal_range(dataAttrs, std::make_pair(baseSegment, std::pair<NTFS::AttributeTypeCode, DataAttribute>()), first_less()); !range.empty(); range.pop_front())
+									{
+										found |= dupeChecker(range.front().second);
+										if (found) { break; }
+									}
+								}
+								if (!found)
+								{
+									for (boost::iterator_range<DataAttrsDerived::iterator> range = dataAttrsDerived.equal_range(baseSegment); !range.empty(); range.pop_front())
+									{
+										found |= dupeChecker(range.front().second);
+										if (found) { break; }
+									}
 								}
 							}
 							if (!found)
 							{
-								for (boost::iterator_range<DataAttrsDerived::iterator> range = dataAttrsDerived.equal_range(baseSegment); !range.empty(); range.pop_front())
-								{
-									found |= dupeChecker(range.front().second);
-									if (found) { break; }
-								}
+								if (isBase) { dataAttrs.push_back(v); }
+								else { dataAttrsDerived.insert(v); }
 							}
 						}
-						if (!found)
+					}}
+				}
+			}
+
+			struct DirectorySizeCalculator
+			{
+				ProgressReporter *pProgressReporter;
+				DataAttrs *pDataAttrs;
+				DataAttrsDerived *pDataAttrsDerived;
+				Children *pChildren;
+				std::map<SegmentNumber, unsigned short> seenCounts;
+				size_t seenTotal, nFileRecords;
+
+				DirectorySizeCalculator(ProgressReporter &progressReporter, Children &children, DataAttrs &dataAttrs, DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords)
+					: pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs), pDataAttrsDerived(&dataAttrsDerived), seenTotal(0), nFileRecords(nFileRecords) { }
+
+				std::pair<long long, long long> operator()(SegmentNumber const segmentNumber)
+				{
+					(*pProgressReporter)(nFileRecords * 1 + seenTotal, nFileRecords * 3);
+
+					std::pair<long long, long long> result;
+					for (boost::iterator_range<Children::const_iterator> r = pChildren->equal_range(segmentNumber); !r.empty(); r.pop_front())
+					{
+						std::pair<SegmentNumber, unsigned short> const p = r.front().second;
+						if (segmentNumber != p.first)
 						{
-							if (isBase) { dataAttrs.push_back(v); }
-							else { dataAttrsDerived.insert(v); }
+							std::pair<long long, long long> const sizes = (*this)(p.first);
+							unsigned short &seenCount = seenCounts[p.first];
+							result.first += sizes.first * (seenCount + 1) / p.second - sizes.first * seenCount / p.second;
+							result.second += sizes.second * (seenCount + 1) / p.second - sizes.second * seenCount / p.second;
+							seenCount++;
 						}
 					}
-				}}
+					std::pair<long long, long long> const childrenSizes = result;
+					for (boost::iterator_range<DataAttrs::iterator> r = boost::equal_range(*pDataAttrs, std::make_pair(segmentNumber, std::pair<NTFS::AttributeTypeCode, DataAttribute>()), first_less()); !r.empty(); r.pop_front())
+					{
+						DataAttrs::value_type &p = r.front();
+						result.first += p.second.second.second.first;
+						result.second += p.second.second.second.second;
+						p.second.second.second.first += childrenSizes.first;
+						p.second.second.second.second += childrenSizes.second;
+					}
+					for (boost::iterator_range<DataAttrsDerived::iterator> r = pDataAttrsDerived->equal_range(segmentNumber); !r.empty(); r.pop_front())
+					{
+						DataAttrsDerived::value_type &p = r.front();
+						result.first += p.second.second.second.first;
+						result.second += p.second.second.second.second;
+						p.second.second.second.first += childrenSizes.first;
+						p.second.second.second.second += childrenSizes.second;
+					}
+					++seenTotal;
+					return result;
+				}
+			};
+			DirectorySizeCalculator(progressReporter, children, dataAttrs, dataAttrsDerived, nFileRecords)(0x000000000005);
+
+			FileNameAttrs::const_iterator const itFileNameAttrsEnd = fileNameAttrs.end();
+			DataAttrs::const_iterator const itDataAttrsEnd = dataAttrs.end();
+			{
+				FileNameAttrs::const_iterator itFileNameAttr = fileNameAttrs.begin();
+				DataAttrs::const_iterator itDataAttr = dataAttrs.begin();
+
+				for (boost::iterator_range<StandardInfoAttrs::const_iterator> range = standardInfoAttrs; !range.empty(); range.pop_front())
+				{
+					SegmentNumber const segmentNumber = range.front().first;
+
+					progressReporter(nFileRecords * 2 + segmentNumber, nFileRecords * 3);
+
+					while (itFileNameAttr != itFileNameAttrsEnd && itFileNameAttr->first < segmentNumber) { ++itFileNameAttr; }
+					while (itDataAttr != itDataAttrsEnd && itDataAttr->first < segmentNumber) { ++itDataAttr; }
+
+					StandardInformationAttribute const &standardInfoAttr = range.front().second;
+
+					DataAttrs::const_iterator const itDataAttrBegin(itDataAttr);
+					//for (boost::iterator_range<FileNameAttrs::const_iterator> range = boost::equal_range(fileNameAttrs, std::make_pair(segmentNumber, FileNameAttribute()), first_less()); !range.empty(); range.pop_front())
+					while (itFileNameAttr != fileNameAttrs.end() && itFileNameAttr->first == segmentNumber)
+					{
+						itDataAttr = itDataAttrBegin;
+						this->process_file_name(segmentNumber, standardInfoAttr, itFileNameAttr->second, itDataAttr, itDataAttrsEnd, dataAttrsDerived);
+						++itFileNameAttr;
+					}
+					for (boost::iterator_range<FileNameAttrsDerived::const_iterator> range = fileNameAttrsDerived.equal_range(segmentNumber); !range.empty(); range.pop_front())
+					{
+						itDataAttr = itDataAttrBegin;
+						this->process_file_name(segmentNumber, standardInfoAttr, range.front().second, itDataAttr, itDataAttrsEnd, dataAttrsDerived);
+					}
+
+				}
 			}
 		}
-
-		FileNameAttrs::const_iterator itFileNameAttr = fileNameAttrs.begin();
-		FileNameAttrs::const_iterator const itFileNameAttrsEnd = fileNameAttrs.end();
-		DataAttrs::const_iterator itDataAttr = dataAttrs.begin();
-		DataAttrs::const_iterator const itDataAttrsEnd = dataAttrs.end();
-
-		for (boost::iterator_range<StandardInfoAttrs::const_iterator> range = standardInfoAttrs; !range.empty(); range.pop_front())
+		catch (CStructured_Exception &ex)
 		{
-			SegmentNumber const segmentNumber = range.front().first;
-
-			if (pBackground != NULL && prevBackground != *pBackground)
+			if (ex.GetSENumber() != ERROR_CANCELLED)
 			{
-				prevBackground = *pBackground;
-				SetThreadPriority(GetCurrentThread(), *pBackground ? 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/ : 0x00020000 /*THREAD_MODE_BACKGROUND_END*/);
+				throw;
 			}
-			if (counter++ % waitInterval == 0) { this->_event.NtWaitForSingleObject(); }
-			if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(denom * static_cast<unsigned long long>(nFileRecords + segmentNumber) / (nFileRecords * 2))) == static_cast<long>(denom)) { return; }
-
-			while (itFileNameAttr != itFileNameAttrsEnd && itFileNameAttr->first < segmentNumber) { ++itFileNameAttr; }
-			while (itDataAttr != itDataAttrsEnd && itDataAttr->first < segmentNumber) { ++itDataAttr; }
-
-			StandardInformationAttribute const &standardInfoAttr = range.front().second;
-
-			//for (boost::iterator_range<FileNameAttrs::const_iterator> range = boost::equal_range(fileNameAttrs, std::make_pair(segmentNumber, FileNameAttribute()), first_less()); !range.empty(); range.pop_front())
-			while (itFileNameAttr != fileNameAttrs.end() && itFileNameAttr->first == segmentNumber)
-			{ this->process_file_name(segmentNumber, standardInfoAttr, itFileNameAttr->second, itDataAttr, itDataAttrsEnd, dataAttrsDerived); ++itFileNameAttr; }
-			for (boost::iterator_range<FileNameAttrsDerived::const_iterator> range = fileNameAttrsDerived.equal_range(segmentNumber); !range.empty(); range.pop_front())
-			{ this->process_file_name(segmentNumber, standardInfoAttr, range.front().second, itDataAttr, itDataAttrsEnd, dataAttrsDerived); }
-
 		}
 	}
 
-	std::basic_string<TCHAR> const &volumePath() const { return this->_volumePath; }
+	std::basic_string<TCHAR> const &drive() const { return this->_win32Path; }
 
 	winnt::NtEvent event() const { return this->_event; }
 };
 
-NtfsIndex *NtfsIndex::create(winnt::NtFile const &volume, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground)
+NtfsIndex *NtfsIndex::create(winnt::NtFile const &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground)
 {
-	return new NtfsIndexImpl(volume, event, pProgress, pCached, pBackground);
+	return new NtfsIndexImpl(volume, win32Path, event, pProgress, pCached, pBackground);
 }
