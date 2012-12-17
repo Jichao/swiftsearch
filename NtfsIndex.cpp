@@ -78,19 +78,17 @@ public:
 	CombinedRecord const &at(size_t const i) const { return this->index.at(i); }
 	size_t size() const { return this->index.size(); }
 
-	void get_name_by_record(CombinedRecord const &record, std::basic_string<TCHAR> &s) const
+	std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > get_name_by_record(CombinedRecord const &record) const
 	{
-		s.append(this->names.data() + record.second.second.first.first.first, record.second.second.first.second.first);
-		if (record.second.second.first.second.second > 0)
-		{
-			s.append(1, _T(':'));
-			s.append(this->names.data() + record.second.second.first.first.second, record.second.second.first.second.second);
-		}
+		TCHAR const *const data = this->names.data();
+		return std::make_pair(
+			std::make_pair(data + record.second.second.first.first.first, data + record.second.second.first.first.first + record.second.second.first.second.first),
+			std::make_pair(data + record.second.second.first.first.second, data + record.second.second.first.first.second + record.second.second.first.second.second));
 	}
 
-	void get_name_by_index(size_t const i, std::basic_string<TCHAR> &s) const
+	std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > get_name_by_index(size_t const i) const
 	{
-		return this->get_name_by_record(this->at(i), s);
+		return this->get_name_by_record(this->at(i));
 	}
 
 	SegmentNumber get_name(SegmentNumber segmentNumber, std::basic_string<TCHAR> &s) const
@@ -99,7 +97,13 @@ public:
 			boost::equal_range(this->index, std::make_pair(segmentNumber, CombinedRecord::second_type()), first_less());
 		for (CombinedRecords::const_iterator i = equal_range.begin(); i != equal_range.end(); ++i)
 		{
-			this->get_name_by_record(*i, s);
+			std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > const p = this->get_name_by_record(*i);
+			s.append(p.first.begin(), p.first.end());
+			if (!p.second.empty())
+			{
+				s.append(1, _T(':'));
+				s.append(p.first.begin(), p.first.end());
+			}
 			return i->second.second.second.first;
 		}
 		throw std::domain_error("Could not find name for file record.");

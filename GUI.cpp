@@ -22,7 +22,9 @@
 #include <boost/range/algorithm/find_if.hpp>
 #include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/algorithm/reverse.hpp>
+#include <boost/range/algorithm/stable_sort.hpp>
 #include <boost/range/iterator_range.hpp>
+#include <boost/range/join.hpp>
 #include <boost/range/sub_range.hpp>
 #include <boost/smart_ptr/scoped_array.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
@@ -94,9 +96,19 @@ struct DataRow
 	size_t i;
 	DataRow(NtfsIndex const *pIndex = NULL, size_t const i = static_cast<size_t>(-1)) : pIndex(pIndex), i(i) { }
 	NtfsIndex::CombinedRecord const &record() const { return this->pIndex->at(this->i); }
-	std::basic_string<TCHAR> &name(std::basic_string<TCHAR> &s) const
+	boost::iterator_range<TCHAR const *> file_name() const { return this->pIndex->get_name_by_index(this->i).first; }
+	boost::iterator_range<TCHAR const *> stream_name() const { return this->pIndex->get_name_by_index(this->i).second; }
+	std::basic_string<TCHAR> combined_name() const
 	{
-		this->pIndex->get_name_by_index(this->i, s);
+		std::basic_string<TCHAR> s;
+		boost::iterator_range<TCHAR const *> name = this->file_name();
+		s.append(name.begin(), name.end());
+		name = this->stream_name();
+		if (!name.empty())
+		{
+			s.append(1, _T(':'));
+			s.append(name.begin(), name.end());
+		}
 		return s;
 	}
 	unsigned long parent() const { return this->record().second.second.second.first; }
@@ -170,6 +182,11 @@ starCheck:
 	goto loopStart;
 }
 
+template<class R1, class R2, class Tr>
+bool wildcard(R1 const &pat, R2 const &str, Tr const &tr = std::char_traits<typename boost::range_value<R1>::type>())
+{
+	return wildcard(pat.begin(), pat.end(), str.begin(), str.end(), tr);
+}
 
 struct tchar_ci_traits : public std::char_traits<TCHAR>
 {
@@ -192,6 +209,305 @@ struct tchar_ci_traits : public std::char_traits<TCHAR>
 		return s;
 	}
 };
+
+template<class T>
+inline T const &use_facet(std::locale const &loc)
+{
+	return std::
+#if defined(_USEFAC)
+		_USE(loc, T)
+#else
+		use_facet<T>(loc)
+#endif
+		;
+}
+
+class iless
+{
+	mutable std::basic_string<TCHAR> s1, s2;
+	std::ctype<TCHAR> const &ctype;
+	struct iless_ch
+	{
+		iless const *p;
+		iless_ch(iless const &l) : p(&l) { }
+		bool operator()(TCHAR a, TCHAR b) const
+		{
+			return _totupper(a) < _totupper(b);
+			//return p->ctype.toupper(a) < p->ctype.toupper(b);
+		}
+	};
+
+	template<class T>
+	static T const &use_facet(std::locale const &loc)
+	{
+		return std::
+#if defined(_USEFAC)
+			_USE(loc, T)
+#else
+			use_facet<T>(loc)
+#endif
+			;
+	}
+
+public:
+	iless(std::locale const &loc) : ctype(static_cast<std::ctype<TCHAR> const &>(use_facet<std::ctype<TCHAR> >(loc))) { }
+	bool operator()(boost::iterator_range<TCHAR const *> const a, boost::iterator_range<TCHAR const *> const b) const
+	{
+		s1.assign(a.begin(), a.end());
+		s2.assign(b.begin(), b.end());
+		return StrCmpLogicalW(s1.c_str(), s2.c_str()) < 0;
+		//return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), iless_ch(*this));
+	}
+};
+
+template<class Pred>
+struct indirect_pred
+{
+	Pred *p;
+	indirect_pred(Pred *p) : p(p) { }
+	template<class T1, class T2> bool operator()(T1 const &a, T2 const &b) const { return (*p)(a, b); }
+};
+
+template<class R, class Pred> R &const_pred_stable_sort(R &range, Pred const &pred) { return boost::stable_sort(range, indirect_pred<Pred const>(&pred)); }
+
+template<class Ch>
+class natural_less
+{
+	natural_less &operator =(natural_less const &);
+	struct to_upper
+	{
+		std::ctype<Ch> const &ctype;
+		to_upper(std::ctype<Ch> const &ctype) : ctype(ctype) { }
+		Ch operator()(Ch const c) const
+		{
+			Ch r;
+			switch (c)
+			{
+			case 'a': case 'b': case 'c': case 'd': case 'e': case 'f':
+			case 'g': case 'h': case 'i': case 'j': case 'k': case 'l':
+			case 'm': case 'n': case 'o': case 'p': case 'q': case 'r':
+			case 's': case 't': case 'u': case 'v': case 'w': case 'x':
+			case 'y': case 'z':
+				r = c + ('A' - 'a');
+				break;
+			default:
+				r = c <= SCHAR_MAX ? c : ctype.toupper(c);
+				break;
+			}
+			return r;
+		}
+	};
+
+	static std::locale get_numpunct_locale(std::locale const &loc)
+	{
+		std::locale result(loc);
+#if defined(_MSC_VER) && defined(_ADDFAC)
+		std::_ADDFAC(result, new std::numpunct<TCHAR>());
+#else
+		result = std::locale(locale, new std::numpunct<TCHAR>());
+#endif
+		return result;
+	}
+
+	std::locale const loc, numpunct_loc;
+	std::ctype<Ch> const &ctype;
+	std::numpunct<Ch> const &numpunct;
+	std::num_get<Ch> const &num_get;
+	boost::shared_ptr<std::basic_stringstream<Ch> > ss1, ss2;
+	to_upper _to_upper;
+	bool case_insensitive;
+
+	struct mystreambuf : public std::basic_stringbuf<Ch>
+	{
+		using std::basic_stringbuf<Ch>::eback;
+		using std::basic_stringbuf<Ch>::gbump;
+	};
+
+	static std::basic_stringstream<Ch> &set_char(std::basic_stringstream<Ch> &ss, Ch const c)
+	{
+		ss.seekg(0);
+		ss.seekp(0);
+		ss << c;
+		return ss;
+	}
+
+public:
+	natural_less(std::locale const &loc = std::locale(""), bool const case_insensitive = true) :
+		loc(loc),
+		numpunct_loc(get_numpunct_locale(loc)),
+		ctype(::use_facet<std::ctype<Ch> >(loc)),
+		numpunct(::use_facet<std::numpunct<Ch> >(numpunct_loc)),
+		num_get(::use_facet<std::num_get<Ch> >(loc)),
+		ss1(new std::basic_stringstream<Ch>()),
+		ss2(new std::basic_stringstream<Ch>()),
+		_to_upper(ctype),
+		case_insensitive(case_insensitive)
+	{
+		ss1->imbue(loc);
+		ss2->imbue(loc);
+		*ss1 << Ch();
+		*ss2 << Ch();
+	}
+
+	std::basic_string<TCHAR> s1, s2;
+	bool operator()(Ch const *const begin1, Ch const *const end1, Ch const *const begin2, Ch const *const end2)
+	{
+		std::istreambuf_iterator<Ch> const isbiEnd;
+		Ch const *it1(begin1);
+		Ch const *it2(begin2);
+		while (it1 != end1 && it2 != end2)
+		{
+			Ch const c1 = case_insensitive ? this->_to_upper(*it1) : *it1;
+			Ch const c2 = case_insensitive ? this->_to_upper(*it2) : *it2;
+			size_t nConsumed1, nSignificantDigits1 = 0, nConsumed2, nSignificantDigits2 = 0;
+
+			Ch const *it1EndDigits(it1);
+			do
+			{
+				nConsumed1 = 0;
+				{
+					Ch const *it1EndDigitsNew(ctype.scan_not(std::ctype_base::digit, it1EndDigits, end1));
+					while (it1EndDigits != it1EndDigitsNew)
+					{
+						unsigned int digit;
+						std::ios_base::iostate iostate;
+						if (num_get.get(set_char(*ss1, *it1EndDigits), isbiEnd, *ss1, iostate, digit) == isbiEnd)
+						{
+							++nConsumed1;
+							if (digit != 0 || nSignificantDigits1 > 0)
+							{ ++nSignificantDigits1; }
+						}
+						++it1EndDigits;
+					}
+				}
+				if (nConsumed1 > 0)
+				{
+					while (it1EndDigits != end1 && *it1EndDigits == numpunct.thousands_sep())
+					{ ++it1EndDigits; }
+				}
+			} while (nConsumed1 > 0);
+
+			Ch const *it2EndDigits(it2);
+			do
+			{
+				nConsumed2 = 0;
+				{
+					Ch const *it2EndDigitsNew(ctype.scan_not(std::ctype_base::digit, it2EndDigits, end2));
+					while (it2EndDigits != it2EndDigitsNew)
+					{
+						unsigned int digit;
+						std::ios_base::iostate iostate;
+						if (num_get.get(set_char(*ss2, *it2EndDigits), isbiEnd, *ss2, iostate, digit) == isbiEnd)
+						{
+							++nConsumed2;
+							if (digit != 0 || nSignificantDigits2 > 0)
+							{ ++nSignificantDigits2; }
+						}
+						++it2EndDigits;
+					}
+				}
+				if (nConsumed2 > 0)
+				{
+					while (it2EndDigits != end2 && *it2EndDigits == numpunct.thousands_sep())
+					{ ++it2EndDigits; }
+				}
+			} while (nConsumed2 > 0);
+
+			if (it1 == it1EndDigits)
+			{
+				if (it2 == it2EndDigits)
+				{
+					return c1 < c2;
+				}
+				else { return *it1 < *it2; }
+			}
+			else
+			{
+				if (it2 == it2EndDigits)
+				{ return *it1 < *it2; }
+				else
+				{
+					if (nSignificantDigits1 < nSignificantDigits2)
+					{ return true; }
+					else if (nSignificantDigits1 > nSignificantDigits2)
+					{ return false; }
+					else
+					{
+						std::ios_base::iostate iostate;
+						unsigned int digit1 = 0, digit2 = 0;
+						
+						while (it1 != it1EndDigits && (*it1 == numpunct.thousands_sep() || num_get.get(set_char(*ss1, *it1), isbiEnd, *ss1, iostate, digit1) == isbiEnd && digit1 == 0))
+						{ ++it1; }
+						
+						while (it2 != it2EndDigits && (*it2 == numpunct.thousands_sep() || num_get.get(set_char(*ss2, *it2), isbiEnd, *ss2, iostate, digit2) == isbiEnd && digit2 == 0))
+						{ ++it2; }
+
+						while (it1 != it1EndDigits && it2 != it2EndDigits)
+						{
+							if (*it1 != numpunct.thousands_sep())
+							{
+								if (*it2 != numpunct.thousands_sep())
+								{
+									digit1 = 0;
+									digit2 = 0;
+									num_get.get(set_char(*ss1, *it1), isbiEnd, *ss1, iostate, digit1);
+									num_get.get(set_char(*ss2, *it2), isbiEnd, *ss2, iostate, digit2);
+									if (digit1 < digit2)
+									{ return true; }
+									else if (digit1 > digit2)
+									{ return false; }
+									++it1;
+								}
+								++it2;
+							}
+							else
+							{
+								if (*it2 != numpunct.thousands_sep())
+								{ }
+								else
+								{ ++it2; }
+								++it1;
+							}
+						}
+					}
+				}
+			}
+		}
+		if (it2 != end2)
+		{
+			return true;
+		}
+		return false;
+	}
+
+	template<class R1, class R2>
+	bool operator()(R1 const &range1, R2 const &range2)
+	{
+		return (*this)(
+			range1.begin() == range1.end() ? NULL : &range1[0],
+			range1.begin() == range1.end() ? NULL : &range1[0] + static_cast<ptrdiff_t>(range1.size()),
+			range2.begin() == range2.end() ? NULL : &range2[0],
+			range2.begin() == range2.end() ? NULL : &range2[0] + static_cast<ptrdiff_t>(range2.size())
+		);
+	}
+};
+
+struct Tester
+{
+	Tester()
+	{
+#if 0
+		natural_less<char> less(std::locale(""));
+		std::string s1, s2;
+		for (;;)
+		{
+			std::getline(std::cin, s1);
+			std::getline(std::cin, s2);
+			std::cout << (less(s1, s2) ? "less" : less(s2, s1) ? "greater" : "equal") << std::endl;
+		}
+#endif
+	}
+} tester;
 
 LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime)
 {
@@ -516,13 +832,13 @@ struct CancellableComparator
 {
 	F f;
 	CancellableComparator(F const &f) : f(f) { }
-	template<class T1, class T2>
-	bool operator()(T1 const &a, T2 const &b)
+	static void check_key()
 	{
 		if (GetAsyncKeyState(VK_ESCAPE) < 0)
 		{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
-		return f(a, b);
 	}
+	template<class T1, class T2> bool operator()(T1 const &a, T2 const &b) { check_key(); return f(a, b); }
+	template<class T1, class T2> bool operator()(T1 const &a, T2 const &b) const { check_key(); return f(a, b); }
 };
 
 template<class F>
@@ -563,40 +879,6 @@ void replace_all(Str &str, S1 from, S2 to)
 
 inline std::basic_string<TCHAR> tformat(TCHAR const *format, ...) { va_list a; va_start(a, format); return vtformat(format, a); }
 
-class iless
-{
-	std::ctype<TCHAR> const &ctype;
-	struct iless_ch
-	{
-		iless const *p;
-		iless_ch(iless const &l) : p(&l) { }
-		bool operator()(TCHAR a, TCHAR b) const
-		{
-			return _totupper(a) < _totupper(b);
-			//return p->ctype.toupper(a) < p->ctype.toupper(b);
-		}
-	};
-
-	template<class T>
-	static T const &use_facet(std::locale const &loc)
-	{
-		return std::
-#if defined(_USEFAC)
-			_USE(loc, T)
-#else
-			use_facet<T>(loc)
-#endif
-			;
-	}
-
-public:
-	iless(std::locale const &loc) : ctype(static_cast<std::ctype<TCHAR> const &>(use_facet<std::ctype<TCHAR> >(loc))) { }
-	bool operator()(std::basic_string<TCHAR> const &a, std::basic_string<TCHAR> const &b) const
-	{
-		return StrCmpLogicalW(a.c_str(), b.c_str()) < 0;
-		//return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), iless_ch(*this));
-	}
-};
 template<typename F, typename C> struct Comparator { F f; C c; Comparator(F f, C c) : f(f), c(c) { } template<class T> bool operator()(T const &a, T const &b) const { return c(f(a), f(b)); } };
 template<typename F> struct Comparator<F, void> { F f; Comparator(F f) : f(f) { } template<class T> bool operator()(T const &a, T const &b) const { return f(a) < f(b); } };
 template<typename F> Comparator<F, void> comparator(F f) { return Comparator<F, void>(f); }
@@ -987,13 +1269,13 @@ private:
 
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0 && (pLV->item.mask & LVIF_TEXT) != 0)
 		{
-			std::basic_string<TCHAR> name, path;
+			std::basic_string<TCHAR> path;
 			switch (pLV->item.iSubItem)
 			{
 			case COLUMN_INDEX_NAME:
-				_tcsncpy(pLV->item.pszText, row.name(name).c_str(), pLV->item.cchTextMax);
+				_tcsncpy(pLV->item.pszText, row.combined_name().c_str(), pLV->item.cchTextMax);
 				{
-					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + name, pLV->item.iItem, row.attributes(), true);
+					int iImage = this->CacheIcon(adddirsep(GetPath(*row.pIndex, row.parent(), path)) + row.combined_name(), pLV->item.iItem, row.attributes(), true);
 					if (iImage >= 0) { pLV->item.iImage = iImage; }
 				}
 				break;
@@ -1100,15 +1382,22 @@ private:
 	template<class StrCmp>
 	class NameComparator
 	{
-		std::basic_string<TCHAR> name1, name2;
-		StrCmp cmp;
+		StrCmp less;
 	public:
-		NameComparator(StrCmp const &cmp) : cmp(cmp) { }
+		NameComparator(StrCmp const &less) : less(less) { }
 		bool operator()(DataRow const &a, DataRow const &b)
 		{
-			name1.erase(name1.begin(), name1.end());
-			name2.erase(name2.begin(), name2.end());
-			return this->cmp(a.name(name1), b.name(name2));
+			bool less = this->less(a.file_name(), b.file_name());
+			if (!less && !this->less(b.file_name(), a.file_name()))
+			{ less = this->less(a.stream_name(), b.stream_name()); }
+			return less;
+		}
+		bool operator()(DataRow const &a, DataRow const &b) const
+		{
+			bool less = this->less(a.file_name(), b.file_name());
+			if (!less && !this->less(b.file_name(), a.file_name()))
+			{ less = this->less(a.stream_name(), b.stream_name()); }
+			return less;
 		}
 	};
 
@@ -1118,11 +1407,13 @@ private:
 	template<class StrCmp>
 	class PathComparator
 	{
-		std::basic_string<TCHAR> path1, path2;
+		mutable std::basic_string<TCHAR> path1, path2;
 		StrCmp cmp;
 	public:
 		PathComparator(StrCmp const &cmp) : cmp(cmp) { }
 		bool operator()(DataRow const &a, DataRow const &b)
+		{ return this->cmp(GetPath(*a.pIndex, a.parent(), path1), GetPath(*b.pIndex, b.parent(), path2)); }
+		bool operator()(DataRow const &a, DataRow const &b) const
 		{ return this->cmp(GetPath(*a.pIndex, a.parent(), path1), GetPath(*b.pIndex, b.parent(), path2)); }
 	};
 
@@ -1140,25 +1431,26 @@ private:
 		bool cancelled = false;
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0)
 		{
-			std::locale loc;
-
+			//natural_less<TCHAR> less;
+			std::locale loc("");
+			iless less(loc);
 			try
 			{
 				// TODO: Compare paths case-insensitively
 				switch (pLV->iSubItem)
 				{
-				case COLUMN_INDEX_NAME: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(name_comparator(iless(loc)))); break;
-				case COLUMN_INDEX_PATH: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(path_comparator(iless(loc)))); break;
-				case COLUMN_INDEX_SIZE: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::size, _1)))); break;
-				case COLUMN_INDEX_SIZE_ON_DISK: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::sizeOnDisk, _1)))); break;
-				case COLUMN_INDEX_CREATION_TIME: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::creationTime, _1)))); break;
-				case COLUMN_INDEX_MODIFICATION_TIME: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::modificationTime, _1)))); break;
-				case COLUMN_INDEX_ACCESS_TIME: std::stable_sort(this->rows.begin(), this->rows.end(), cancellable_comparator(comparator(boost::bind(&DataRow::accessTime, _1)))); break;
+				case COLUMN_INDEX_NAME: const_pred_stable_sort(this->rows, cancellable_comparator(name_comparator(less))); break;
+				case COLUMN_INDEX_PATH: const_pred_stable_sort(this->rows, cancellable_comparator(path_comparator(less))); break;
+				case COLUMN_INDEX_SIZE: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::size, _1)))); break;
+				case COLUMN_INDEX_SIZE_ON_DISK: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::sizeOnDisk, _1)))); break;
+				case COLUMN_INDEX_CREATION_TIME: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::creationTime, _1)))); break;
+				case COLUMN_INDEX_MODIFICATION_TIME: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::modificationTime, _1)))); break;
+				case COLUMN_INDEX_ACCESS_TIME: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::accessTime, _1)))); break;
 				default: __debugbreak(); break;
 				}
 				if (hditem.lParam)
 				{
-					std::reverse(this->rows.begin(), this->rows.end());
+					boost::reverse(this->rows);
 				}
 			}
 			catch (CStructured_Exception &ex)
@@ -1343,25 +1635,26 @@ private:
 				if (index)
 				{
 					dlg.SetProgressTitle(_T("Searching..."));
-					std::basic_string<TCHAR> tempName;
-					tempName.reserve(1024);
 					try
 					{
+						tchar_ci_traits const traits;
+						std::basic_string<TCHAR> const colon = _T(":");
 						this->rows.reserve(index->size());
 						for (size_t i = 0; i < index->size(); i++)
 						{
 							if (dlg.HasUserCancelled())
 							{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
-							tempName.erase(tempName.begin(), tempName.end());
-							index->get_name_by_index(i, tempName);
+							DataRow const row(index, i);
 							if (dlg.ShouldUpdate())
 							{
 								dlg.SetProgress(i, index->size());
-								dlg.SetProgressText(boost::make_iterator_range(tempName.data(), tempName.data() + tempName.size()));
+								dlg.SetProgressText(row.file_name());
 							}
-							if (wildcard(pattern.begin(), pattern.end(), tempName.begin(), tempName.end(), tchar_ci_traits()))
+							if (row.stream_name().empty()
+								? wildcard(pattern, row.file_name(), traits)
+								: wildcard(pattern, boost::join(row.file_name(), boost::join(colon, row.stream_name())), traits))
 							{
-								this->rows.push_back(DataRow(index, i));
+								this->rows.push_back(row);
 							}
 						}
 					}
@@ -1409,7 +1702,7 @@ private:
 
 	void OnHelpAbout(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
 	{
-		this->MessageBox(_T("© Mehrdad Niknami"), _T("About"), MB_ICONINFORMATION);
+		this->MessageBox(_T("© 2012 Mehrdad N.\r\nAll rights reserved."), _T("About"), MB_ICONINFORMATION);
 	}
 
 	void OnFileFitColumns(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)

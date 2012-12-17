@@ -24,7 +24,7 @@ public:
 	virtual size_t size() const = 0;
 	virtual CombinedRecord const &at(size_t const i) const = 0;
 	virtual SegmentNumber get_name(SegmentNumber segmentNumber, std::basic_string<TCHAR> &s) const = 0;
-	virtual void get_name_by_index(size_t const i, std::basic_string<TCHAR> &s) const = 0;
+	virtual std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > get_name_by_index(size_t const i) const = 0;
 	virtual std::basic_string<TCHAR> const &volumePath() const = 0;
 
 	static NtfsIndex *create(winnt::NtFile const &volume, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground);
