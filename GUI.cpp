@@ -1776,6 +1776,28 @@ private:
 		this->MessageBox(_T("© 2012 Mehrdad N.\r\nAll rights reserved."), _T("About"), MB_ICONINFORMATION);
 	}
 
+	void OnHelpRegex(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		this->MessageBox(
+			_T("To find a file, select the drive you want to search, enter part of the file name or path, and click Search.\r\n\r\n")
+			_T("You can either use wildcards, which are the default, or regular expressions, which require starting the pattern with a '>' character.\r\n\r\n")
+			_T("Wildcards work the same as in Windows; regular expressions are implemented using the Boost.Xpressive library.\r\n\r\n")
+			_T("Some common regular expressions:\r\n")
+			_T(".\t= A single character\r\n")
+			_T("\\+\t= A plus symbol (backslash is the escape character)\r\n")
+			_T("[a-cG-K]\t= A single character from a to c or from G to K\r\n")
+			_T("(abc|def)\t= Either \"abc\" or \"def\"\r\n\r\n")
+			_T("\"Quantifiers\" can follow any expression:\r\n")
+			_T("*\t= Zero or more occurrences\r\n")
+			_T("+\t= One or more occurrences\r\n")
+			_T("{m,n}\t= Between m and n occurrences (n is optional)\r\n")
+			_T("Examples of regular expressions:\r\n")
+			_T("Hi{2,}.*Bye= At least two occurrences of \"Hi\", followed by any number of characters, followed by \"Bye\"\r\n")
+			_T(".*\t= At least zero characters\r\n")
+			_T("Hi.+\\+Bye\t= At least one character between \"Hi\" and \"+Bye\"\r\n")
+		, _T("Regular expressions"), MB_ICONINFORMATION);
+	}
+
 	void OnFileFitColumns(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
 	{
 		WTL::CListViewCtrl &wndListView = this->lvFiles;
@@ -1810,6 +1832,7 @@ private:
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)
 		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)
+		COMMAND_ID_HANDLER_EX(ID_HELP_USINGREGULAREXPRESSIONS, OnHelpRegex)
 		COMMAND_HANDLER_EX(IDOK, BN_CLICKED, OnSearch)
 		COMMAND_HANDLER_EX(IDC_COMBODRIVE, CBN_SELCHANGE, OnSearchParamsChange)
 		COMMAND_HANDLER_EX(IDC_COMBODRIVE, CBN_EDITCHANGE, OnSearchParamsChange)

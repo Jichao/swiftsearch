@@ -127,6 +127,7 @@ BEGIN
     END
     POPUP "&Help"
     BEGIN
+        MENUITEM "Using regular e&xpressions",  ID_HELP_USINGREGULAREXPRESSIONS
         MENUITEM "&About",                      ID_HELP_ABOUT
     END
 END
