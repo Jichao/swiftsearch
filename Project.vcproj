@@ -51,10 +51,11 @@
 			/>
 			<Tool
 				Name="VCCLCompilerTool"
-				AdditionalOptions="/we4535 /Zm200 /MP"
+				AdditionalOptions="/we4535 /Zm200"
 				Optimization="0"
 				AdditionalIncludeDirectories=""
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;_DEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
+				MinimalRebuild="true"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="1"
 				UsePrecompiledHeader="2"
@@ -76,7 +77,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
-				AdditionalDependencies="&quot;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib&quot;"
+				AdditionalDependencies="libcmtd.lib &quot;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib&quot;"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="C:\WinDDK\3790.1830\lib\wxp\i386"
 				GenerateDebugInformation="true"
@@ -136,10 +137,11 @@
 			/>
 			<Tool
 				Name="VCCLCompilerTool"
-				AdditionalOptions="/we4535 /Zm200 /MP"
+				AdditionalOptions="/we4535 /Zm200"
 				Optimization="0"
 				AdditionalIncludeDirectories=""
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_AMD64_;_DEBUG;_CONSOLE;_WIN64;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
+				MinimalRebuild="true"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="1"
 				UsePrecompiledHeader="2"
@@ -394,7 +396,7 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				AdditionalOptions="/we4535 /Zm200 /MP"
-				Optimization="1"
+				Optimization="2"
 				AdditionalIncludeDirectories="&quot;$(SystemDrive)\WinDDK\3790.1830\inc\atl30&quot;;&quot;$(SystemDrive)\WinDDK\3790.1830\inc\crt&quot;;&quot;$(SystemDrive)\WinDDK\3790.1830\inc\wnet&quot;;&quot;$(SystemDrive)\WinDDK\3790.1830\inc\wxp&quot;"
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;NDEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
 				RuntimeLibrary="2"
@@ -482,7 +484,7 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				AdditionalOptions="/we4535 /Zm200 /MP"
-				Optimization="1"
+				Optimization="2"
 				AdditionalIncludeDirectories="&quot;$(SystemDrive)\WinDDK\3790.1830\inc\atl30&quot;;&quot;$(SystemDrive)\WinDDK\3790.1830\inc\crt&quot;;&quot;$(SystemDrive)\WinDDK\3790.1830\inc\wnet&quot;;&quot;$(SystemDrive)\WinDDK\3790.1830\inc\wxp&quot;"
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_AMD64_;NDEBUG;_CONSOLE;_WIN64;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
 				RuntimeLibrary="2"
@@ -604,6 +606,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\Matcher.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\NtfsIndex.cpp"
 				>
 			</File>
@@ -697,6 +703,10 @@
 			</File>
 			<File
 				RelativePath=".\GUI.hpp"
+				>
+			</File>
+			<File
+				RelativePath=".\Matcher.hpp"
 				>
 			</File>
 			<File

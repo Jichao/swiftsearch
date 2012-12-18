@@ -1,7 +1,6 @@
 #pragma once
 
 #include <stdarg.h>
-#include <stdarg.h>
 #include <tchar.h>
 
 class CMainDlgBase

@@ -245,9 +245,121 @@ namespace std
 	#endif
 	}
 
+
+#if !defined(_NATIVE_WCHAR_T_DEFINED)
+#ifdef _DLL
+	namespace std
+	{
+		template <class> class ctype;
+		template <> class ctype<wchar_t>;
+	}
+#undef _DLL
+#include <xlocale>
+#define _DLL
+	namespace std
+	{
+		template <>
+		class ctype<wchar_t> : public ctype_base {
+		public:
+			typedef wchar_t _E;
+			typedef _E char_type;
+			bool is(mask _M, _E _C) const
+				{return ((_Ctype._Table[(wchar_t)_C] & _M) != 0); }
+			const _E *is(const _E *_F, const _E *_L, mask *_V) const
+				{for (; _F != _L; ++_F, ++_V)
+					*_V = _Ctype._Table[(wchar_t)*_F];
+				return (_F); }
+			const _E *scan_is(mask _M, const _E *_F,
+				const _E *_L) const
+				{for (; _F != _L && !is(_M, *_F); ++_F)
+					;
+				return (_F); }
+			const _E *scan_not(mask _M, const _E *_F,
+				const _E *_L) const
+				{for (; _F != _L && is(_M, *_F); ++_F)
+					;
+				return (_F); }
+			_E tolower(_E _C) const
+				{return (do_tolower(_C)); }
+			const _E *tolower(_E *_F, const _E *_L) const
+				{return (do_tolower(_F, _L)); }
+			_E toupper(_E _C) const
+				{return (do_toupper(_C)); }
+			const _E *toupper(_E *_F, const _E *_L) const
+				{return (do_toupper(_F, _L)); }
+			_E widen(wchar_t _X) const
+				{return (_X); }
+			const _E *widen(const wchar_t *_F, const wchar_t *_L, _E *_V) const
+				{memcpy(_V, _F, _L - _F);
+				return (_L); }
+			_E narrow(_E _C, wchar_t _D = '\0') const
+				{(_D); return (_C); }
+			const _E *narrow(const _E *_F, const _E *_L, wchar_t _D,
+				wchar_t *_V) const
+				{(_D);memcpy(_V, _F, _L - _F);
+				return (_L); }
+			static locale::id id;
+			explicit ctype(const mask *_Tab = 0, bool _Df = false,
+				size_t _R = 0)
+				: ctype_base(_R)
+				{_Lockit Lk;
+				_Init(_Locinfo());
+				if (_Ctype._Delfl)
+					free((void *)_Ctype._Table), _Ctype._Delfl = false;
+				if (_Tab == 0)
+					_Ctype._Table = _Cltab;
+				else
+					_Ctype._Table = _Tab, _Ctype._Delfl = _Df; }
+			ctype(const _Locinfo& _Lobj, size_t _R = 0)
+				: ctype_base(_R) {_Init(_Lobj); }
+			static size_t __cdecl _Getcat()
+				{return (_LC_CTYPE); }
+			static const size_t table_size;
+		_PROTECTED:
+			virtual ~ctype()
+				{if (_Ctype._Delfl)
+					free((void *)_Ctype._Table); }
+		protected:
+			static void __cdecl _Term(void)
+				{free((void *)_Cltab); }
+			void _Init(const _Locinfo& _Lobj)
+				{_Lockit Lk;
+				_Ctype = _Lobj._Getctype();
+				if (_Cltab == 0)
+					{_Cltab = _Ctype._Table;
+					atexit(_Term);
+					_Ctype._Delfl = false; }}
+			virtual _E do_tolower(_E _C) const
+				{return (_E)(_Tolower((wchar_t)_C, &_Ctype)); }
+			virtual const _E *do_tolower(_E *_F, const _E *_L) const
+				{for (; _F != _L; ++_F)
+					*_F = (_E)_Tolower(*_F, &_Ctype);
+				return ((const _E *)_F); }
+			virtual _E do_toupper(_E _C) const
+				{return ((_E)_Toupper((wchar_t)_C, &_Ctype)); }
+			virtual const _E *do_toupper(_E *_F, const _E *_L) const
+				{for (; _F != _L; ++_F)
+					*_F = (_E)_Toupper(*_F, &_Ctype);
+				return ((const _E *)_F); }
+			const mask *table() const _THROW0()
+				{return (_Ctype._Table); }
+			static const mask * __cdecl classic_table() _THROW0()
+				{_Lockit Lk;
+				if (_Cltab == 0)
+					locale::classic();      // force locale::_Init() call
+				return (_Cltab); }
+		private:
+			_Locinfo::_Ctypevec _Ctype;
+			static const mask *_Cltab;
+		};
+		__declspec(selectany) locale::id ctype<wchar_t>::id;
+		__declspec(selectany) const ctype<wchar_t>::mask *ctype<wchar_t>::_Cltab = NULL;  // TODO: Fix me
+	}
+#endif
+#endif
+
 #	include <sstream>  // get rid of warnings
 #pragma warning(pop)
-
 
 #include <locale>
 using std::codecvt;

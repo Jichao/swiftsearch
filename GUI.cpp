@@ -30,17 +30,6 @@
 #include <boost/smart_ptr/scoped_array.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
 
-#if 0
-#include <boost/xpressive/detail/dynamic/matchable.hpp>
-#define clear() resize(0)
-#define push_back(x) operator +=(x)
-#include <boost/xpressive/detail/dynamic/parser_traits.hpp>
-#undef  push_back
-#undef clear
-#include <boost/xpressive/match_results.hpp>
-#include <boost/xpressive/xpressive_dynamic.hpp>
-#endif
-
 #include <Windows.h>
 #include <WinUser.h>
 #include <ComDef.h>
@@ -66,14 +55,16 @@ extern ATL::CComModule _Module;
 #include "resource.h"
 #include "BackgroundWorker.hpp"
 #include "CModifiedDialogImpl.hpp"
+#include "Matcher.hpp"
 #include "nformat.hpp"
 #include "NtObjectMini.hpp"
-#include "path.hpp"
-
 #include "NtfsIndex.hpp"
 #include "NtfsIndexThread.hpp"
+#include "path.hpp"
 #include "relative_iterator.hpp"
 #include "ShellItemIDList.hpp"
+
+//#include <boost/xpressive/regex_error.hpp>
 
 inline TCHAR totupper(TCHAR c) { return c < SCHAR_MAX ? (_T('A') <= c && c <= _T('Z')) ? c + (_T('a') - _T('A')) : c : _totupper(c); }
 #ifdef _totupper
@@ -146,17 +137,7 @@ template<class It1, class It2, class Tr>
 bool wildcard(It1 patBegin, It1 const patEnd, It2 strBegin, It2 const strEnd, Tr const &tr = std::char_traits<typename std::iterator_traits<It2>::value_type>())
 {
 	(void)tr;
-	if (patBegin == patEnd) { throw std::domain_error("Invalid string!"); }
-	if (strBegin == strEnd)
-	{
-		while (patBegin != patEnd)
-		{
-			if (*patBegin == _T('*'))
-			{ ++patBegin; }
-			else { return false; }
-		}
-		return true;
-	}
+	if (patBegin == patEnd) { return strBegin == strEnd; }
 	//http://xoomer.virgilio.it/acantato/dev/wildcard/wildmatch.html
 	It2 s(strBegin);
 	It1 p(patBegin);
@@ -184,7 +165,7 @@ loopStart:
 			{ goto starCheck; }
 		}
 	}
-	if (p != patEnd && tr.eq(*p, _T('*'))) { ++p; }
+	while (p != patEnd && tr.eq(*p, _T('*'))) { ++p; }
 	return p == patEnd;
 
 starCheck:
@@ -636,11 +617,11 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 	WTL::CProgressBarCtrl progressBar;
 	bool canceled;
 	bool invalidated;
-	DWORD shownTime;
 	DWORD creationTime;
 	DWORD lastUpdateTime;
 	HWND parent;
 	std::basic_string<TCHAR> lastProgressText, lastProgressTitle;
+	bool windowCreated;
 	int lastProgress, lastProgressTotal;
 
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
@@ -651,7 +632,6 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 		this->progressBar.Attach(this->GetDlgItem(IDC_PROGRESS1));
 		this->DlgResize_Init(false, false, 0);
 
-		this->creationTime = GetTickCount();
 		return TRUE;
 	}
 
@@ -703,17 +683,18 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 		}
 	}
 
-	static bool WaitWithMessageLoop(HANDLE const handle, DWORD timeout = INFINITE)
+	static bool WaitMessageLoop()
 	{
 		for (;;)
 		{
 			MSG msg;
-			DWORD result = MsgWaitForMultipleObjectsEx(handle == NULL ? 0 : 1, handle == NULL ? NULL : &handle, timeout, QS_INPUT | QS_PAINT | QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
+			unsigned long const nMessages = 0;
+			DWORD result = MsgWaitForMultipleObjectsEx(nMessages, NULL, UPDATE_INTERVAL, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 			if (result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT)
 			{ return result != WAIT_TIMEOUT; }
-			else if (result == WAIT_OBJECT_0 + 1)
+			else if (result == WAIT_OBJECT_0 + nMessages)
 			{
-				if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE | PM_QS_INPUT | PM_QS_PAINT | PM_QS_SENDMESSAGE))
+				while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 				{
 					TranslateMessage(&msg);
 					DispatchMessage(&msg);
@@ -729,28 +710,17 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 	}
 
 public:
-	enum { UPDATE_INTERVAL = 20 };
+	enum { UPDATE_INTERVAL = 25 };
 	CProgressDialog(ATL::CWindow parent)
-		: Base(true), parent(parent), shownTime(0 /*NOT GetTickCount()!*/), lastUpdateTime(GetTickCount()), creationTime(GetTickCount()), lastProgress(0), lastProgressTotal(1), invalidated(false), canceled(false)
+		: Base(true), parent(parent), lastUpdateTime(0), creationTime(GetTickCount()), lastProgress(0), lastProgressTotal(1), invalidated(false), canceled(false), windowCreated(false)
 	{
 	}
 
 	~CProgressDialog()
 	{
-		if (false)
-		{
-			DWORD now = GetTickCount(), minDelay = this->GetMinDelay();
-			if (now - this->shownTime < minDelay)
-			{
-				WaitWithMessageLoop(NULL, minDelay - (now - this->shownTime));
-			}
-		}
-		if (this->shownTime)
+		if (this->windowCreated)
 		{
 			EnableWindowRecursive(parent, TRUE);
-		}
-		if (this->IsWindow())
-		{
 			this->DestroyWindow();
 		}
 	}
@@ -763,30 +733,26 @@ public:
 
 	bool HasUserCancelled()
 	{
-		if (this->ShouldUpdate())
+		bool justCreated = false;
+		if (!this->windowCreated && abs(static_cast<int>(GetTickCount() - this->creationTime)) >= static_cast<int>(this->GetMinDelay()))
 		{
-			if (this->shownTime == 0 && abs(static_cast<int>(GetTickCount() - this->creationTime)) >= static_cast<int>(this->GetMinDelay()))
+			this->windowCreated = !!this->Create(parent);
+			EnableWindowRecursive(parent, FALSE);
+			true;
+			this->Flush();
+		}
+		if (this->windowCreated && (justCreated || this->ShouldUpdate()))
+		{
+			MSG msg;
+			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 			{
-				this->Create(parent);
-				this->ShowWindow(SW_SHOW);
-				this->shownTime = GetTickCount();
-				EnableWindowRecursive(parent, FALSE);
-			}
-			if (this->invalidated)
-			{ this->Flush(); }
-			if (this->IsWindow())
-			{
-				MSG msg;
-				while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+				if (!this->IsDialogMessage(&msg))
 				{
-					if (!this->IsDialogMessage(&msg))
-					{
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
-					}
-					if (msg.message == WM_QUIT)
-					{ this->canceled = true; }
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
 				}
+				if (msg.message == WM_QUIT)
+				{ this->canceled = true; }
 			}
 		}
 		return this->canceled;
@@ -794,20 +760,18 @@ public:
 
 	void Flush()
 	{
-		if (this->IsWindow())
+		if (this->invalidated && this->windowCreated)
 		{
+			this->invalidated = false;
 			this->SetWindowText(this->lastProgressTitle.c_str());
 			this->progressBar.SetRange32(0, this->lastProgressTotal);
 			this->progressBar.SetPos(this->lastProgress);
 			this->progressText.SetWindowText(this->lastProgressText.c_str());
+			this->progressBar.UpdateWindow();
+			this->progressText.UpdateWindow();
+			this->UpdateWindow();
+			this->lastUpdateTime = GetTickCount();
 		}
-		this->invalidated = false;
-		this->SetUpdated();
-	}
-
-	void SetUpdated()
-	{
-		this->lastUpdateTime = GetTickCount();
 	}
 
 	void SetProgress(long long current, long long total)
@@ -817,12 +781,9 @@ public:
 			current = static_cast<long long>((static_cast<double>(current) / total) * INT_MAX);
 			total = INT_MAX;
 		}
-		bool const flush = current == total && this->lastProgress != this->lastProgressTotal;
 		this->invalidated |= this->lastProgress != current || this->lastProgressTotal != total;
 		this->lastProgressTotal = static_cast<int>(total);
 		this->lastProgress = static_cast<int>(current);
-
-		if (flush) { this->Flush(); }
 	}
 
 	void SetProgressTitle(LPCTSTR title)
@@ -1078,9 +1039,12 @@ private:
 		index = this->lvFiles.HitTest(pnmItem->ptAction, 0);
 		if (index >= 0)
 		{
-			std::basic_string<TCHAR> path = GetSubItemText(this->lvFiles, index, COLUMN_INDEX_PATH);
-			path += GetSubItemText(this->lvFiles, index, COLUMN_INDEX_NAME);
-			path.erase(std::find(basename(path.begin(), path.end()), path.end(), _T(':')), path.end());
+			DataRow const &row = this->rows[index];
+			std::basic_string<TCHAR> path;
+			adddirsep(GetPath(*row.pIndex, row.parent(), path));
+			boost::iterator_range<TCHAR const *> const fileName = row.file_name();
+			if (fileName != boost::as_literal(_T("."))) { path.append(fileName.begin(), fileName.end()); }
+
 			CShellItemIDList pItemIdList;
 			SFGAOF sfgao;
 			HRESULT hr = SHParseDisplayName(path.c_str(), NULL, &pItemIdList.m_pidl, 0, &sfgao);
@@ -1100,18 +1064,27 @@ private:
 						hr = contextMenu->QueryContextMenu(menu, 0, minID, UINT_MAX, 0x80 /*CMF_ITEMMENU*/);
 						if (SUCCEEDED(hr))
 						{
+							UINT openContainingFolderId;
 							{
 								MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
 								menu.InsertMenuItem(0, TRUE, &mii);
 							}
 							{
-								MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING, MFT_STRING, MFS_DEFAULT | MFS_HILITE, minID - 1, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
+								std::basic_stringstream<TCHAR> ssName;
+								ssName.imbue(std::locale(""));
+								ssName << _T("File #") << static_cast<unsigned long>(row.record().first);
+								std::basic_string<TCHAR> name = ssName.str();
+								MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
 								menu.InsertMenuItem(0, TRUE, &mii);
-								menu.SetMenuDefaultItem(0, TRUE);
+							}
+							{
+								MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, (openContainingFolderId = minID - 1), NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
+								menu.InsertMenuItem(0, TRUE, &mii);
+								menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
 							}
 							WTL::CPoint cursorPos;
 							GetCursorPos(&cursorPos);
-							BOOL id = menu.TrackPopupMenu(
+							UINT id = menu.TrackPopupMenu(
 								TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
 								(GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN | TPM_HORNEGANIMATION : TPM_LEFTALIGN | TPM_HORPOSANIMATION),
 								cursorPos.x, cursorPos.y, *this);
@@ -1119,14 +1092,14 @@ private:
 							{
 								// User cancelled
 							}
-							else if (id == minID - 1)
+							else if (id == openContainingFolderId)
 							{
 								if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, pItemIdList.m_pidl, WT_EXECUTEINUITHREAD))
 								{
 									pItemIdList.Detach();
 								}
 							}
-							else
+							else if (id >= minID)
 							{
 								CMINVOKECOMMANDINFO cmd = { sizeof(cmd), CMIC_MASK_ASYNCOK, *this, reinterpret_cast<LPCSTR>(id - minID), NULL, NULL, SW_SHOW };
 								hr = contextMenu->InvokeCommand(&cmd);
@@ -1544,37 +1517,27 @@ private:
 
 	void OnSearch(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
-		if (this->txtFileName.GetWindowTextLength() > 0)
+		ATL::CComBSTR name;
+		this->txtFileName.GetWindowText(*&name);
+
+		WTL::CWaitCursor wait;
+
+		std::basic_string<TCHAR> 
+			driveLetter = this->GetCurrentDrive(),
+			pattern = std::basic_string<TCHAR>(name);
+		bool const isRegex = pattern.find(_T('>')) == 0;
+		bool isPath = isRegex || pattern.find(_T('\\')) != std::basic_string<TCHAR>::npos;
+		try
 		{
-			ATL::CComBSTR name;
-			this->txtFileName.GetWindowText(*&name);
-
-			WTL::CWaitCursor wait;
-
-			std::basic_string<TCHAR> 
-				driveLetter = this->GetCurrentDrive(),
-				pattern = _T("*") + std::basic_string<TCHAR>(name) + _T("*");
-
-#if 0
-			replace_all(pattern, _T("#"), _T("\\#")); replace_all(pattern, _T("\\"), _T("\\\\"));
-			replace_all(pattern, _T("("), _T("\\(")); replace_all(pattern, _T(")"), _T("\\)"));
-			replace_all(pattern, _T("["), _T("\\[")); replace_all(pattern, _T("]"), _T("\\]"));
-			replace_all(pattern, _T("{"), _T("\\{")); replace_all(pattern, _T("}"), _T("\\}"));
-			replace_all(pattern, _T("^"), _T("\\^")); replace_all(pattern, _T("$"), _T("\\$"));
-			replace_all(pattern, _T("+"), _T("\\+")); replace_all(pattern, _T("*"), _T(".*"));
-			replace_all(pattern, _T("."), _T("\\.")); replace_all(pattern, _T("?"), _T("."));
-			replace_all(pattern, _T("|"), _T("\\|"));
-			typedef boost::xpressive::basic_regex<std::basic_string<TCHAR>::const_iterator> tregex;
-			tregex patternRegex;
-			try { patternRegex = tregex::compile(pattern.begin(), pattern.end(), boost::xpressive::regex_constants::icase); }
-			catch (boost::xpressive::regex_error &ex)
+			bool const isRegex = !pattern.empty() && pattern[0] == _T('>');
+			if (!isRegex)
 			{
-				std::basic_string<TCHAR> msg;
-				std::copy(ex.what(), ex.what() + strlen(ex.what()), std::inserter(msg, msg.end()));
-				this->MessageBox(tformat(_T("You entered an invalid regular expression pattern.\nIf you're using wildcards, change '*' to '.*' and change '?' to '.'.\n\nError: %s"), msg.c_str()).c_str(), _T("Invalid Pattern"), MB_OK | MB_ICONERROR);
-				return;
+				if (pattern.find(_T('"')) != std::basic_string<TCHAR>::npos)
+				{ replace_all(pattern, _T("\""), _T("")); }
+				else if (pattern.find(_T('*')) == std::basic_string<TCHAR>::npos)
+				{ pattern = _T("*") + pattern + _T("*"); }
 			}
-#endif
+			std::auto_ptr<Matcher> const matcher(Matcher::compile(boost::make_iterator_range(pattern.data() + (isRegex ? 1 : 0), pattern.data() + pattern.size()), isRegex));
 
 			bool const ownerData = (this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0;
 			this->iconLoader->clear();
@@ -1643,48 +1606,132 @@ private:
 					dlg.SetProgressTitle(_T("Reading drive..."));
 					while (!dlg.HasUserCancelled() && (index = pThread->index(), index == NULL))
 					{
-						CProgressDialog::WaitWithMessageLoop(NULL, CProgressDialog::UPDATE_INTERVAL);
+						CProgressDialog::WaitMessageLoop();
 						if (dlg.ShouldUpdate())
 						{
 							TCHAR text[256];
 							_stprintf(text, _T("Reading file table... %3u%% done"), static_cast<unsigned long>(100 * static_cast<unsigned long long>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)()));
 							dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
 							dlg.SetProgress(pThread->progress(), (std::numeric_limits<unsigned long>::max)());
+							dlg.Flush();
 						}
 					}
 				}
 				if (index)
 				{
-					dlg.SetProgressTitle(_T("Searching..."));
-					try
+					std::basic_stringstream<TCHAR> title;
+					title << _T("Searching ") << (isPath ? _T("file paths, please wait") : _T("file names")) << _T("...");
+					dlg.SetProgressTitle(title.str().c_str());
+					long volatile i = 0;
+					class ResizeRows
 					{
+						ResizeRows &operator =(ResizeRows const &) { throw std::logic_error(""); }
+					public:
+						long volatile nRows;
+						std::vector<DataRow> &rows;
+						ResizeRows(std::vector<DataRow> &rows, size_t tempSize)
+							: nRows(0), rows(rows)
+						{
+							rows.resize(tempSize);
+						}
+						~ResizeRows() { rows.resize(static_cast<size_t>(nRows)); }
+					} resizeRows(rows, index->size());
+					winnt::NtEvent startEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+					class MatcherThread
+					{
+						MatcherThread &operator =(MatcherThread const &) { throw std::logic_error(""); }
+					public:
+						uintptr_t volatile h;
+						winnt::NtEvent startEvent;
+						NtfsIndex const *index;
+						CProgressDialog &dlg;
+						long volatile &i;
+						bool const isPath, isRegex;
 						tchar_ci_traits const traits;
-						std::basic_string<TCHAR> const colon = _T(":");
-						this->rows.reserve(index->size());
-						for (size_t i = 0; i < index->size(); i++)
+						Matcher &matcher;
+						std::vector<DataRow> &rows;
+						bool volatile stop;
+						long volatile &nRows;
+						MatcherThread(NtfsIndex const *index, winnt::NtEvent const &startEvent, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
+							: h(NULL), startEvent(startEvent), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
+						{ }
+						~MatcherThread()
 						{
-							if (dlg.HasUserCancelled())
-							{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
-							DataRow const row(index, i);
-							if (dlg.ShouldUpdate())
+							while (!dlg.HasUserCancelled())
 							{
-								dlg.SetProgress(i, index->size());
-								dlg.SetProgressText(row.file_name());
+								CProgressDialog::WaitMessageLoop();
+								size_t const i(static_cast<size_t>(i));
+								if (i >= index->size()) { break; }
+								if (dlg.ShouldUpdate())
+								{
+									dlg.SetProgress(i, index->size());
+									dlg.SetProgressText(i < index->size() ? index->get_name_by_index(i).first : boost::as_literal(_T("")));
+									dlg.Flush();
+								}
 							}
-							if (row.stream_name().empty()
-								? wildcard(pattern, row.file_name(), traits)
-								: wildcard(pattern, boost::join(row.file_name(), boost::join(colon, row.stream_name())), traits))
+							this->stop = true;
+							WaitForSingleObject(reinterpret_cast<HANDLE>(h), INFINITE);
+						}
+						static unsigned int __stdcall invoke(void *p)
+						{
+							return (*static_cast<MatcherThread *>(p))();
+						}
+						unsigned int operator()()
+						{
+							try
 							{
-								this->rows.push_back(row);
+								std::basic_string<TCHAR> tempPath;
+								tempPath.reserve(32 * 1024);
+								startEvent.NtWaitForSingleObject();
+								while (!this->stop)
+								{
+									size_t const i(static_cast<size_t>(InterlockedIncrement(&i)) - 1);
+									if (i >= index->size()) { break; }
+									DataRow const row(index, i);
+									boost::iterator_range<TCHAR const *> const
+										fileName = row.file_name(), streamName = row.stream_name();
+									bool match;
+									if (isPath)
+									{
+										tempPath.erase(tempPath.begin(), tempPath.end());
+										adddirsep(GetPath(*index, row.parent(), tempPath));
+										tempPath.append(fileName.begin(), fileName.end());
+										if (!streamName.empty())
+										{
+											tempPath.append(1, _T(':'));
+											tempPath.append(streamName.begin(), streamName.end());
+										}
+										match = matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
+									}
+									else { match = matcher(fileName, streamName); }
+									if (match) { rows[static_cast<size_t>(InterlockedIncrement(&nRows)) - 1] = row; }
+								}
+								return 0;
+							}
+							catch (CStructured_Exception &ex)
+							{
+								return ex.GetSENumber();
 							}
 						}
-					}
-					catch (CStructured_Exception &ex)
+					};
+					SYSTEM_INFO si = { };
+					GetSystemInfo(&si);
 					{
-						if (ex.GetSENumber() != ERROR_CANCELLED)
+						boost::ptr_vector<MatcherThread> threads;
+						using std::max;
+						for (unsigned long k = 0; k < max(2, si.dwNumberOfProcessors) - 1; k++)
 						{
-							throw;
+							std::auto_ptr<MatcherThread> p(new MatcherThread(index, startEvent, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
+							unsigned int tid;
+							p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), CREATE_SUSPENDED, &tid);
+							SetThreadPriorityBoost(reinterpret_cast<HANDLE>(p->h), TRUE /* True == Disable */);
+							if (ResumeThread(reinterpret_cast<HANDLE>(p->h)) != static_cast<DWORD>(-1))
+							{
+								threads.push_back(p);
+							}
 						}
+						SetEvent(startEvent.get());
+						// 'threads' destroyed here
 					}
 				}
 			}
@@ -1693,7 +1740,13 @@ private:
 				this->lvFiles.SetItemCountEx(int_cast<int>(this->rows.size()), LVSICF_NOINVALIDATEALL);
 			}
 		}
-		else { this->MessageBox(_T("Please enter a file name."), _T("No Input"), MB_OK | MB_ICONERROR); }
+		catch (std::domain_error &ex)
+		{
+			std::basic_string<TCHAR> msg;
+			std::copy(ex.what(), ex.what() + strlen(ex.what()), std::inserter(msg, msg.end()));
+			this->MessageBox(tformat(_T("Invalid regular expression: %s\nRemove the leading '>' if you intended to use wildcards."), msg.c_str()).c_str(), _T("Invalid Regex"), MB_OK | MB_ICONERROR);
+			return;
+		}
 	}
 
 	void OnShowWindow(BOOL bShow, UINT /*nStatus*/)

@@ -129,9 +129,9 @@ int run(HINSTANCE hInstance, int nShowCmd)
 }
 
 #if defined(NDEBUG)
-#pragma comment(linker, "/Subsystem:Windows")
+#pragma comment(linker, "/Subsystem:Windows,5.02")
 #else
-#pragma comment(linker, "/Subsystem:Console")
+#pragma comment(linker, "/Subsystem:Console,5.02")
 #endif
 
 int _tmain(int argc, LPTSTR argv[])
