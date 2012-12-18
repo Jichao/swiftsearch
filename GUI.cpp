@@ -710,7 +710,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 	}
 
 public:
-	enum { UPDATE_INTERVAL = 25 };
+	enum { UPDATE_INTERVAL = 30 };
 	CProgressDialog(ATL::CWindow parent)
 		: Base(true), parent(parent), lastUpdateTime(0), creationTime(GetTickCount()), lastProgress(0), lastProgressTotal(1), invalidated(false), canceled(false), windowCreated(false)
 	{
@@ -1719,16 +1719,13 @@ private:
 					{
 						boost::ptr_vector<MatcherThread> threads;
 						using std::max;
-						for (unsigned long k = 0; k < max(2, si.dwNumberOfProcessors) - 1; k++)
+						for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
 						{
 							std::auto_ptr<MatcherThread> p(new MatcherThread(index, startEvent, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
 							unsigned int tid;
 							p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), CREATE_SUSPENDED, &tid);
-							SetThreadPriorityBoost(reinterpret_cast<HANDLE>(p->h), TRUE /* True == Disable */);
 							if (ResumeThread(reinterpret_cast<HANDLE>(p->h)) != static_cast<DWORD>(-1))
-							{
-								threads.push_back(p);
-							}
+							{ threads.push_back(p); }
 						}
 						SetEvent(startEvent.get());
 						// 'threads' destroyed here
