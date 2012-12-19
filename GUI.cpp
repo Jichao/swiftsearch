@@ -27,6 +27,7 @@
 #include <boost/range/iterator_range.hpp>
 #include <boost/range/join.hpp>
 #include <boost/range/sub_range.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/scoped_array.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
 
@@ -40,6 +41,7 @@
 #include <CommCtrl.h>
 #include <ntddscsi.h>
 #include <WinIoCtl.h>
+#include <Dbt.h>
 
 #include <atlbase.h>
 #include <atlapp.h>
@@ -864,14 +866,14 @@ class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl
 {
 	enum { IDC_STATUS_BAR = 1100 + 0 };
 	enum { COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_ACCESS_TIME };
-	enum { WM_NOTIFYICON = WM_USER + 123 };
+	enum { WM_NOTIFYICON = WM_USER + 100, WM_THREADERROR = WM_USER + 101 };
 	struct CThemedListViewCtrl : public WTL::CListViewCtrl, public WTL::CThemeImpl<CThemedListViewCtrl> { using WTL::CListViewCtrl::Attach; };
 	CThemedListViewCtrl lvFiles;
 	WTL::CComboBox cmbDrive;
 	WTL::CStatusBarCtrl statusbar;
 	WTL::CProgressBarCtrl statusbarProgress;
 	CUpDownNotify<WTL::CEdit> txtFileName;
-	boost::ptr_vector<NtfsIndexThread> drives;
+	//boost::ptr_vector<NtfsIndexThread> drives;
 	class CoInit
 	{
 		CoInit(CoInit const &) : hr(S_FALSE) { }
@@ -933,7 +935,7 @@ private:
 		this->richEdit.SetFont(this->lvFiles.GetFont());
 		
 		this->statusbar = CreateStatusWindow(WS_CHILD | SBT_TOOLTIPS, NULL, *this, IDC_STATUS_BAR);
-		int const rcStatusPaneWidths[] = { 240, -1 };
+		int const rcStatusPaneWidths[] = { 360, -1 };
 		if ((this->statusbar.GetStyle() & WS_VISIBLE) != 0)
 		{
 			RECT rect; this->lvFiles.GetWindowRect(&rect);
@@ -946,8 +948,18 @@ private:
 		}
 		this->statusbar.SetParts(sizeof(rcStatusPaneWidths) / sizeof(*rcStatusPaneWidths), const_cast<int *>(rcStatusPaneWidths));
 		this->statusbar.SetText(0, _T("Type in a file name and press Search."), 0);
-		RECT rcStatusPane1; this->statusbar.GetRect(1, &rcStatusPane1);
-		this->statusbarProgress.Create(this->statusbar, rcStatusPane1, NULL, WS_CHILD | PBS_SMOOTH);
+		WTL::CRect rcStatusPane1; this->statusbar.GetRect(1, &rcStatusPane1);
+		//this->statusbarProgress.Create(this->statusbar, rcStatusPane1, NULL, WS_CHILD | WS_VISIBLE | PBS_SMOOTH, 0);
+		//this->statusbarProgress.SetRange(0, INT_MAX);
+		//this->statusbarProgress.SetPos(INT_MAX / 2);
+		this->statusbar.ShowWindow(SW_SHOW);
+
+		WTL::CRect clientRect;
+		if (this->lvFiles.GetWindowRect(&clientRect))
+		{
+			this->ScreenToClient(&clientRect);
+			this->lvFiles.SetWindowPos(NULL, 0, 0, clientRect.Width(), clientRect.Height() - rcStatusPane1.Height(), SWP_NOMOVE | SWP_NOZORDER);
+		}
 
 		this->DlgResize_Init(true, false);
 
@@ -982,41 +994,70 @@ private:
 
 		RegisterWaitForSingleObject(&this->hWait, hEvent, &WaitCallback, this->m_hWnd, INFINITE, WT_EXECUTEINUITHREAD);
 
+		this->cmbDrive.SetCurSel(-1);
+		this->cmbDrive.SetCurSel(this->RefreshVolumes());
+
+		this->OnSearchParamsChange(CBN_SELCHANGE, IDC_COMBODRIVE, this->cmbDrive);
+		return TRUE;
+	}
+
+	int RefreshVolumes()
+	{
 		std::basic_string<TCHAR> logicalDrives(GetLogicalDriveStrings(0, NULL) + 1, _T('\0'));
 		logicalDrives.resize(GetLogicalDriveStrings(static_cast<DWORD>(logicalDrives.size()) - 1, &logicalDrives[0]));
-		this->cmbDrive.SetCurSel(-1);
-		int iSel = 0;
+		int iSel = this->cmbDrive.GetCurSel();
 		TCHAR windowsDir[MAX_PATH] = {0};
 		windowsDir[GetWindowsDirectory(windowsDir, sizeof(windowsDir) / sizeof(*windowsDir))] = _T('\0');
 		for (LPCTSTR drive = logicalDrives.c_str(); *drive != _T('\0'); drive += _tcslen(drive) + 1)
 		{
-			//if (IsDriveReady(drive))
+			if (this->cmbDrive.FindStringExact(-1, drive) == CB_ERR)
 			{
 				TCHAR fsName[MAX_PATH];
 				if (GetVolumeInformation(drive, NULL, 0, NULL, 0, NULL, fsName, sizeof(fsName) / sizeof(*fsName)) && _tcsicmp(fsName, _T("NTFS")) == 0)
 				{
-					this->drives.push_back(std::auto_ptr<NtfsIndexThread>(NtfsIndexThread::create(drive)));
-					int index = this->cmbDrive.AddString(drive);
+					boost::intrusive_ptr<NtfsIndexThread> const p(NtfsIndexThread::create(this->m_hWnd, WM_THREADERROR, drive));
+					int const index = this->cmbDrive.AddString(drive);
 					if (drive[0] != _T('\0') && drive[0] == windowsDir[0] && drive[1] == _T(':'))
-					{
-						iSel = index;
-					}
+					{ iSel = index; }
+					if (this->cmbDrive.SetItemDataPtr(index, p.get()) != CB_ERR)
+					{ intrusive_ptr_add_ref(p.get()); }
 				}
 			}
 		}
-		this->cmbDrive.SetCurSel(iSel);
+		return iSel;
+	}
 
-		this->OnSearchParamsChange(CBN_SELCHANGE, IDC_COMBODRIVE, this->cmbDrive);
-		return TRUE;
+	void OnParentNotify(UINT message, UINT nChildID, LPARAM lParam)
+	{
+		(void)nChildID;
+		if (message == WM_DESTROY && reinterpret_cast<HWND>(lParam) == this->cmbDrive)
+		{
+			for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
+			{
+				boost::intrusive_ptr<NtfsIndexThread> const p = static_cast<NtfsIndexThread *>(this->cmbDrive.GetItemDataPtr(i));
+				if (this->cmbDrive.SetItemDataPtr(i, NULL) != CB_ERR)
+				{
+					this->cmbDrive.DeleteString(static_cast<UINT>(i));
+					intrusive_ptr_release(p.get());
+				}
+			}
+		}
 	}
 
 	void OnDestroy()
 	{
 		WTL::CWaitCursor wait;
 		this->iconLoader->clear();
-		this->drives.clear();
 		UnregisterWait(this->hWait);
 		this->DeleteNotifyIcon();
+	}
+
+	std::vector<boost::intrusive_ptr<NtfsIndexThread> > GetDrives()
+	{
+		std::vector<boost::intrusive_ptr<NtfsIndexThread> > drives;
+		for (int i = 0; i < this->cmbDrive.GetCount(); i++)
+		{ drives.push_back(static_cast<NtfsIndexThread *>(this->cmbDrive.GetItemDataPtr(i))); }
+		return drives;
 	}
 
 	LRESULT OnFileNameArrowKey(LPNMHDR pnmh)
@@ -1521,10 +1562,15 @@ private:
 	std::basic_string<TCHAR> GetCurrentDrive()
 	{
 		int const i = this->cmbDrive.GetCurSel();
-		std::basic_string<TCHAR> drive(this->cmbDrive.GetLBTextLen(i), _T('\0'));
-		if (!drive.empty()) { this->cmbDrive.GetLBText(i, &drive[0]); }
-		if (!drive.empty() && !isdirsep(drive[drive.size() - 1]))
-		{ drive += _T('\\'); }
+		int const cch = this->cmbDrive.GetLBTextLen(i);
+		std::basic_string<TCHAR> drive;
+		if (cch >= 0)
+		{
+			drive.resize(cch, _T('\0'));
+			if (!drive.empty()) { this->cmbDrive.GetLBText(i, &drive[0]); }
+			if (!drive.empty() && !isdirsep(drive[drive.size() - 1]))
+			{ drive += _T('\\'); }
+		}
 		return drive;
 	}
 
@@ -1543,6 +1589,73 @@ private:
 		return 0;
 	}
 
+	void RemoveDevice(HANDLE handle)
+	{
+		for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
+		{
+			boost::intrusive_ptr<NtfsIndexThread> const p = static_cast<NtfsIndexThread *>(this->cmbDrive.GetItemDataPtr(i));
+			if (reinterpret_cast<HANDLE>(p->volume()) == handle)
+			{
+				int const curSel = this->cmbDrive.GetCurSel();
+				if (this->cmbDrive.DeleteString(static_cast<UINT>(i)) != CB_ERR)
+				{
+					intrusive_ptr_release(p.get());
+					HANDLE const hThread = reinterpret_cast<HANDLE>(p->thread());
+					p->close();
+					WaitForSingleObject(hThread, INFINITE);
+					if (curSel == i)
+					{ this->OnSearchParamsChange(CBN_SELCHANGE, IDC_COMBODRIVE, this->cmbDrive); }
+				}
+			}
+		}
+	}
+
+	LRESULT OnThreadError(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	{
+		int const errorCode = static_cast<int>(wParam);
+		(void)errorCode;
+		std::auto_ptr<std::basic_string<TCHAR> > const msg(reinterpret_cast<std::basic_string<TCHAR> *>(lParam));
+		this->statusbar.SetWindowText(msg->c_str());
+		return 0;
+	}
+
+	LRESULT OnDeviceChange(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	{
+		switch (wParam)
+		{
+		case DBT_DEVICEQUERYREMOVEFAILED:
+			{
+				this->RefreshVolumes();
+			}
+			break;
+		case DBT_DEVICEQUERYREMOVE:
+			{
+				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
+				if (header.dbch_devicetype == DBT_DEVTYP_HANDLE)
+				{ this->RemoveDevice(reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header).dbch_handle); }
+			}
+			break;
+		case DBT_DEVICEREMOVECOMPLETE:
+			{
+				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
+				if (header.dbch_devicetype == DBT_DEVTYP_HANDLE)
+				{ this->RemoveDevice(reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header).dbch_handle); }
+			}
+			break;
+		case DBT_DEVICEARRIVAL:
+			{
+				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
+				if (header.dbch_devicetype == DBT_DEVTYP_VOLUME)
+				{
+					this->RefreshVolumes();
+				}
+			}
+			break;
+		default: break;
+		}
+		return TRUE;
+	}
+
 	void OnSearch(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
 		ATL::CComBSTR name;
@@ -1553,217 +1666,224 @@ private:
 		std::basic_string<TCHAR> 
 			driveLetter = this->GetCurrentDrive(),
 			pattern = name ? std::basic_string<TCHAR>(name) : std::basic_string<TCHAR>();
-		bool const isRegex = pattern.find(_T('>')) == 0;
-		bool isPath = isRegex || pattern.find(_T('\\')) != std::basic_string<TCHAR>::npos;
-		try
+		if (!driveLetter.empty())
 		{
-			bool const isRegex = !pattern.empty() && pattern[0] == _T('>');
-			if (!isRegex)
+			bool const isRegex = pattern.find(_T('>')) == 0;
+			bool isPath = isRegex || pattern.find(_T('\\')) != std::basic_string<TCHAR>::npos;
+			try
 			{
-				if (pattern.find(_T('"')) != std::basic_string<TCHAR>::npos)
-				{ replace_all(pattern, _T("\""), _T("")); }
-				else if (pattern.find(_T('*')) == std::basic_string<TCHAR>::npos)
-				{ pattern = _T("*") + pattern + _T("*"); }
-			}
-			std::auto_ptr<Matcher> const matcher(Matcher::compile(boost::make_iterator_range(pattern.data() + (isRegex ? 1 : 0), pattern.data() + pattern.size()), isRegex));
+				bool const isRegex = !pattern.empty() && pattern[0] == _T('>');
+				if (!isRegex)
+				{
+					if (pattern.find(_T('"')) != std::basic_string<TCHAR>::npos)
+					{ replace_all(pattern, _T("\""), _T("")); }
+					else if (pattern.find(_T('*')) == std::basic_string<TCHAR>::npos)
+					{ pattern = _T("*") + pattern + _T("*"); }
+				}
+				std::auto_ptr<Matcher> const matcher(Matcher::compile(boost::make_iterator_range(pattern.data() + (isRegex ? 1 : 0), pattern.data() + pattern.size()), isRegex));
 
-			bool const ownerData = (this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0;
-			this->iconLoader->clear();
-			if (ownerData) { this->lvFiles.SetItemCount(0); }
-			else { this->lvFiles.DeleteAllItems(); }
-			this->rows.erase(this->rows.begin(), this->rows.end());
-			this->UpdateWindow();
+				bool const ownerData = (this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0;
+				this->iconLoader->clear();
+				if (ownerData) { this->lvFiles.SetItemCount(0); }
+				else { this->lvFiles.DeleteAllItems(); }
+				this->rows.erase(this->rows.begin(), this->rows.end());
+				this->UpdateWindow();
 
-			class MoveToForeground
-			{
-				bool prevCached, prevBackground;
-				NtfsIndexThread *pThread;
-				MoveToForeground(MoveToForeground const &) { throw std::logic_error(""); }
-				MoveToForeground &operator =(MoveToForeground const &) { throw std::logic_error(""); }
-			public:
-				MoveToForeground(NtfsIndexThread *pThread = NULL)
-					: pThread(pThread), prevBackground(pThread ? pThread->background() : false)
+				class MoveToForeground
 				{
-					if (pThread)
-					{ pThread->background() = false; }
-				}
-				~MoveToForeground()
-				{
-					if (pThread)
-					{ pThread->background() = prevBackground; }
-				}
-				void swap(MoveToForeground &other)
-				{
-					using std::swap;
-					swap(this->pThread, other.pThread);
-					swap(this->prevBackground, other.prevBackground);
-				}
-			};
-			class BlockIo
-			{
-				NtfsIndexThread *pThread;
-				BlockIo(BlockIo const &) { throw std::logic_error(""); }
-				BlockIo &operator =(BlockIo const &) { throw std::logic_error(""); }
-			public:
-				BlockIo(NtfsIndexThread *pThread = NULL) : pThread(pThread) { if (pThread) { ResetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
-				~BlockIo() { if (pThread) { SetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
-				void swap(BlockIo &other) { using std::swap; swap(this->pThread, other.pThread); }
-			};
-			boost::scoped_array<BlockIo> suspendedThreads(new BlockIo[this->drives.size()]);
-			MoveToForeground setUncached;
-			NtfsIndexThread *pThread = NULL;
-			for (size_t i = 0; i < this->drives.size(); i++)
-			{
-				if (this->drives[i].drive() == driveLetter) { pThread = &this->drives[i]; }
-				else { BlockIo(&this->drives[i]).swap(suspendedThreads[i]); }
-			}
-			if (pThread)
-			{
-				MoveToForeground(pThread).swap(setUncached);
-				CProgressDialog dlg(*this);
-				boost::shared_ptr<NtfsIndex> index = pThread->index();
-				if (!index)
-				{
-					dlg.SetProgressTitle(_T("Reading drive..."));
-					while (!dlg.HasUserCancelled() && (index = pThread->index(), index == NULL))
+					bool prevCached, prevBackground;
+					boost::intrusive_ptr<NtfsIndexThread> pThread;
+					MoveToForeground(MoveToForeground const &) { throw std::logic_error(""); }
+					MoveToForeground &operator =(MoveToForeground const &) { throw std::logic_error(""); }
+				public:
+					MoveToForeground(boost::intrusive_ptr<NtfsIndexThread> pThread = NULL)
+						: pThread(pThread), prevBackground(pThread ? pThread->background() : false)
 					{
-						CProgressDialog::WaitMessageLoop();
-						if (dlg.ShouldUpdate())
+						if (pThread)
+						{ pThread->background() = false; }
+					}
+					~MoveToForeground()
+					{
+						if (pThread)
+						{ pThread->background() = prevBackground; }
+					}
+					void swap(MoveToForeground &other)
+					{
+						using std::swap;
+						swap(this->pThread, other.pThread);
+						swap(this->prevBackground, other.prevBackground);
+					}
+				};
+				class BlockIo
+				{
+					boost::intrusive_ptr<NtfsIndexThread> pThread;
+					BlockIo(BlockIo const &) { throw std::logic_error(""); }
+					BlockIo &operator =(BlockIo const &) { throw std::logic_error(""); }
+				public:
+					BlockIo(boost::intrusive_ptr<NtfsIndexThread> pThread = NULL) : pThread(pThread) { if (pThread) { ResetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
+					~BlockIo() { if (pThread) { SetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
+					void swap(BlockIo &other) { using std::swap; swap(this->pThread, other.pThread); }
+				};
+				std::vector<boost::intrusive_ptr<NtfsIndexThread> > const threads = this->GetDrives();
+				boost::scoped_array<BlockIo> suspendedThreads(new BlockIo[threads.size()]);
+				MoveToForeground setUncached;
+				boost::intrusive_ptr<NtfsIndexThread> pThread;
+				for (size_t i = 0; i < threads.size(); i++)
+				{
+					if (threads[i]->drive() == driveLetter) { pThread = threads[i]; }
+					else { BlockIo(threads[i]).swap(suspendedThreads[i]); }
+				}
+				if (pThread)
+				{
+					MoveToForeground(pThread).swap(setUncached);
+					CProgressDialog dlg(*this);
+					boost::shared_ptr<NtfsIndex> index = pThread->index();
+					if (!index)
+					{
+						dlg.SetProgressTitle(_T("Reading drive..."));
+						while (!dlg.HasUserCancelled() && (index = pThread->index(), index == NULL))
 						{
-							TCHAR text[256];
-							_stprintf(text, _T("Reading file table... %3u%% done"), static_cast<unsigned long>(100 * static_cast<unsigned long long>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)()));
-							dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
-							dlg.SetProgress(pThread->progress(), (std::numeric_limits<unsigned long>::max)());
-							dlg.Flush();
+							CProgressDialog::WaitMessageLoop();
+							if (dlg.ShouldUpdate())
+							{
+								TCHAR text[256];
+								_stprintf(text, _T("Reading file table... %3u%% done"), static_cast<unsigned long>(100 * static_cast<unsigned long long>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)()));
+								dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
+								dlg.SetProgress(pThread->progress(), (std::numeric_limits<unsigned long>::max)());
+								dlg.Flush();
+							}
 						}
 					}
-				}
-				if (index)
-				{
-					std::basic_stringstream<TCHAR> title;
-					title << _T("Searching ") << (isPath ? _T("file paths, please wait") : _T("file names")) << _T("...");
-					dlg.SetProgressTitle(title.str().c_str());
-					long volatile i = 0;
-					class ResizeRows
+					if (index)
 					{
-						ResizeRows &operator =(ResizeRows const &) { throw std::logic_error(""); }
-					public:
-						long volatile nRows;
-						std::vector<DataRow> &rows;
-						ResizeRows(std::vector<DataRow> &rows, size_t tempSize)
-							: nRows(0), rows(rows)
+						std::basic_stringstream<TCHAR> title;
+						title << _T("Searching ") << (isPath ? _T("file paths, please wait") : _T("file names")) << _T("...");
+						dlg.SetProgressTitle(title.str().c_str());
+						long volatile i = 0;
+						class ResizeRows
 						{
-							rows.resize(tempSize);
-						}
-						~ResizeRows() { rows.resize(static_cast<size_t>(nRows)); }
-					} resizeRows(rows, index->size());
-					winnt::NtEvent startEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-					class MatcherThread
-					{
-						MatcherThread &operator =(MatcherThread const &) { throw std::logic_error(""); }
-					public:
-						uintptr_t volatile h;
-						winnt::NtEvent startEvent;
-						boost::shared_ptr<NtfsIndex const> index;
-						CProgressDialog &dlg;
-						long volatile &i;
-						bool const isPath, isRegex;
-						tchar_ci_traits const traits;
-						Matcher &matcher;
-						std::vector<DataRow> &rows;
-						bool volatile stop;
-						long volatile &nRows;
-						MatcherThread(boost::shared_ptr<NtfsIndex const> index, winnt::NtEvent const &startEvent, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
-							: h(NULL), startEvent(startEvent), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
-						{ }
-						~MatcherThread()
-						{
-							while (!dlg.HasUserCancelled())
+							ResizeRows &operator =(ResizeRows const &) { throw std::logic_error(""); }
+						public:
+							long volatile nRows;
+							std::vector<DataRow> &rows;
+							ResizeRows(std::vector<DataRow> &rows, size_t tempSize)
+								: nRows(0), rows(rows)
 							{
-								CProgressDialog::WaitMessageLoop();
-								size_t const i(static_cast<size_t>(i));
-								if (i >= index->size()) { break; }
-								if (dlg.ShouldUpdate())
-								{
-									dlg.SetProgress(i, index->size());
-									dlg.SetProgressText(i < index->size() ? index->get_name_by_index(i).first : boost::as_literal(_T("")));
-									dlg.Flush();
-								}
+								rows.resize(tempSize);
 							}
-							this->stop = true;
-							WaitForSingleObject(reinterpret_cast<HANDLE>(h), INFINITE);
-						}
-						static unsigned int __stdcall invoke(void *p)
+							~ResizeRows() { rows.resize(static_cast<size_t>(nRows)); }
+						} resizeRows(rows, index->size());
+						winnt::NtEvent startEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+						class MatcherThread
 						{
-							return (*static_cast<MatcherThread *>(p))();
-						}
-						unsigned int operator()()
-						{
-							try
+							MatcherThread &operator =(MatcherThread const &) { throw std::logic_error(""); }
+						public:
+							uintptr_t volatile h;
+							winnt::NtEvent startEvent;
+							boost::shared_ptr<NtfsIndex const> index;
+							CProgressDialog &dlg;
+							long volatile &i;
+							bool const isPath, isRegex;
+							tchar_ci_traits const traits;
+							Matcher &matcher;
+							std::vector<DataRow> &rows;
+							bool volatile stop;
+							long volatile &nRows;
+							MatcherThread(boost::shared_ptr<NtfsIndex const> index, winnt::NtEvent const &startEvent, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
+								: h(NULL), startEvent(startEvent), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
+							{ }
+							~MatcherThread()
 							{
-								std::basic_string<TCHAR> tempPath;
-								tempPath.reserve(32 * 1024);
-								startEvent.NtWaitForSingleObject();
-								while (!this->stop)
+								while (!dlg.HasUserCancelled())
 								{
-									size_t const i(static_cast<size_t>(InterlockedIncrement(&i)) - 1);
+									CProgressDialog::WaitMessageLoop();
+									size_t const i(static_cast<size_t>(i));
 									if (i >= index->size()) { break; }
-									DataRow const row(index, i);
-									boost::iterator_range<TCHAR const *> const
-										fileName = row.file_name(), streamName = row.stream_name();
-									bool match;
-									if (isPath)
+									if (dlg.ShouldUpdate())
 									{
-										tempPath.erase(tempPath.begin(), tempPath.end());
-										adddirsep(GetPath(*index, row.parent(), tempPath));
-										tempPath.append(fileName.begin(), fileName.end());
-										if (!streamName.empty())
-										{
-											tempPath.append(1, _T(':'));
-											tempPath.append(streamName.begin(), streamName.end());
-										}
-										match = matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
+										dlg.SetProgress(i, index->size());
+										dlg.SetProgressText(i < index->size() ? index->get_name_by_index(i).first : boost::as_literal(_T("")));
+										dlg.Flush();
 									}
-									else { match = matcher(fileName, streamName); }
-									if (match) { rows[static_cast<size_t>(InterlockedIncrement(&nRows)) - 1] = row; }
 								}
-								return 0;
+								this->stop = true;
+								WaitForSingleObject(reinterpret_cast<HANDLE>(h), INFINITE);
 							}
-							catch (CStructured_Exception &ex)
+							static unsigned int __stdcall invoke(void *p)
 							{
-								return ex.GetSENumber();
+								return (*static_cast<MatcherThread *>(p))();
 							}
-						}
-					};
-					SYSTEM_INFO si = { };
-					GetSystemInfo(&si);
-					{
-						boost::ptr_vector<MatcherThread> threads;
-						using std::max;
-						for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
+							unsigned int operator()()
+							{
+								try
+								{
+									std::basic_string<TCHAR> tempPath;
+									tempPath.reserve(32 * 1024);
+									startEvent.NtWaitForSingleObject();
+									while (!this->stop)
+									{
+										size_t const i(static_cast<size_t>(InterlockedIncrement(&i)) - 1);
+										if (i >= index->size()) { break; }
+										DataRow const row(index, i);
+										boost::iterator_range<TCHAR const *> const
+											fileName = row.file_name(), streamName = row.stream_name();
+										bool match;
+										if (isPath)
+										{
+											tempPath.erase(tempPath.begin(), tempPath.end());
+											adddirsep(GetPath(*index, row.parent(), tempPath));
+											tempPath.append(fileName.begin(), fileName.end());
+											if (!streamName.empty())
+											{
+												tempPath.append(1, _T(':'));
+												tempPath.append(streamName.begin(), streamName.end());
+											}
+											match = matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
+										}
+										else { match = matcher(fileName, streamName); }
+										if (match) { rows[static_cast<size_t>(InterlockedIncrement(&nRows)) - 1] = row; }
+									}
+									return 0;
+								}
+								catch (CStructured_Exception &ex)
+								{
+									return ex.GetSENumber();
+								}
+							}
+						};
+						SYSTEM_INFO si = { };
+						GetSystemInfo(&si);
 						{
-							std::auto_ptr<MatcherThread> p(new MatcherThread(index, startEvent, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
-							unsigned int tid;
-							p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), CREATE_SUSPENDED, &tid);
-							if (ResumeThread(reinterpret_cast<HANDLE>(p->h)) != static_cast<DWORD>(-1))
-							{ threads.push_back(p); }
+							boost::ptr_vector<MatcherThread> threads;
+							using std::max;
+							for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
+							{
+								std::auto_ptr<MatcherThread> p(new MatcherThread(index, startEvent, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
+								unsigned int tid;
+								p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), CREATE_SUSPENDED, &tid);
+								if (ResumeThread(reinterpret_cast<HANDLE>(p->h)) != static_cast<DWORD>(-1))
+								{ threads.push_back(p); }
+							}
+							SetEvent(startEvent.get());
+							// 'threads' destroyed here
 						}
-						SetEvent(startEvent.get());
-						// 'threads' destroyed here
 					}
 				}
+				if (ownerData)
+				{
+					this->lvFiles.SetItemCountEx(int_cast<int>(this->rows.size()), LVSICF_NOINVALIDATEALL);
+				}
+				std::basic_stringstream<TCHAR> ss;
+				ss << _T("Found ") << nformat(static_cast<int>(this->lvFiles.GetItemCount())) << _T(" file(s) on ") << driveLetter;
+				this->statusbar.SetWindowText(ss.str().c_str());
 			}
-			if (ownerData)
+			catch (std::domain_error &ex)
 			{
-				this->lvFiles.SetItemCountEx(int_cast<int>(this->rows.size()), LVSICF_NOINVALIDATEALL);
+				std::basic_string<TCHAR> msg;
+				std::copy(ex.what(), ex.what() + strlen(ex.what()), std::inserter(msg, msg.end()));
+				this->MessageBox(tformat(_T("Invalid regular expression: %s\nRemove the leading '>' if you intended to use wildcards."), msg.c_str()).c_str(), _T("Invalid Regex"), MB_OK | MB_ICONERROR);
+				return;
 			}
-		}
-		catch (std::domain_error &ex)
-		{
-			std::basic_string<TCHAR> msg;
-			std::copy(ex.what(), ex.what() + strlen(ex.what()), std::inserter(msg, msg.end()));
-			this->MessageBox(tformat(_T("Invalid regular expression: %s\nRemove the leading '>' if you intended to use wildcards."), msg.c_str()).c_str(), _T("Invalid Regex"), MB_OK | MB_ICONERROR);
-			return;
 		}
 	}
 
@@ -1864,6 +1984,9 @@ private:
 		MSG_WM_INITDIALOG(OnInitDialog)
 		MSG_WM_SHOWWINDOW(OnShowWindow)
 		MSG_WM_CLOSE(OnClose)
+		MSG_WM_PARENTNOTIFY(OnParentNotify)
+		MESSAGE_HANDLER_EX(WM_THREADERROR, OnThreadError)
+		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)

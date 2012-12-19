@@ -742,6 +742,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\ref_counter.hpp"
+				>
+			</File>
+			<File
 				RelativePath=".\relative_iterator.hpp"
 				>
 			</File>

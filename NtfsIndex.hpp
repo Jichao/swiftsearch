@@ -28,5 +28,5 @@ public:
 	virtual std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > get_name_by_index(size_t const i) const = 0;
 	virtual std::basic_string<TCHAR> const &drive() const = 0;
 
-	static NtfsIndex *create(winnt::NtFile const &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground);
+	static NtfsIndex *create(winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground);
 };

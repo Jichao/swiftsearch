@@ -10,7 +10,10 @@
 #include <string>
 
 #include <boost/range/algorithm/copy.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
+
+#include <Dbt.h>
 
 #include "NtfsIndex.hpp"
 
@@ -27,6 +30,9 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 	boost::shared_ptr<NtfsIndex> _index;
 	winnt::NtThread _thread;
 	winnt::NtEvent _event;
+	winnt::NtFile _volume;
+	HWND hWnd;
+	unsigned int wndMessageError;
 
 	NtfsIndexThreadImpl &operator =(NtfsIndexThreadImpl const &);
 
@@ -46,8 +52,8 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 	}
 
 public:
-	NtfsIndexThreadImpl(std::basic_string<TCHAR> const drive)
-		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true)
+	NtfsIndexThreadImpl(HWND const hWnd, unsigned int wndMessageError, std::basic_string<TCHAR> const drive)
+		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessageError(wndMessageError)
 	{
 		struct Invoker
 		{
@@ -69,6 +75,14 @@ public:
 
 	volatile bool const &background() const { return this->_background; }
 
+	void close()
+	{
+		InterlockedExchange(&reinterpret_cast<long volatile &>(this->_progress), static_cast<long>(NtfsIndex::PROGRESS_CANCEL_REQUESTED));
+		winnt::NtFile const volume = InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(this->_volume._handle), NULL);
+	}
+
+	uintptr_t volume() const { return reinterpret_cast<uintptr_t>(this->_volume.get()); }
+
 	uintptr_t thread() const { return reinterpret_cast<uintptr_t>(this->_thread.get()); }
 
 	std::basic_string<TCHAR> const &drive() const { return this->_drive; }
@@ -81,9 +95,9 @@ public:
 
 	unsigned int operator()()
 	{
+		boost::intrusive_ptr<NtfsIndexThread> const me = this;  // Keep a reference to myself, in case others release us
 		Sleep((37 * GetCurrentThreadId()) % 100);
 		unsigned int r = 0;
-		winnt::NtFile volume;
 		try
 		{
 			try
@@ -91,26 +105,37 @@ public:
 				std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName(this->_drive.c_str());
 				while (!ntPath.empty() && ntPath[ntPath.size() - 1] == _T('\\')) { ntPath.resize(ntPath.size() - 1); }
 				ntPath += _T("\\$Volume");
-				volume = winnt::NtFile::NtOpenFile(
+				this->_volume = winnt::NtFile::NtOpenFile(
 					ntPath,
 					winnt::Access::QueryAttributes | winnt::Access::Read | winnt::Access::Synchronize,
 					FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
 			}
 			catch (CStructured_Exception &ex) { r = ex.GetSENumber(); }
-			if (volume.get())
+			if (this->_volume.get())
 			{
 				if (IsDebuggerPresent())
 				{
 					std::string s = "Worker thread for drive: ";
-					boost::copy(this->_drive, std::inserter(s, s.end()));
+					for (size_t i = 0; i < this->_drive.size(); i++)
+					{ s.append(1, static_cast<char>(this->_drive[i])); }
 					SetThreadName(s.c_str());
 				}
+
+				DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, this->_volume.get(), reinterpret_cast<HDEVNOTIFY>(this) };
+				dev.dbch_hdevnotify = RegisterDeviceNotification(this->hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
+
 				for (; ; )
 				{
 					FILETIME creationTime = { }, exitTime = { }, kernelTime1 = { }, kernelTime2 = { }, userTime2 = { }, userTime1 = { };
 					GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime1, &userTime1);
 					
-					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_drive, this->_event, &this->_progress, &this->_background)));
+					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(this->_volume, this->_drive, this->_event, &this->_progress, &this->_background)));
+
+					UINT const driveType = GetDriveType(this->_drive.c_str());
+					if (driveType != DRIVE_FIXED && driveType != DRIVE_RAMDISK && driveType != DRIVE_UNKNOWN)
+					{
+						break;
+					}
 
 					if (!GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime2, &userTime2)) { break; }
 					LARGE_INTEGER q1 = { }, q2 = { };
@@ -132,20 +157,19 @@ public:
 		}
 		catch (CStructured_Exception &ex)
 		{
-			if (ex.GetSENumber() != ERROR_CANCELLED)
+			if (ex.GetSENumber() != ERROR_CANCELLED && ex.GetSENumber() != STATUS_INVALID_HANDLE && ex.GetSENumber() != STATUS_NO_SUCH_DEVICE)
 			{
-				if (!IsDebuggerPresent())
-				{
-					WTL::AtlMessageBox(NULL, GetAnyErrorText(ex.GetSENumber()), (_T("Error indexing ") + this->_drive).c_str(), MB_ICONERROR | MB_OK | MB_APPLMODAL);
-				}
-				else { throw; }
+				if (IsDebuggerPresent()) { throw; }
+				std::auto_ptr<std::basic_string<TCHAR> > msg(new std::basic_string<TCHAR>(_T("Error indexing ") + this->_drive + _T(": ") + GetAnyErrorText(ex.GetSENumber())));
+				if (PostMessage(this->hWnd, this->wndMessageError, ex.GetSENumber(), reinterpret_cast<LPARAM>(msg.get())))
+				{ msg.release(); }
 			}
 		}
 		return r;
 	}
 };
 
-NtfsIndexThread *NtfsIndexThread::create(std::basic_string<TCHAR> const &drive)
+NtfsIndexThread *NtfsIndexThread::create(HWND const hWnd, unsigned int const wndMessageError, std::basic_string<TCHAR> const &drive)
 {
-	return new NtfsIndexThreadImpl(drive);
+	return new NtfsIndexThreadImpl(hWnd, wndMessageError, drive);
 }

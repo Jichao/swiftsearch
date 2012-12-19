@@ -420,7 +420,7 @@ public:
 	winnt::NtEvent event() const { return this->_event; }
 };
 
-NtfsIndex *NtfsIndex::create(winnt::NtFile const &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground)
+NtfsIndex *NtfsIndex::create(winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground)
 {
 	return new NtfsIndexImpl(volume, win32Path, event, pProgress, pBackground);
 }

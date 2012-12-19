@@ -20,7 +20,7 @@
 class NtfsReaderImpl : public NtfsReader
 {
 	typedef NtfsReaderImpl This;
-	winnt::NtFile volume;
+	winnt::NtFile *pVolume;
 	unsigned long diskNumber;
 	std::vector<std::pair<unsigned long long, long long> > mftRetPtrs;
 	unsigned long const clusterSize;
@@ -49,8 +49,8 @@ class NtfsReaderImpl : public NtfsReader
 	NtfsReaderImpl(This const &);
 	NtfsReaderImpl &operator =(This const &);
 public:
-	NtfsReaderImpl(winnt::NtFile const &volume) :
-		volume(volume),
+	NtfsReaderImpl(winnt::NtFile &volume) :
+		pVolume(&volume),
 		diskNumber(static_cast<unsigned long>(-1)),
 		clusterSize(volume.GetClusterSize()),
 		cbFileRecord(volume.FsctlGetVolumeData().BytesPerFileRecordSegment),
@@ -190,8 +190,8 @@ public:
 					if (this->iFirstCachedOutputSegment != i)
 					{
 						ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
-						ScopedIoPriority const setPriority(volume, this->background);
-						volume.FsctlGetNtfsFileRecordFloor(i, &output, this->outputBuffer.size());
+						ScopedIoPriority const setPriority(*this->pVolume, this->background);
+						this->pVolume->FsctlGetNtfsFileRecordFloor(i, &output, this->outputBuffer.size());
 					}
 					this->iFirstCachedOutputSegment = i;
 					i = static_cast<size_t>(output.FileReferenceNumber.QuadPart & 0x0000FFFFFFFFFFFF);
@@ -219,8 +219,8 @@ public:
 					size_t cbRead;
 					{
 						ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
-						ScopedIoPriority const setPriority(volume, this->background);
-						cbRead = volume.NtReadFileVirtual(
+						ScopedIoPriority const setPriority(*this->pVolume, this->background);
+						cbRead = this->pVolume->NtReadFileVirtual(
 							std::make_pair(0ULL, std::make_pair(this->mftRetPtrs.size(), &this->mftRetPtrs[0])),
 							this->clusterSize, this->iFirstCachedDirectSegment * this->cbFileRecord, &this->directBuffer[0], static_cast<unsigned long>(this->directBuffer.size() / cbFileRecord * cbFileRecord));
 					}
@@ -265,7 +265,7 @@ public:
 };
 NtfsReaderImpl::PhysicalDriveLocks NtfsReaderImpl::physicalDriveLocks;
 
-NtfsReader *NtfsReader::create(winnt::NtFile const &volume)
+NtfsReader *NtfsReader::create(winnt::NtFile &volume)
 {
 	return new NtfsReaderImpl(volume);
 }
