@@ -72,21 +72,11 @@ inline TCHAR totupper(TCHAR c) { return c < SCHAR_MAX ? (_T('A') <= c && c <= _T
 #endif
 #define _totupper totupper
 
-EXTERN_C NTSYSAPI VOID NTAPI RtlSecondsSince1980ToTime(IN ULONG ElapsedSeconds, OUT PLARGE_INTEGER Time);
-EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlSystemTimeToLocalTime(IN LARGE_INTEGER const *SystemTime, OUT PLARGE_INTEGER LocalTime);
-
-LONGLONG RtlSecondsSince1980ToTime(ULONG time)
-{
-	LARGE_INTEGER time2 = {0};
-	RtlSecondsSince1980ToTime(time, &time2);
-	return time2.QuadPart;
-}
-
 struct DataRow
 {
-	NtfsIndex const *pIndex;
+	boost::shared_ptr<NtfsIndex const> pIndex;
 	size_t i;
-	DataRow(NtfsIndex const *pIndex = NULL, size_t const i = static_cast<size_t>(-1)) : pIndex(pIndex), i(i) { }
+	DataRow(boost::shared_ptr<NtfsIndex const> const pIndex = boost::shared_ptr<NtfsIndex const>(), size_t const i = static_cast<size_t>(-1)) : pIndex(pIndex), i(i) { }
 	NtfsIndex::CombinedRecord const &record() const { return this->pIndex->at(this->i); }
 	boost::iterator_range<TCHAR const *> file_name() const
 	{ return this->pIndex->get_name_by_index(this->i).first; }
@@ -105,9 +95,9 @@ struct DataRow
 		return s;
 	}
 	unsigned long parent() const { return this->record().second.second.second.first; }
-	long long creationTime() const { return RtlSecondsSince1980ToTime(this->record().second.first.first.first); }
-	long long modificationTime() const { return RtlSecondsSince1980ToTime(this->record().second.first.first.second); }
-	long long accessTime() const { return RtlSecondsSince1980ToTime(this->record().second.first.second.first); }
+	long long creationTime() const { return this->record().second.first.first.first; }
+	long long modificationTime() const { return this->record().second.first.first.second; }
+	long long accessTime() const { return this->record().second.first.second.first; }
 	unsigned long attributes() const { return this->record().second.first.second.second; }
 	long long size() const { return this->record().second.second.second.second.first; }
 	long long sizeOnDisk() const { return this->record().second.second.second.second.second; }
@@ -122,14 +112,26 @@ struct Wow64Disable
 		typedef BOOL (WINAPI *PWow64DisableWow64FsRedirection)(OUT PVOID *OldValue);
 		HMODULE hKernel32 = NULL;
 		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCTSTR)&GetSystemInfo, &hKernel32))
-		{ reinterpret_cast<PWow64DisableWow64FsRedirection>(GetProcAddress(hKernel32, "Wow64DisableWow64FsRedirection"))(&this->cookie); }
+		{
+			if (PWow64DisableWow64FsRedirection Wow64DisableWow64FsRedirection =
+				reinterpret_cast<PWow64DisableWow64FsRedirection>(GetProcAddress(hKernel32, "Wow64DisableWow64FsRedirection")))
+			{
+				Wow64DisableWow64FsRedirection(&this->cookie);
+			}
+		}
 	}
 	~Wow64Disable()
 	{
 		typedef BOOL (WINAPI *PWow64RevertWow64FsRedirection)(IN PVOID OldValue);
 		HMODULE hKernel32 = NULL;
 		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCTSTR)&GetSystemInfo, &hKernel32))
-		{ reinterpret_cast<PWow64RevertWow64FsRedirection>(GetProcAddress(hKernel32, "Wow64RevertWow64FsRedirection"))(&this->cookie); }
+		{
+			if (PWow64RevertWow64FsRedirection Wow64RevertWow64FsRedirection =
+				reinterpret_cast<PWow64RevertWow64FsRedirection>(GetProcAddress(hKernel32, "Wow64RevertWow64FsRedirection")))
+			{
+				Wow64RevertWow64FsRedirection(&this->cookie);
+			}
+		}
 	}
 };
 
@@ -501,6 +503,8 @@ struct Tester
 	}
 } tester;
 
+EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlSystemTimeToLocalTime(IN LARGE_INTEGER const *SystemTime, OUT PLARGE_INTEGER LocalTime);
+
 LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime)
 {
 	LARGE_INTEGER time2, localTime;
@@ -860,6 +864,7 @@ class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl
 {
 	enum { IDC_STATUS_BAR = 1100 + 0 };
 	enum { COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_ACCESS_TIME };
+	enum { WM_NOTIFYICON = WM_USER + 123 };
 	struct CThemedListViewCtrl : public WTL::CListViewCtrl, public WTL::CThemeImpl<CThemedListViewCtrl> { using WTL::CListViewCtrl::Attach; };
 	CThemedListViewCtrl lvFiles;
 	WTL::CComboBox cmbDrive;
@@ -1515,6 +1520,30 @@ private:
 		return drive;
 	}
 
+	void OnCancel(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
+	{
+		NOTIFYICONDATA nid = { sizeof(nid), *this, 0, NIF_MESSAGE | NIF_ICON | NIF_TIP, WM_NOTIFYICON, this->GetIcon(FALSE), _T("SwiftSearch") };
+		if (Shell_NotifyIcon(NIM_ADD, &nid))
+		{
+			this->ShowWindow(SW_HIDE);
+			SetPriorityClass(GetCurrentProcess(), 0x100000 /*PROCESS_MODE_BACKGROUND_BEGIN*/);
+			SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+		}
+	}
+
+	LRESULT OnNotifyIcon(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	{
+		if (lParam == WM_LBUTTONUP || lParam == WM_KEYUP)
+		{
+			SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
+			this->ShowWindow(SW_SHOW);
+			NOTIFYICONDATA nid = { sizeof(nid), *this, static_cast<UINT>(wParam) };
+			Shell_NotifyIcon(NIM_DELETE, &nid);
+			SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
+		}
+		return 0;
+	}
+
 	void OnSearch(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
 		ATL::CComBSTR name;
@@ -1524,7 +1553,7 @@ private:
 
 		std::basic_string<TCHAR> 
 			driveLetter = this->GetCurrentDrive(),
-			pattern = std::basic_string<TCHAR>(name);
+			pattern = name ? std::basic_string<TCHAR>(name) : std::basic_string<TCHAR>();
 		bool const isRegex = pattern.find(_T('>')) == 0;
 		bool isPath = isRegex || pattern.find(_T('\\')) != std::basic_string<TCHAR>::npos;
 		try
@@ -1600,7 +1629,7 @@ private:
 			{
 				SetUncached(pThread).swap(setUncached);
 				CProgressDialog dlg(*this);
-				NtfsIndex *index = pThread->index();
+				boost::shared_ptr<NtfsIndex> index = pThread->index();
 				if (!index)
 				{
 					dlg.SetProgressTitle(_T("Reading drive..."));
@@ -1643,7 +1672,7 @@ private:
 					public:
 						uintptr_t volatile h;
 						winnt::NtEvent startEvent;
-						NtfsIndex const *index;
+						boost::shared_ptr<NtfsIndex const> index;
 						CProgressDialog &dlg;
 						long volatile &i;
 						bool const isPath, isRegex;
@@ -1652,7 +1681,7 @@ private:
 						std::vector<DataRow> &rows;
 						bool volatile stop;
 						long volatile &nRows;
-						MatcherThread(NtfsIndex const *index, winnt::NtEvent const &startEvent, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
+						MatcherThread(boost::shared_ptr<NtfsIndex const> index, winnt::NtEvent const &startEvent, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
 							: h(NULL), startEvent(startEvent), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
 						{ }
 						~MatcherThread()
@@ -1829,10 +1858,12 @@ private:
 		MSG_WM_INITDIALOG(OnInitDialog)
 		MSG_WM_SHOWWINDOW(OnShowWindow)
 		MSG_WM_CLOSE(OnClose)
+		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)
 		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)
 		COMMAND_ID_HANDLER_EX(ID_HELP_USINGREGULAREXPRESSIONS, OnHelpRegex)
+		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
 		COMMAND_HANDLER_EX(IDOK, BN_CLICKED, OnSearch)
 		COMMAND_HANDLER_EX(IDC_COMBODRIVE, CBN_SELCHANGE, OnSearchParamsChange)
 		COMMAND_HANDLER_EX(IDC_COMBODRIVE, CBN_EDITCHANGE, OnSearchParamsChange)

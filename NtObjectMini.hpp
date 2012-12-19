@@ -89,6 +89,16 @@ enum TokenPrivilege
 
 enum
 {
+#ifndef IOCTL_VOLUME_BASE
+	IOCTL_VOLUME_BASE = 'V',
+#endif
+#ifndef IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS
+	IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = CTL_CODE(IOCTL_VOLUME_BASE, 0, METHOD_BUFFERED, FILE_ANY_ACCESS),
+#endif
+};
+
+enum
+{
 #ifndef IOCTL_STORAGE_BASE
 	IOCTL_STORAGE_BASE = '-',
 #endif
@@ -309,6 +319,7 @@ namespace winnt
 		NTSYSAPI ULONG NTAPI RtlNtStatusToDosError(IN NTSTATUS Status);
 		NTSYSAPI NTSTATUS NTAPI RtlNtPathNameToDosPathName(IN ULONG Flags, IN OUT /*PRTL_UNICODE_STRING_BUFFER*/ UNICODE_STRING * Path, OUT PULONG Disposition OPTIONAL, IN OUT PWSTR *FilePart OPTIONAL);
 		NTSYSAPI VOID NTAPI RtlRaiseStatus(NTSTATUS Status);
+		NTSYSAPI VOID NTAPI RtlSetLastWin32Error(ULONG ErrorCode);
 		NTSYSAPI VOID NTAPI RtlSetLastWin32ErrorAndNtStatusFromNtStatus(NTSTATUS Status);
 		NTSYSAPI VOID NTAPI RtlSecondsSince1970ToTime(IN ULONG ElapsedSeconds, OUT PLARGE_INTEGER Time);
 		NTSYSAPI VOID NTAPI RtlSecondsSince1980ToTime(IN ULONG ElapsedSeconds, OUT PLARGE_INTEGER Time);
@@ -359,38 +370,63 @@ namespace winnt
 		{
 			if (this->value != 0)
 			{
-				this->Throw();
+				ThrowNtStatus(this->value);
 			}
 		}
 
 #if defined(_MSC_VER)
 		__declspec(noinline)
 #endif
-		void Throw() const
+		static void ThrowWin32(unsigned long exCode)
 		{
-			NtDllProc(RtlSetLastWin32ErrorAndNtStatusFromNtStatus)(this->value);
-#			pragma warning(push)
-#			pragma warning(disable: 4535)
+			NtDllProc(RtlSetLastWin32Error)(exCode);
 #ifdef _PROVIDER_EXCEPT_H
 			struct CppExceptionThrower
 			{
-				void operator()(NTSTATUS exCode, struct _EXCEPTION_POINTERS *pExPtrs)
+				static void throw_(unsigned long exCode, struct _EXCEPTION_POINTERS *pExPtrs)
 				{ throw CStructured_Exception(static_cast<UINT>(exCode), pExPtrs); }
 				static bool assign(struct _EXCEPTION_POINTERS **to, struct _EXCEPTION_POINTERS *from)
 				{ *to = from; return true; }
 			};
 			struct _EXCEPTION_POINTERS *pExPtrs = NULL;
-			NTSTATUS exCode = this->value;
 			bool thrown = false;
-			__try { NtDllProc(RtlRaiseStatus)(this->value); }
+			__try { RaiseException(exCode, 0, 0, NULL); }
+			__except (
+				(CppExceptionThrower::assign(&pExPtrs, GetExceptionInformation()))
+				? EXCEPTION_EXECUTE_HANDLER
+				: EXCEPTION_CONTINUE_SEARCH)
+			{ exCode = GetExceptionCode(); thrown = true; }
+			if (thrown) { CppExceptionThrower::throw_(exCode, pExPtrs); }
+#else
+			RaiseException(exCode, 0, 0, NULL);
+#endif
+		}
+
+#if defined(_MSC_VER)
+		__declspec(noinline)
+#endif
+		static void ThrowNtStatus(NTSTATUS exCode)
+		{
+			NtDllProc(RtlSetLastWin32ErrorAndNtStatusFromNtStatus)(exCode);
+#ifdef _PROVIDER_EXCEPT_H
+			struct CppExceptionThrower
+			{
+				static void throw_(NTSTATUS exCode, struct _EXCEPTION_POINTERS *pExPtrs)
+				{ throw CStructured_Exception(static_cast<UINT>(exCode), pExPtrs); }
+				static bool assign(struct _EXCEPTION_POINTERS **to, struct _EXCEPTION_POINTERS *from)
+				{ *to = from; return true; }
+			};
+			struct _EXCEPTION_POINTERS *pExPtrs = NULL;
+			bool thrown = false;
+			__try { NtDllProc(RtlRaiseStatus)(exCode); }
 			__except (
 				(CppExceptionThrower::assign(&pExPtrs, GetExceptionInformation()))
 				? EXCEPTION_EXECUTE_HANDLER
 				: EXCEPTION_CONTINUE_SEARCH)
 			{ exCode = static_cast<NTSTATUS>(GetExceptionCode()); thrown = true; }
-			if (thrown) { CppExceptionThrower()(exCode, pExPtrs); }
+			if (thrown) { CppExceptionThrower::throw_(exCode, pExPtrs); }
 #else
-			NtDllProc(RtlRaiseStatus)(this->value);
+			NtDllProc(RtlRaiseStatus)(exCode);
 #endif
 		}
 	};
@@ -1252,6 +1288,24 @@ namespace winnt
 			return std::make_pair(output.DeviceType, std::make_pair(output.DeviceNumber, output.PartitionNumber));
 		}
 
+		std::vector<DISK_EXTENT> IoctlVolumeGetVolumeDiskExtents() const
+		{
+			struct Callback
+			{
+				static std::vector<DISK_EXTENT> callback(void *pOutput, size_t /*cbOutput*/, void * /*context_*/)
+				{
+					PVOLUME_DISK_EXTENTS pExtents = static_cast<PVOLUME_DISK_EXTENTS>(pOutput);
+					std::vector<DISK_EXTENT> result(pExtents->NumberOfDiskExtents);
+					for (ULONG i = 0; i < pExtents->NumberOfDiskExtents; i++)
+					{
+						result[i] = pExtents->Extents[i];
+					}
+					return result;
+				}
+			};
+			return this->NtDeviceIoControlFileConstUnsafe(IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, NULL, 0, sizeof(VOLUME_DISK_EXTENTS), ULONG_MAX, &Callback::callback);
+		}
+
 		static NtFile GetMountPointManager() { return mountPointManager; }
 
 		static std::basic_string<TCHAR> NTAPI RtlDosPathNameToNtPathName(LPCTSTR dosPathName, std::basic_string<TCHAR> *pFileNamePart = NULL)
@@ -1259,7 +1313,7 @@ namespace winnt
 			(void)(&RtlDosPathNameToNtPathName);
 			LPCTSTR fileNamePart;
 			UNICODE_STRING ntPathName;
-			if (!NtDllProc(RtlDosPathNameToNtPathName_U)(dosPathName, &ntPathName, &fileNamePart, NULL)) { NtStatus(STATUS_UNSUCCESSFUL).CheckAndThrow(); }
+			if (!NtDllProc(RtlDosPathNameToNtPathName_U)(dosPathName, &ntPathName, &fileNamePart, NULL)) { NtStatus::ThrowWin32(161 /*ERROR_BAD_PATHNAME*/); }
 			std::basic_string<TCHAR> result(ntPathName.Buffer, ntPathName.Length / sizeof(*ntPathName.Buffer));
 			if (pFileNamePart != NULL) { pFileNamePart->assign(fileNamePart); }
 			NtDllProc(RtlFreeUnicodeString)(&ntPathName);

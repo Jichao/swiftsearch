@@ -21,7 +21,7 @@ class NtfsReaderImpl : public NtfsReader
 {
 	typedef NtfsReaderImpl This;
 	winnt::NtFile volume;
-	unsigned long deviceNumber;
+	unsigned long diskNumber;
 	std::vector<std::pair<unsigned long long, long long> > mftRetPtrs;
 	unsigned long const clusterSize;
 	unsigned long cbFileRecord;
@@ -34,14 +34,14 @@ class NtfsReaderImpl : public NtfsReader
 	static class PhysicalDriveLocks : public ATL::CComAutoCriticalSection, private boost::ptr_map<unsigned long, ATL::CComAutoCriticalSection>
 	{
 	public:
-		ATL::CComAutoCriticalSection &operator[](unsigned long const deviceNumber)
+		ATL::CComAutoCriticalSection &operator[](unsigned long const diskNumber)
 		{
 			{
 				ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const lock(*this);
-				if (this->find(deviceNumber) == this->end())
-				{ this->insert(deviceNumber, std::auto_ptr<ATL::CComAutoCriticalSection>(new ATL::CComAutoCriticalSection())); }
+				if (this->find(diskNumber) == this->end())
+				{ this->insert(diskNumber, std::auto_ptr<ATL::CComAutoCriticalSection>(new ATL::CComAutoCriticalSection())); }
 			}
-			return this->at(deviceNumber);
+			return this->at(diskNumber);
 		}
 	} physicalDriveLocks;
 
@@ -50,7 +50,7 @@ class NtfsReaderImpl : public NtfsReader
 public:
 	NtfsReaderImpl(winnt::NtFile volume, bool cached) :
 		volume(volume),
-		deviceNumber(static_cast<unsigned long>(-1)),
+		diskNumber(static_cast<unsigned long>(-1)),
 		clusterSize(volume.GetClusterSize()),
 		cbFileRecord(volume.FsctlGetVolumeData().BytesPerFileRecordSegment),
 		cached(cached),
@@ -59,7 +59,11 @@ public:
 		outputBuffer(offsetof(NTFS_FILE_RECORD_OUTPUT_BUFFER, FileRecordBuffer) + cbFileRecord),
 		directBuffer(256 * cbFileRecord)
 	{
-		try { this->deviceNumber = volume.IoctlStorageGetDeviceNumber().second.first; }
+		try
+		{
+			std::vector<DISK_EXTENT> const extents = volume.IoctlVolumeGetVolumeDiskExtents();
+			if (extents.size() == 1) { this->diskNumber = extents.back().DiskNumber; }
+		}
 		catch (CStructured_Exception &) { }
 
 		winnt::NtFile mft = winnt::NtFile::NtOpenFile(winnt::ObjectAttributes(0x0001000000000000, volume.get()), winnt::Access::QueryAttributes | winnt::Access::Synchronize, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_BY_FILE_ID);
@@ -173,7 +177,7 @@ public:
 					NTFS_FILE_RECORD_OUTPUT_BUFFER &output = reinterpret_cast<NTFS_FILE_RECORD_OUTPUT_BUFFER &>(this->outputBuffer[0]);
 					if (this->iFirstCachedOutputSegment != i)
 					{
-						ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->deviceNumber]);
+						ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
 						volume.FsctlGetNtfsFileRecordFloor(i, &output, this->outputBuffer.size());
 						this->iFirstCachedOutputSegment = i;
 					}
@@ -195,7 +199,7 @@ public:
 			{
 				if (i < this->iFirstCachedDirectSegment || this->iFirstCachedDirectSegment + this->directBuffer.size() / this->cbFileRecord <= i)
 				{
-					ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->deviceNumber]);
+					ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
 					size_t const nCached = this->directBuffer.size() / this->cbFileRecord;
 					size_t const nReadBehind = i < this->iFirstCachedDirectSegment ? nCached - 1 : 0;
 					using std::max;

@@ -28,8 +28,40 @@ TCHAR const *GetAnyErrorText(unsigned long errorCode, va_list* pArgList)
 	return buffer;
 }
 
+#if 0
+#include <iostream>
+LONG WINAPI MyUnhandledExceptionFilter(IN struct _EXCEPTION_POINTERS* ExceptionInfo)
+{
+	struct MyStackWalker : StackWalker
+	{
+		MyStackWalker() : StackWalker() { }
+		static void MyStrCpy(char* szDest, size_t nMaxDestSize, const char* szSrc)
+		{
+			if (nMaxDestSize <= 0) return;
+			if (strlen(szSrc) < nMaxDestSize)
+			{
+				strcpy(szDest, szSrc);
+			}
+			else
+			{
+				strncpy(szDest, szSrc, nMaxDestSize);
+				szDest[nMaxDestSize-1] = 0;
+			}
+		}
+		void OnLoadModule(LPCSTR img, LPCSTR mod, DWORD64 baseAddr, DWORD size, DWORD result, LPCSTR symType, LPCSTR pdbName, ULONGLONG fileVersion) { }
+		void OnOutput(LPCSTR buffer)
+		{
+			std::cerr << buffer;
+		}
+	} sw;
+	sw.ShowCallstack(GetCurrentThread(), ExceptionInfo->ContextRecord);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
 int run(HINSTANCE hInstance, int nShowCmd)
 {
+	//SetUnhandledExceptionFilter(MyUnhandledExceptionFilter);
 #if !defined(_WIN64) //&& defined(NDEBUG) && NDEBUG
 	if (!IsDebuggerPresent())
 	{
@@ -151,3 +183,11 @@ int __stdcall _tWinMain(HINSTANCE const hInstance, HINSTANCE /*hPrevInstance*/, 
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 void __cdecl __report_rangecheckfailure() { abort(); }
+
+#if !defined(_NATIVE_WCHAR_T_DEFINED) && (defined(DDK_CTYPE_WCHAR_FIX) && DDK_CTYPE_WCHAR_FIX)
+#include <iostream>
+namespace std
+{
+	const ctype<wchar_t>::mask *ctype<wchar_t>::_Cltab = NULL;  // TODO: Fix
+}
+#endif

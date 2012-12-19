@@ -5,6 +5,18 @@
 #include <cstddef>
 #if defined(_MSC_VER) && !defined(_CPPLIB_VER) || _CPPLIB_VER < 403
 
+extern "C"
+{
+#ifdef _WIN64
+	__declspec(dllimport) long long (__stdcall *__stdcall GetProcAddress(struct HINSTANCE__* hModule, char const *lpProcName))();
+#else
+	__declspec(dllimport) int (__stdcall *__stdcall GetProcAddress(struct HINSTANCE__* hModule, char const *lpProcName))();
+#endif
+	__declspec(dllimport) int __stdcall GetModuleHandleExA(unsigned long dwFlags, char const *lpModuleName, struct HINSTANCE__** phModule);
+	__declspec(dllimport) int __stdcall GetModuleHandleExW(unsigned long dwFlags, wchar_t const *lpModuleName, struct HINSTANCE__** phModule);
+	void *__cdecl _InterlockedCompareExchangePointer(void *volatile *Destination, void *ExChange, void *Comparand);
+#pragma intrinsic(_InterlockedCompareExchangePointer)
+}
 #	ifndef _C_STD_BEGIN
 #		define _C_STD_BEGIN namespace std {
 #	endif
@@ -246,7 +258,7 @@ namespace std
 	}
 
 
-#if !defined(_NATIVE_WCHAR_T_DEFINED)
+#if !defined(_NATIVE_WCHAR_T_DEFINED) && (defined(DDK_CTYPE_WCHAR_FIX) && DDK_CTYPE_WCHAR_FIX)
 #ifdef _DLL
 	namespace std
 	{
@@ -352,8 +364,43 @@ namespace std
 			_Locinfo::_Ctypevec _Ctype;
 			static const mask *_Cltab;
 		};
-		__declspec(selectany) locale::id ctype<wchar_t>::id;
-		__declspec(selectany) const ctype<wchar_t>::mask *ctype<wchar_t>::_Cltab = NULL;  // TODO: Fix me
+		namespace
+		{
+			struct HINSTANCE__* get_msvcprt_handle()
+			{
+				static struct HINSTANCE__ *volatile g_hMSCRP60 = NULL;
+				if (!g_hMSCRP60)
+				{
+					struct HINSTANCE__ *hMSCRP60 = NULL;
+#if defined(_UNICODE) || defined(UNICODE)
+					GetModuleHandleExW(0x4 | 0x2, reinterpret_cast<wchar_t const *>(&ctype<char>::id), &hMSCRP60);
+#else
+					GetModuleHandleExA(0x4 | 0x2, reinterpret_cast<char const *>(&ctype<char>::id), &hMSCRP60);
+#endif
+					_InterlockedCompareExchangePointer(&reinterpret_cast<void *volatile &>(g_hMSCRP60), hMSCRP60, NULL);
+				}
+				return g_hMSCRP60;
+			}
+		}
+		template<> inline
+			const ctype<wchar_t>& __cdecl use_facet<ctype<wchar_t> >(const locale& _L, const ctype<wchar_t> *,
+				bool _Cfacet)
+			{static const locale::facet *_Psave = 0;
+			_Lockit _Lk;
+			static locale::id *volatile g_ctype_wchar_t_id = NULL;
+			if (!g_ctype_wchar_t_id)
+			{ _InterlockedCompareExchangePointer(&reinterpret_cast<void *volatile &>(g_ctype_wchar_t_id), reinterpret_cast<locale::id *>(GetProcAddress(get_msvcprt_handle(), "?id@?$ctype@G@std@@2V0locale@2@A")), NULL); }
+			size_t _Id = *g_ctype_wchar_t_id;
+			const locale::facet *_Pf = _L._Getfacet(_Id, true);
+			if (_Pf != 0)
+				;
+			else if (!_Cfacet || !_L._Iscloc())
+				_THROW(bad_cast, "missing locale facet");
+			else if (_Psave == 0)
+				_Pf = _Psave = _Tidyfac<ctype<wchar_t>>::_Save(new ctype<wchar_t>);
+			else
+				_Pf = _Psave;
+			return (*(const ctype<wchar_t> *)_Pf); }
 	}
 #endif
 #endif

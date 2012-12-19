@@ -16,6 +16,9 @@
 
 #include "NtObjectMini.hpp"
 
+TCHAR const *GetAnyErrorText(unsigned long errorCode, va_list* pArgList = NULL);
+
+
 class NtfsIndexThreadImpl : public NtfsIndexThread
 {
 	std::basic_string<TCHAR> _drive;
@@ -79,35 +82,69 @@ public:
 
 	uintptr_t event() const { return reinterpret_cast<uintptr_t>(this->_event.get()); }
 
-	NtfsIndex *index() const { return this->_index.get(); }
+	boost::shared_ptr<NtfsIndex> index() const { return this->_index; }
 
 	unsigned int operator()()
 	{
 		Sleep((37 * GetCurrentThreadId()) % 100);
-		//SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 		unsigned int r = 0;
 		winnt::NtFile volume;
 		try
 		{
-			std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName(this->_drive.c_str());
-			while (!ntPath.empty() && ntPath[ntPath.size() - 1] == _T('\\')) { ntPath.resize(ntPath.size() - 1); }
-			ntPath += _T("\\$Volume");
-			volume = winnt::NtFile::NtOpenFile(
-				ntPath,
-				winnt::Access::QueryAttributes | winnt::Access::Read | winnt::Access::Synchronize,
-				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+			try
+			{
+				std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName(this->_drive.c_str());
+				while (!ntPath.empty() && ntPath[ntPath.size() - 1] == _T('\\')) { ntPath.resize(ntPath.size() - 1); }
+				ntPath += _T("\\$Volume");
+				volume = winnt::NtFile::NtOpenFile(
+					ntPath,
+					winnt::Access::QueryAttributes | winnt::Access::Read | winnt::Access::Synchronize,
+					FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+			}
+			catch (CStructured_Exception &ex) { r = ex.GetSENumber(); }
+			if (volume.get())
+			{
+				if (IsDebuggerPresent())
+				{
+					std::string s = "Worker thread for drive: ";
+					boost::copy(this->_drive, std::inserter(s, s.end()));
+					SetThreadName(s.c_str());
+				}
+				for (; ; )
+				{
+					FILETIME creationTime = { }, exitTime = { }, kernelTime1 = { }, kernelTime2 = { }, userTime2 = { }, userTime1 = { };
+					GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime1, &userTime1);
+					
+					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_drive, this->_event, &this->_progress, &this->_cached, &this->_background)));
+
+					// For subsequent iterations
+					this->_background = true;
+					this->_cached = false;
+
+					if (!GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime2, &userTime2)) { break; }
+					LARGE_INTEGER q1 = { }, q2 = { };
+					q1.LowPart = userTime1.dwLowDateTime + kernelTime1.dwLowDateTime;
+					q1.HighPart = userTime1.dwHighDateTime + kernelTime1.dwHighDateTime;
+					q2.LowPart = userTime2.dwLowDateTime + kernelTime2.dwLowDateTime;
+					q2.HighPart = userTime2.dwHighDateTime + kernelTime2.dwHighDateTime;
+					unsigned long const sleepInterval = 100;  // The program can't exit while sleeping! So keep this value low.
+					using std::max;
+					using std::min;
+					for (long long nMillisToSleep = min(60 * 1000, max(1 * 1000, 3 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
+					{
+						if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
+						{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
+						Sleep(sleepInterval);
+					}
+				}
+			}
 		}
-		catch (CStructured_Exception &ex) { r = ex.GetSENumber(); }
-		if (volume.get())
+		catch (CStructured_Exception &ex)
 		{
-			std::string s = "Worker thread for drive: ";
-			boost::copy(this->_drive, std::inserter(s, s.end()));
-			SetThreadName(s.c_str());
-			boost::shared_ptr<NtfsIndex> old;
-			boost::atomic_compare_exchange(
-				&this->_index,
-				&old,
-				boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_drive, this->_event, &this->_progress, &this->_cached, &this->_background)));
+			if (ex.GetSENumber() != ERROR_CANCELLED)
+			{
+				WTL::AtlMessageBox(NULL, GetAnyErrorText(ex.GetSENumber()), (_T("Error indexing ") + this->_drive).c_str(), MB_ICONERROR | MB_OK | MB_APPLMODAL);
+			}
 		}
 		return r;
 	}

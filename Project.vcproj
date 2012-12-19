@@ -105,6 +105,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Console,5.01 /OSVersion:4"
 			/>
 		</Configuration>
 		<Configuration
@@ -191,6 +192,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Console,5.02 /OSVersion:5.1"
 			/>
 		</Configuration>
 		<Configuration
@@ -276,7 +278,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
-				CommandLine="Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.01 /OSVersion:4&#x0D;&#x0A;Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1&#x0D;&#x0A;"
 			/>
 		</Configuration>
 		<Configuration
@@ -364,6 +366,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.02 /OSVersion:5.1"
 			/>
 		</Configuration>
 		<Configuration
@@ -450,7 +453,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
-				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.01 /OSVersion:4&#x0D;&#x0A;Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.01 /OSVersion:4&#x0D;&#x0A;Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1&#x0D;&#x0A;"
 			/>
 		</Configuration>
 		<Configuration
@@ -540,7 +543,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
-				CommandLine="&#x0D;&#x0A;EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.02 /OSVersion:5.1"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.02 /OSVersion:5.1"
 			/>
 		</Configuration>
 	</Configurations>

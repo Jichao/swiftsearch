@@ -12,10 +12,11 @@ namespace winnt { class NtFile; class NtEvent; }
 class __declspec(novtable) NtfsIndex
 {
 public:
+	static unsigned long const PROGRESS_CANCEL_REQUESTED = ULONG_MAX;  // Do NOT change the type of this variable! MUST be 'unsigned long'!
 	typedef unsigned long NameOffset;
 	typedef unsigned int NameLength;
 	typedef unsigned long SegmentNumber;
-	typedef std::pair<std::pair<unsigned long, unsigned long>, std::pair<unsigned long, unsigned long> > StandardInformationAttribute;
+	typedef std::pair<std::pair<long long, long long>, std::pair<long long, unsigned long> > StandardInformationAttribute;
 	typedef std::pair<std::pair<NameOffset /*file name*/, NameLength>, SegmentNumber /* parent */> FileNameAttribute;
 	typedef std::pair<std::pair<NameOffset /*stream name*/, NameLength>, std::pair<long long /*logical size*/, long long /*size on disk*/> > DataAttribute;
 	typedef std::pair<SegmentNumber, std::pair<StandardInformationAttribute, std::pair<std::pair<std::pair<NameOffset /*file name*/, NameOffset /*stream name*/>, std::pair<NameLength, NameLength> >, std::pair<FileNameAttribute::second_type, DataAttribute::second_type> > > > CombinedRecord;

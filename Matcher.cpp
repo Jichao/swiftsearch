@@ -21,8 +21,14 @@
 
 struct tchar_ci_traits : public std::char_traits<TCHAR>
 {
-	static bool eq(TCHAR c1, TCHAR c2) { return _totupper(c1) == _totupper(c2); }
-	static bool ne(TCHAR c1, TCHAR c2) { return _totupper(c1) != _totupper(c2); }
+	typedef std::char_traits<TCHAR> Base;
+	static bool eq(TCHAR c1, TCHAR c2)
+	{
+		return c1 < SCHAR_MAX
+			? c1 == c2 || _T('A') <= c1 && c1 <= _T('Z') && c1 - c2 == _T('A') - _T('a')
+			: _totupper(c1) == _totupper(c2);
+	}
+	static bool ne(TCHAR c1, TCHAR c2) { return !eq(c1, c2); }
 	static bool lt(TCHAR c1, TCHAR c2) { return _totupper(c1) <  _totupper(c2); }
 	static int compare(TCHAR const *s1, TCHAR const *s2, size_t n)
 	{
