@@ -896,12 +896,14 @@ class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl
 	boost::shared_ptr<BackgroundWorker> iconLoader;
 	CoInit coInit;
 	HMODULE hRichEdit;
+	HANDLE hWait, hEvent;
 
 	std::vector<DataRow> rows;
 
 public:
 	enum { IDD = IDD_DIALOGMAIN };
-	CMainDlg() : CModifiedDialogImpl(true), lastSortIsDescending(-1), lastSortColumn(-1), iconLoader(BackgroundWorker::create(true)), hRichEdit(LoadLibrary(_T("riched20.dll"))) { }
+	CMainDlg(HANDLE hEvent)
+		: CModifiedDialogImpl(true), lastSortIsDescending(-1), lastSortColumn(-1), iconLoader(BackgroundWorker::create(true)), hRichEdit(LoadLibrary(_T("riched20.dll"))), hWait(NULL), hEvent(hEvent) { }
 
 	~CMainDlg()
 	{
@@ -909,6 +911,19 @@ public:
 	}
 
 private:
+	static VOID CALLBACK WaitCallback(PVOID lpParameter, BOOLEAN TimerOrWaitFired)
+	{
+		HWND const hWnd = reinterpret_cast<HWND>(lpParameter);
+		if (!TimerOrWaitFired)
+		{
+			WINDOWPLACEMENT placement = { sizeof(placement) };
+			if (::GetWindowPlacement(hWnd, &placement))
+			{
+				::ShowWindowAsync(hWnd, ::IsZoomed(hWnd) || (placement.flags & WPF_RESTORETOMAXIMIZED) != 0 ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
+			}
+		}
+	}
+
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
 	{
 		this->cmbDrive.Attach(this->GetDlgItem(IDC_COMBODRIVE));
@@ -965,16 +980,7 @@ private:
 		this->SetIcon((HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICONMAIN), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0), FALSE);
 		this->SetIcon((HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICONMAIN), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0), TRUE);
 
-		{
-			typedef DWORD (WINAPI *PGetCurrentProcessorNumber)(VOID);
-			HMODULE hModule = NULL;
-			GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCTSTR>(&GetProcessAffinityMask), &hModule);
-			PGetCurrentProcessorNumber const GetCurrentProcessorNumber = reinterpret_cast<PGetCurrentProcessorNumber>(GetProcAddress(hModule, "GetCurrentProcessorNumber"));
-			if (LOBYTE(LOWORD(GetVersion())) < 6)
-			{
-				SetProcessAffinityMask(GetCurrentProcess(), 1 << (GetCurrentProcessorNumber != NULL ? GetCurrentProcessorNumber() : 0));
-			}
-		}
+		RegisterWaitForSingleObject(&this->hWait, hEvent, &WaitCallback, this->m_hWnd, INFINITE, WT_EXECUTEINUITHREAD);
 
 		std::basic_string<TCHAR> logicalDrives(GetLogicalDriveStrings(0, NULL) + 1, _T('\0'));
 		logicalDrives.resize(GetLogicalDriveStrings(static_cast<DWORD>(logicalDrives.size()) - 1, &logicalDrives[0]));
@@ -1009,6 +1015,7 @@ private:
 		WTL::CWaitCursor wait;
 		this->iconLoader->clear();
 		this->drives.clear();
+		UnregisterWait(this->hWait);
 	}
 
 	LRESULT OnFileNameArrowKey(LPNMHDR pnmh)
@@ -1523,23 +1530,14 @@ private:
 	void OnCancel(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
 		NOTIFYICONDATA nid = { sizeof(nid), *this, 0, NIF_MESSAGE | NIF_ICON | NIF_TIP, WM_NOTIFYICON, this->GetIcon(FALSE), _T("SwiftSearch") };
-		if (Shell_NotifyIcon(NIM_ADD, &nid))
-		{
-			this->ShowWindow(SW_HIDE);
-			SetPriorityClass(GetCurrentProcess(), 0x100000 /*PROCESS_MODE_BACKGROUND_BEGIN*/);
-			SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
-		}
+		if (Shell_NotifyIcon(NIM_ADD, &nid)) { this->ShowWindow(SW_HIDE); }
 	}
 
-	LRESULT OnNotifyIcon(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	LRESULT OnNotifyIcon(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam)
 	{
 		if (lParam == WM_LBUTTONUP || lParam == WM_KEYUP)
 		{
-			SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
 			this->ShowWindow(SW_SHOW);
-			NOTIFYICONDATA nid = { sizeof(nid), *this, static_cast<UINT>(wParam) };
-			Shell_NotifyIcon(NIM_DELETE, &nid);
-			SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
 		}
 		return 0;
 	}
@@ -1575,59 +1573,52 @@ private:
 			this->rows.erase(this->rows.begin(), this->rows.end());
 			this->UpdateWindow();
 
-			class SetUncached
+			class MoveToForeground
 			{
 				bool prevCached, prevBackground;
 				NtfsIndexThread *pThread;
-				SetUncached(SetUncached const &) { throw std::logic_error(""); }
-				SetUncached &operator =(SetUncached const &) { throw std::logic_error(""); }
+				MoveToForeground(MoveToForeground const &) { throw std::logic_error(""); }
+				MoveToForeground &operator =(MoveToForeground const &) { throw std::logic_error(""); }
 			public:
-				SetUncached(NtfsIndexThread *pThread = NULL)
-					: pThread(pThread), prevCached(pThread ? pThread->cached() : false), prevBackground(pThread ? pThread->background() : false)
+				MoveToForeground(NtfsIndexThread *pThread = NULL)
+					: pThread(pThread), prevBackground(pThread ? pThread->background() : false)
 				{
 					if (pThread)
-					{
-						pThread->cached() = false;
-						pThread->background() = false;
-					}
+					{ pThread->background() = false; }
 				}
-				~SetUncached()
+				~MoveToForeground()
 				{
 					if (pThread)
-					{
-						pThread->cached() = prevCached;
-						pThread->background() = prevBackground;
-					}
+					{ pThread->background() = prevBackground; }
 				}
-				void swap(SetUncached &other)
+				void swap(MoveToForeground &other)
 				{
 					using std::swap;
 					swap(this->pThread, other.pThread);
-					swap(this->prevCached, other.prevCached);
 					swap(this->prevBackground, other.prevBackground);
 				}
 			};
-			class SetBackground
+			class BlockIo
 			{
 				NtfsIndexThread *pThread;
-				SetBackground(SetBackground const &) { throw std::logic_error(""); }
-				SetBackground &operator =(SetBackground const &) { throw std::logic_error(""); }
+				BlockIo(BlockIo const &) { throw std::logic_error(""); }
+				BlockIo &operator =(BlockIo const &) { throw std::logic_error(""); }
 			public:
-				SetBackground(NtfsIndexThread *pThread = NULL) : pThread(pThread) { if (pThread) { ResetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
-				~SetBackground() { if (pThread) { SetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
-				void swap(SetBackground &other) { using std::swap; swap(this->pThread, other.pThread); }
+				BlockIo(NtfsIndexThread *pThread = NULL) : pThread(pThread) { if (pThread) { ResetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
+				~BlockIo() { if (pThread) { SetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
+				void swap(BlockIo &other) { using std::swap; swap(this->pThread, other.pThread); }
 			};
-			boost::scoped_array<SetBackground> suspendedThreads(new SetBackground[this->drives.size()]);
-			SetUncached setUncached;
+			boost::scoped_array<BlockIo> suspendedThreads(new BlockIo[this->drives.size()]);
+			MoveToForeground setUncached;
 			NtfsIndexThread *pThread = NULL;
 			for (size_t i = 0; i < this->drives.size(); i++)
 			{
 				if (this->drives[i].drive() == driveLetter) { pThread = &this->drives[i]; }
-				else { SetBackground(&this->drives[i]).swap(suspendedThreads[i]); }
+				else { BlockIo(&this->drives[i]).swap(suspendedThreads[i]); }
 			}
 			if (pThread)
 			{
-				SetUncached(pThread).swap(setUncached);
+				MoveToForeground(pThread).swap(setUncached);
 				CProgressDialog dlg(*this);
 				boost::shared_ptr<NtfsIndex> index = pThread->index();
 				if (!index)
@@ -1779,7 +1770,16 @@ private:
 	{
 		if (bShow)
 		{
+			SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
+			NOTIFYICONDATA nid = { sizeof(nid), *this, 0 };
+			Shell_NotifyIcon(NIM_DELETE, &nid);
+			SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
 			this->txtFileName.SetFocus();
+		}
+		else
+		{
+			SetPriorityClass(GetCurrentProcess(), 0x100000 /*PROCESS_MODE_BACKGROUND_BEGIN*/);
+			SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
 		}
 	}
 
@@ -1885,6 +1885,6 @@ private:
 	END_DLGRESIZE_MAP()
 };
 
-CMainDlgBase *CMainDlgBase::create() { return new CMainDlg(); }
+CMainDlgBase *CMainDlgBase::create(HANDLE const hEvent) { return new CMainDlg(hEvent); }
 
 #pragma comment(lib, "ShlWAPI.lib")

@@ -144,8 +144,17 @@ typedef VOID (NTAPI *PIO_APC_ROUTINE)(IN PVOID ApcContext, IN struct _IO_STATUS_
 #if !defined(_NTDDK_)
 typedef struct _IO_STATUS_BLOCK { union { NTSTATUS Status; PVOID Pointer; }; ULONG_PTR Information; } IO_STATUS_BLOCK, *PIO_STATUS_BLOCK;
 #endif
+#if !defined(_NTDDK_) || !defined(NTDDI_VISTA)
+typedef enum _IO_PRIORITY_HINT { IoPriorityVeryLow = 0, IoPriorityLow, IoPriorityNormal, IoPriorityHigh, IoPriorityCritical, MaxIoPriorityTypes } IO_PRIORITY_HINT;
+#endif
 typedef struct _CURDIR { UNICODE_STRING DosPath; HANDLE Handle; } CURDIR, *PCURDIR;
 typedef struct _FILE_END_OF_FILE_INFORMATION { LARGE_INTEGER EndOfFile; } FILE_END_OF_FILE_INFORMATION, *PFILE_END_OF_FILE_INFORMATION;
+#if !defined(_NTDDK_) || !defined(NTDDI_VISTA)
+# pragma warning(push)
+# pragma warning(disable: 4324)
+typedef struct DECLSPEC_ALIGN(8) _FILE_IO_PRIORITY_HINT_INFORMATION { IO_PRIORITY_HINT PriorityHint; } FILE_IO_PRIORITY_HINT_INFORMATION, *PFILE_IO_PRIORITY_HINT_INFORMATION;
+# pragma warning(pop)
+#endif
 typedef struct _FILE_MODE_INFORMATION { ULONG FileMode; } FILE_MODE_INFORMATION, *PFILE_MODE_INFORMATION;
 typedef struct _FILE_NAME_INFORMATION { ULONG FileNameLength; WCHAR FileName[1]; } FILE_NAME_INFORMATION, *PFILE_NAME_INFORMATION;
 #if !defined(_NTDDK_)
@@ -175,6 +184,7 @@ typedef struct _STARTING_VCN_INPUT_BUFFER { LARGE_INTEGER StartingVcn; } STARTIN
 #if !defined(_NTDDSTOR_H_)
 typedef struct _STORAGE_DEVICE_NUMBER { DEVICE_TYPE DeviceType; ULONG DeviceNumber; ULONG PartitionNumber; } STORAGE_DEVICE_NUMBER, *PSTORAGE_DEVICE_NUMBER;
 #endif
+typedef struct _THREAD_IO_PRIORITY_INFORMATION { ULONG IoPriority; } THREAD_IO_PRIORITY_INFORMATION, *PTHREAD_IO_PRIORITY_INFORMATION;
 
 template<typename To, typename From>
 inline To int_cast(const From value) //throw(std::out_of_range)
@@ -191,6 +201,7 @@ inline To int_cast(const From value) //throw(std::out_of_range)
 namespace winnt
 {
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_END_OF_FILE_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(20); }
+	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_IO_PRIORITY_HINT_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(43); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_MODE_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(16); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_NAME_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(9); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_POSITION_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(14); }
@@ -342,6 +353,7 @@ namespace winnt
 		NTSYSAPI NTSTATUS NTAPI NtQueryObject(IN HANDLE ObjectHandle, IN enum _OBJECT_INFORMATION_CLASS ObjectInformationClass, OUT PVOID ObjectInformation, IN ULONG Length, OUT PULONG ResultLength);
 		NTSYSAPI NTSTATUS NTAPI NtQueryVolumeInformationFile(IN HANDLE FileHandle, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID FsInformation, IN ULONG Length, IN enum _FS_INFORMATION_CLASS FsInformationClass);
 		NTSYSAPI NTSTATUS NTAPI NtReadFile(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN PIO_APC_ROUTINE ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID Buffer, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL);
+		NTSYSAPI NTSTATUS NTAPI NtSetInformationFile(IN HANDLE FileHandle, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN PVOID FileInformation, IN ULONG Length, IN enum _FILE_INFORMATION_CLASS FileInformationClass);
 		NTSYSAPI NTSTATUS NTAPI NtWaitForSingleObject(IN HANDLE Handle, IN BOOLEAN Alertable, IN PLARGE_INTEGER Timeout OPTIONAL);
 		NTSYSAPI NTSTATUS NTAPI NtWaitForMultipleObjects(IN ULONG HandleCount, IN PHANDLE Handles, IN enum _WAIT_TYPE WaitType, IN BOOLEAN Alertable, IN PLARGE_INTEGER Timeout OPTIONAL);
 	}
@@ -993,6 +1005,25 @@ namespace winnt
 			return result;
 		}
 
+		IO_PRIORITY_HINT GetIoPriorityHint() const
+		{
+			FILE_IO_PRIORITY_HINT_INFORMATION info = { IoPriorityNormal };
+			IO_STATUS_BLOCK iosb;
+			NtStatus status = NtDllProc(NtQueryInformationFile)(this->get(), &iosb, &info, sizeof(info), GetInfoClass(&info));
+			if (status != STATUS_NOT_IMPLEMENTED && status != STATUS_INVALID_INFO_CLASS)
+			{ status.CheckAndThrow(); }
+			return info.PriorityHint;
+		}
+
+		void SetIoPriorityHint(IO_PRIORITY_HINT const priority) const
+		{
+			FILE_IO_PRIORITY_HINT_INFORMATION info = { priority };
+			IO_STATUS_BLOCK iosb;
+			NtStatus status = NtDllProc(NtSetInformationFile)(this->get(), &iosb, &info, sizeof(info), GetInfoClass(&info));
+			if (status != STATUS_NOT_IMPLEMENTED && status != STATUS_INVALID_INFO_CLASS)
+			{ status.CheckAndThrow(); }
+		}
+
 		ULONG GetMode() const
 		{
 			return this->NtQueryInformationFile<FILE_MODE_INFORMATION>().FileMode;
@@ -1326,6 +1357,7 @@ namespace winnt
 	{
 	public:
 		NtThread(HANDLE const value = NULL) : NtObject(value) { }
+
 	};
 
 	class NtProcess : public NtObject

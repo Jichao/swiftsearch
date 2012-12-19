@@ -125,7 +125,8 @@ int run(HINSTANCE hInstance, int nShowCmd)
 #endif
 	UNREFERENCED_PARAMETER(nShowCmd);
 
-	if (CreateSemaphore(NULL, 1, 1, _T("Local\\SwiftSearch.{CB77990E-A78F-44dc-B382-089B01207F02}")) != NULL && GetLastError() != ERROR_ALREADY_EXISTS)
+	HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, _T("Local\\SwiftSearch.{CB77990E-A78F-44dc-B382-089B01207F02}"));
+	if (hEvent != NULL && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
 		int result = 0;
 		try { winnt::NtProcess::RtlAdjustPrivilege(SeManageVolumePrivilege, true); }
@@ -137,7 +138,8 @@ int run(HINSTANCE hInstance, int nShowCmd)
 			try
 #endif
 			{
-				(*std::auto_ptr<CMainDlgBase>(CMainDlgBase::create()))(NULL);
+				std::auto_ptr<CMainDlgBase> dlg(CMainDlgBase::create(hEvent));
+				(*dlg)(NULL);
 			}
 #if defined(NDEBUG)
 			catch (CStructured_Exception &ex)
@@ -157,7 +159,12 @@ int run(HINSTANCE hInstance, int nShowCmd)
 		else { WTL::AtlMessageBox(NULL, _T("This program requires administrative privileges in order to run.\r\n\r\nDetails: \r\nThis program needs direct read access to the file system, which requires the \"manage volume\" privilege.\r\nBecause this bypasses many security features, this privilege is typically only granted to administrators.\r\nContact your local administrator to obtain this privilege."), _T("Administrative Privileges Required"), MB_ICONERROR | MB_OK); }
 		return result;
 	}
-	else { return GetLastError(); }
+	else
+	{
+		AllowSetForegroundWindow(ASFW_ANY);
+		PulseEvent(hEvent);  // PulseThread() is normally unreliable, but we don't really care here...
+		return GetLastError();
+	}
 }
 
 #if defined(NDEBUG)

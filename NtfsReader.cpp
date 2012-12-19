@@ -26,10 +26,11 @@ class NtfsReaderImpl : public NtfsReader
 	unsigned long const clusterSize;
 	unsigned long cbFileRecord;
 	bool cached;
-	mutable size_t iFirstCachedOutputSegment;
-	mutable size_t iFirstCachedDirectSegment;
-	mutable std::valarray<unsigned char> outputBuffer;
-	mutable std::valarray<unsigned char> directBuffer;
+	bool background;
+	size_t iFirstCachedOutputSegment;
+	size_t iFirstCachedDirectSegment;
+	std::valarray<unsigned char> outputBuffer;
+	std::valarray<unsigned char> directBuffer;
 
 	static class PhysicalDriveLocks : public ATL::CComAutoCriticalSection, private boost::ptr_map<unsigned long, ATL::CComAutoCriticalSection>
 	{
@@ -48,12 +49,13 @@ class NtfsReaderImpl : public NtfsReader
 	NtfsReaderImpl(This const &);
 	NtfsReaderImpl &operator =(This const &);
 public:
-	NtfsReaderImpl(winnt::NtFile volume, bool cached) :
+	NtfsReaderImpl(winnt::NtFile const &volume) :
 		volume(volume),
 		diskNumber(static_cast<unsigned long>(-1)),
 		clusterSize(volume.GetClusterSize()),
 		cbFileRecord(volume.FsctlGetVolumeData().BytesPerFileRecordSegment),
-		cached(cached),
+		cached(false),
+		background(true),
 		iFirstCachedOutputSegment(static_cast<size_t>(-1)),
 		iFirstCachedDirectSegment(static_cast<size_t>(-1)),
 		outputBuffer(offsetof(NTFS_FILE_RECORD_OUTPUT_BUFFER, FileRecordBuffer) + cbFileRecord),
@@ -135,9 +137,9 @@ public:
 
 	size_t size() const { return static_cast<size_t>(static_cast<unsigned long long>(mftRetPtrs.back().first) * clusterSize / this->cbFileRecord); }
 
-	bool set_cached(bool value) { using std::swap; swap(value, this->cached); return value; }
+	bool set_background(bool value) { using std::swap; swap(value, this->background); return value; }
 
-	size_t find_next(size_t const i) const  // might return a value > this->size()!!!
+	size_t find_next(size_t const i)  // might return a value > this->size()!!!
 	{
 		size_t j = i;
 		size_t d = 1;
@@ -165,7 +167,17 @@ public:
 		return j;
 	}
 
-	NTFS::FILE_RECORD_SEGMENT_HEADER const *get(size_t &i /* might be lower */, bool cached) const
+	struct ScopedIoPriority
+	{
+		winnt::NtFile *pVolume;
+		IO_PRIORITY_HINT old;
+		ScopedIoPriority(winnt::NtFile &volume, bool const lower)
+			: pVolume(&volume), old(volume.GetIoPriorityHint())
+		{ pVolume->SetIoPriorityHint(lower ? IoPriorityVeryLow : old); }
+		~ScopedIoPriority() { pVolume->SetIoPriorityHint(old); }
+	};
+
+	NTFS::FILE_RECORD_SEGMENT_HEADER const *get(size_t &i /* might be lower */, bool cached)
 	{
 		NTFS::FILE_RECORD_SEGMENT_HEADER const *result;
 		try
@@ -178,9 +190,10 @@ public:
 					if (this->iFirstCachedOutputSegment != i)
 					{
 						ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
+						ScopedIoPriority const setPriority(volume, this->background);
 						volume.FsctlGetNtfsFileRecordFloor(i, &output, this->outputBuffer.size());
-						this->iFirstCachedOutputSegment = i;
 					}
+					this->iFirstCachedOutputSegment = i;
 					i = static_cast<size_t>(output.FileReferenceNumber.QuadPart & 0x0000FFFFFFFFFFFF);
 					NTFS::FILE_RECORD_SEGMENT_HEADER &record = reinterpret_cast<NTFS::FILE_RECORD_SEGMENT_HEADER &>(output.FileRecordBuffer);
 
@@ -199,14 +212,18 @@ public:
 			{
 				if (i < this->iFirstCachedDirectSegment || this->iFirstCachedDirectSegment + this->directBuffer.size() / this->cbFileRecord <= i)
 				{
-					ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
 					size_t const nCached = this->directBuffer.size() / this->cbFileRecord;
 					size_t const nReadBehind = i < this->iFirstCachedDirectSegment ? nCached - 1 : 0;
 					using std::max;
 					this->iFirstCachedDirectSegment = max(i, nReadBehind) - nReadBehind;
-					size_t const cbRead = volume.NtReadFileVirtual(
-						std::make_pair(0ULL, std::make_pair(this->mftRetPtrs.size(), &this->mftRetPtrs[0])),
-						this->clusterSize, this->iFirstCachedDirectSegment * this->cbFileRecord, &this->directBuffer[0], static_cast<unsigned long>(this->directBuffer.size() / cbFileRecord * cbFileRecord));
+					size_t cbRead;
+					{
+						ATL::CComCritSecLock<ATL::CComAutoCriticalSection> const driveLock(physicalDriveLocks[this->diskNumber]);
+						ScopedIoPriority const setPriority(volume, this->background);
+						cbRead = volume.NtReadFileVirtual(
+							std::make_pair(0ULL, std::make_pair(this->mftRetPtrs.size(), &this->mftRetPtrs[0])),
+							this->clusterSize, this->iFirstCachedDirectSegment * this->cbFileRecord, &this->directBuffer[0], static_cast<unsigned long>(this->directBuffer.size() / cbFileRecord * cbFileRecord));
+					}
 					for (size_t j = 0; j < cbRead / this->cbFileRecord; j++)
 					{
 						NTFS::FILE_RECORD_SEGMENT_HEADER &record =
@@ -238,7 +255,7 @@ public:
 		return result;
 	}
 
-	void const *operator[](size_t const i) const
+	void const *operator[](size_t const i)
 	{
 		size_t j = i;
 		NTFS::FILE_RECORD_SEGMENT_HEADER const *const result = this->get(j, this->cached);
@@ -248,7 +265,7 @@ public:
 };
 NtfsReaderImpl::PhysicalDriveLocks NtfsReaderImpl::physicalDriveLocks;
 
-NtfsReader *NtfsReader::create(winnt::NtFile const &volume, bool cached)
+NtfsReader *NtfsReader::create(winnt::NtFile const &volume)
 {
-	return new NtfsReaderImpl(volume, cached);
+	return new NtfsReaderImpl(volume);
 }

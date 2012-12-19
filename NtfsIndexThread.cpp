@@ -23,7 +23,6 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 {
 	std::basic_string<TCHAR> _drive;
 	unsigned long volatile _progress;
-	bool volatile _cached;
 	bool volatile _background;
 	boost::shared_ptr<NtfsIndex> _index;
 	winnt::NtThread _thread;
@@ -48,7 +47,7 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 
 public:
 	NtfsIndexThreadImpl(std::basic_string<TCHAR> const drive)
-		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _cached(true), _background(true)
+		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true)
 	{
 		struct Invoker
 		{
@@ -69,10 +68,6 @@ public:
 	volatile bool &background() { return this->_background; }
 
 	volatile bool const &background() const { return this->_background; }
-
-	volatile bool &cached() { return this->_cached; }
-
-	volatile bool const &cached() const { return this->_cached; }
 
 	uintptr_t thread() const { return reinterpret_cast<uintptr_t>(this->_thread.get()); }
 
@@ -115,11 +110,7 @@ public:
 					FILETIME creationTime = { }, exitTime = { }, kernelTime1 = { }, kernelTime2 = { }, userTime2 = { }, userTime1 = { };
 					GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime1, &userTime1);
 					
-					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_drive, this->_event, &this->_progress, &this->_cached, &this->_background)));
-
-					// For subsequent iterations
-					this->_background = true;
-					this->_cached = false;
+					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(volume, this->_drive, this->_event, &this->_progress, &this->_background)));
 
 					if (!GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime2, &userTime2)) { break; }
 					LARGE_INTEGER q1 = { }, q2 = { };
@@ -130,7 +121,7 @@ public:
 					unsigned long const sleepInterval = 100;  // The program can't exit while sleeping! So keep this value low.
 					using std::max;
 					using std::min;
-					for (long long nMillisToSleep = min(60 * 1000, max(1 * 1000, 3 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
+					for (long long nMillisToSleep = min(60 * 1000, max(15 * 1000, 10 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
 					{
 						if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
 						{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
@@ -143,7 +134,11 @@ public:
 		{
 			if (ex.GetSENumber() != ERROR_CANCELLED)
 			{
-				WTL::AtlMessageBox(NULL, GetAnyErrorText(ex.GetSENumber()), (_T("Error indexing ") + this->_drive).c_str(), MB_ICONERROR | MB_OK | MB_APPLMODAL);
+				if (!IsDebuggerPresent())
+				{
+					WTL::AtlMessageBox(NULL, GetAnyErrorText(ex.GetSENumber()), (_T("Error indexing ") + this->_drive).c_str(), MB_ICONERROR | MB_OK | MB_APPLMODAL);
+				}
+				else { throw; }
 			}
 		}
 		return r;

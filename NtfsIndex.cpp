@@ -112,34 +112,22 @@ public:
 		throw std::domain_error("Could not find name for file record.");
 	}
 
-	NtfsIndexImpl(winnt::NtFile volume, std::basic_string<TCHAR> const &win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground)
+	NtfsIndexImpl(winnt::NtFile volume, std::basic_string<TCHAR> const &win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground)
 		: _win32Path(win32Path), _event(event)
 	{
 		struct ProgressReporter
 		{
 			NtfsReader *reader;
-			bool prevBackground;
 			winnt::NtEvent event;
 			unsigned long volatile *const pProgress;
-			bool volatile *pCached;
 			bool volatile *pBackground;
 			size_t counter;
-			ProgressReporter(NtfsReader *reader, winnt::NtEvent const &event, unsigned long volatile *const pProgress, bool volatile *pCached, bool volatile *pBackground)
-				: reader(reader), prevBackground(pBackground ? !*pBackground : false), event(event), pProgress(pProgress), pCached(pCached), pBackground(pBackground), counter(0) { }
+			ProgressReporter(NtfsReader *reader, winnt::NtEvent const &event, unsigned long volatile *const pProgress, bool volatile *pBackground)
+				: reader(reader), event(event), pProgress(pProgress), pBackground(pBackground), counter(0) { }
 			void operator()(unsigned long long const numerator, unsigned long long const denominator)
 			{
 				size_t const waitInterval = 256;
-				if (pCached) { reader->set_cached(*pCached); }
-				if (pBackground != NULL && prevBackground != *pBackground)
-				{
-					prevBackground = *pBackground;
-
-					// First, RESET the thread's background-mode
-					SetThreadPriority(GetCurrentThread(), ! /*the "NOT" here is intentional!!*/ *pBackground ? 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/ : 0x00020000 /*THREAD_MODE_BACKGROUND_END*/);
-
-					// Now set it
-					SetThreadPriority(GetCurrentThread(), *pBackground ? 0x00010000 /*THREAD_MODE_BACKGROUND_BEGIN*/ : 0x00020000 /*THREAD_MODE_BACKGROUND_END*/);
-				}
+				if (pBackground) { reader->set_background(*pBackground); }
 				if (counter++ % waitInterval == 0) { event.NtWaitForSingleObject(); }
 				if (pProgress && InterlockedExchange(reinterpret_cast<long volatile *>(pProgress), static_cast<unsigned long>(PROGRESS_CANCEL_REQUESTED * numerator / denominator)) == static_cast<long>(PROGRESS_CANCEL_REQUESTED))
 				{
@@ -150,8 +138,8 @@ public:
 		};
 
 		unsigned long const clusterSize = volume.GetClusterSize();
-		std::auto_ptr<NtfsReader> const reader(NtfsReader::create(volume, pCached ? *pCached : true));
-		ProgressReporter progressReporter(reader.get(), event, pProgress, pCached, pBackground);
+		std::auto_ptr<NtfsReader> const reader(NtfsReader::create(volume));
+		ProgressReporter progressReporter(reader.get(), event, pProgress, pBackground);
 
 		size_t const nFileRecords = reader->size();
 		this->names.reserve(nFileRecords * 12);
@@ -432,7 +420,7 @@ public:
 	winnt::NtEvent event() const { return this->_event; }
 };
 
-NtfsIndex *NtfsIndex::create(winnt::NtFile const &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pCached, bool volatile *pBackground)
+NtfsIndex *NtfsIndex::create(winnt::NtFile const &volume, std::basic_string<TCHAR> const win32Path, winnt::NtEvent const &event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground)
 {
-	return new NtfsIndexImpl(volume, win32Path, event, pProgress, pCached, pBackground);
+	return new NtfsIndexImpl(volume, win32Path, event, pProgress, pBackground);
 }
