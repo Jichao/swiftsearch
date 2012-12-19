@@ -1016,6 +1016,7 @@ private:
 		this->iconLoader->clear();
 		this->drives.clear();
 		UnregisterWait(this->hWait);
+		this->DeleteNotifyIcon();
 	}
 
 	LRESULT OnFileNameArrowKey(LPNMHDR pnmh)
@@ -1766,14 +1767,19 @@ private:
 		}
 	}
 
+	void DeleteNotifyIcon()
+	{
+		NOTIFYICONDATA nid = { sizeof(nid), *this, 0 };
+		Shell_NotifyIcon(NIM_DELETE, &nid);
+		SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
+	}
+
 	void OnShowWindow(BOOL bShow, UINT /*nStatus*/)
 	{
 		if (bShow)
 		{
 			SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
-			NOTIFYICONDATA nid = { sizeof(nid), *this, 0 };
-			Shell_NotifyIcon(NIM_DELETE, &nid);
-			SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
+			this->DeleteNotifyIcon();
 			this->txtFileName.SetFocus();
 		}
 		else
