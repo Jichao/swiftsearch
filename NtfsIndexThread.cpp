@@ -121,7 +121,7 @@ public:
 					unsigned long const sleepInterval = 100;  // The program can't exit while sleeping! So keep this value low.
 					using std::max;
 					using std::min;
-					for (long long nMillisToSleep = min(60 * 1000, max(15 * 1000, 10 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
+					for (long long nMillisToSleep = min(20 * 60 * 1000, max(10 * 60 * 1000, 80 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
 					{
 						if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
 						{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
