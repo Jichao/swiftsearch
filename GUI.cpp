@@ -866,13 +866,14 @@ class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl
 {
 	enum { IDC_STATUS_BAR = 1100 + 0 };
 	enum { COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_ACCESS_TIME };
-	enum { WM_NOTIFYICON = WM_USER + 100, WM_THREADERROR = WM_USER + 101 };
+	enum { WM_NOTIFYICON = WM_USER + 100, WM_THREADMESSAGE = WM_USER + 101 };
 	struct CThemedListViewCtrl : public WTL::CListViewCtrl, public WTL::CThemeImpl<CThemedListViewCtrl> { using WTL::CListViewCtrl::Attach; };
 	CThemedListViewCtrl lvFiles;
 	WTL::CComboBox cmbDrive;
 	WTL::CStatusBarCtrl statusbar;
 	WTL::CProgressBarCtrl statusbarProgress;
 	CUpDownNotify<WTL::CEdit> txtFileName;
+	static UINT const WM_TASKBARCREATED;
 	//boost::ptr_vector<NtfsIndexThread> drives;
 	class CoInit
 	{
@@ -1015,7 +1016,7 @@ private:
 				TCHAR fsName[MAX_PATH];
 				if (GetVolumeInformation(drive, NULL, 0, NULL, 0, NULL, fsName, sizeof(fsName) / sizeof(*fsName)) && _tcsicmp(fsName, _T("NTFS")) == 0)
 				{
-					boost::intrusive_ptr<NtfsIndexThread> const p(NtfsIndexThread::create(this->m_hWnd, WM_THREADERROR, drive));
+					boost::intrusive_ptr<NtfsIndexThread> const p(NtfsIndexThread::create(this->m_hWnd, WM_THREADMESSAGE, drive));
 					int const index = this->cmbDrive.AddString(drive);
 					if (drive[0] != _T('\0') && drive[0] == windowsDir[0] && drive[1] == _T(':'))
 					{ iSel = index; }
@@ -1367,17 +1368,28 @@ private:
 						}
 					}
 #endif
+					winnt::NtFile fileTemp;  // To prevent icon retrieval from changing the file time
+					try
+					{
+						std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName((_T("\\??\\") + normalizedPath).c_str());
+						fileTemp = winnt::NtFile::NtOpenFile(ntPath, winnt::Access::QueryAttributes | winnt::Access::SetAttributes | winnt::Access::Read, 0 /*exclusive access*/, FILE_NO_INTERMEDIATE_BUFFERING | FILE_OPEN_REPARSE_POINT);
+						FILE_BASIC_INFORMATION fbi = fileTemp.NtQueryInformationFile<FILE_BASIC_INFORMATION>();
+						fbi.ChangeTime.QuadPart = fbi.LastAccessTime.QuadPart = fbi.LastWriteTime.QuadPart = -1;
+						fileTemp.NtSetInformationFile(fbi);
+					}
+					catch (CStructured_Exception &) { }
 					BOOL success = FALSE;
 					SetLastError(0);
 					if (shfi.hIcon == NULL)
 					{
-						CoInit com;  // MANDATORY!  Some files, like '.sln' files, won't work without it!
 						ULONG const flags = SHGFI_ICON | SHGFI_SHELLICONSIZE | SHGFI_ADDOVERLAYS | //SHGFI_TYPENAME | SHGFI_SYSICONINDEX |
 							((std::max)(size.cx, size.cy) <= (std::max)(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) ? SHGFI_SMALLICON : SHGFI_LARGEICON);
+						CoInit com;  // MANDATORY!  Some files, like '.sln' files, won't work without it!
 						success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags) != 0;
 						if (!success && (flags & SHGFI_USEFILEATTRIBUTES) == 0)
 						{ success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags | SHGFI_USEFILEATTRIBUTES) != 0; }
 					}
+
 					if (success)
 					{
 						std::basic_string<TCHAR> const path(path), displayName(GetDisplayName(*this, path, SHGDN_NORMAL));
@@ -1576,8 +1588,22 @@ private:
 
 	void OnCancel(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
+		if (this->CheckAndCreateIcon(false))
+		{
+			this->ShowWindow(SW_HIDE);
+		}
+	}
+
+	BOOL CheckAndCreateIcon(bool checkVisible)
+	{
 		NOTIFYICONDATA nid = { sizeof(nid), *this, 0, NIF_MESSAGE | NIF_ICON | NIF_TIP, WM_NOTIFYICON, this->GetIcon(FALSE), _T("SwiftSearch") };
-		if (Shell_NotifyIcon(NIM_ADD, &nid)) { this->ShowWindow(SW_HIDE); }
+		return (!checkVisible || !this->IsWindowVisible()) && Shell_NotifyIcon(NIM_ADD, &nid);
+	}
+
+	LRESULT OnTaskbarCreated(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/)
+	{
+		this->CheckAndCreateIcon(true);
+		return 0;
 	}
 
 	LRESULT OnNotifyIcon(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam)
@@ -1985,9 +2011,10 @@ private:
 		MSG_WM_SHOWWINDOW(OnShowWindow)
 		MSG_WM_CLOSE(OnClose)
 		MSG_WM_PARENTNOTIFY(OnParentNotify)
-		MESSAGE_HANDLER_EX(WM_THREADERROR, OnThreadError)
+		MESSAGE_HANDLER_EX(WM_THREADMESSAGE, OnThreadError)
 		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
+		MESSAGE_HANDLER_EX(WM_TASKBARCREATED, OnTaskbarCreated)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)
 		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)
@@ -2013,6 +2040,7 @@ private:
 		DLGRESIZE_CONTROL(IDOK, DLSZ_MOVE_X)
 	END_DLGRESIZE_MAP()
 };
+UINT const CMainDlg::WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
 CMainDlgBase *CMainDlgBase::create(HANDLE const hEvent) { return new CMainDlg(hEvent); }
 

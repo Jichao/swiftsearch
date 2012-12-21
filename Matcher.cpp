@@ -58,7 +58,7 @@ inline bool wildcard(It1 patBegin, It1 const patEnd, It2 strBegin, It2 const str
 	bool star = false;
 
 loopStart:
-	for (s = strBegin, p = patBegin; s != strEnd; ++s, ++p)
+	for (s = strBegin, p = patBegin; s != strEnd && p != patEnd; ++s, ++p)
 	{
 		if (tr.eq(*p, _T('*')))
 		{

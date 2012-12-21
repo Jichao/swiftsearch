@@ -22,5 +22,5 @@ public:
 	virtual uintptr_t volume() const = 0;  // MUST return the SAME handle!
 	virtual void close() = 0;
 
-	static NtfsIndexThread *create(HWND const hWnd, unsigned int const wndMessageError, std::basic_string<TCHAR> const &drive);
+	static NtfsIndexThread *create(HWND const hWnd, unsigned int const wndMessage, std::basic_string<TCHAR> const &drive);
 };

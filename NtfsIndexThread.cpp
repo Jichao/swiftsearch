@@ -21,6 +21,15 @@
 
 TCHAR const *GetAnyErrorText(unsigned long errorCode, va_list* pArgList = NULL);
 
+#ifdef _M_X64
+extern "C" void *__cdecl _InterlockedExchangePointer(void *volatile *Destination, void *ExChange);
+#pragma intrinsic(_InterlockedExchangePointer)
+#else
+extern "C" long __cdecl _InterlockedExchange(long volatile *Target, long Value);
+#pragma intrinsic(_InterlockedExchange)
+#undef _InterlockedExchangePointer
+#define _InterlockedExchangePointer(dest, xchg) (void *)_InterlockedExchange((long volatile *)(dest), (long)(xchg))
+#endif
 
 class NtfsIndexThreadImpl : public NtfsIndexThread
 {
@@ -32,7 +41,7 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 	winnt::NtEvent _event;
 	winnt::NtFile _volume;
 	HWND hWnd;
-	unsigned int wndMessageError;
+	unsigned int wndMessage;
 
 	NtfsIndexThreadImpl &operator =(NtfsIndexThreadImpl const &);
 
@@ -52,8 +61,8 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 	}
 
 public:
-	NtfsIndexThreadImpl(HWND const hWnd, unsigned int wndMessageError, std::basic_string<TCHAR> const drive)
-		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessageError(wndMessageError)
+	NtfsIndexThreadImpl(HWND const hWnd, unsigned int wndMessage, std::basic_string<TCHAR> const drive)
+		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessage(wndMessage)
 	{
 		struct Invoker
 		{
@@ -78,7 +87,7 @@ public:
 	void close()
 	{
 		InterlockedExchange(&reinterpret_cast<long volatile &>(this->_progress), static_cast<long>(NtfsIndex::PROGRESS_CANCEL_REQUESTED));
-		winnt::NtFile const volume = InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(this->_volume._handle), NULL);
+		winnt::NtFile const volume = _InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(this->_volume._handle), NULL);
 	}
 
 	uintptr_t volume() const { return reinterpret_cast<uintptr_t>(this->_volume.get()); }
@@ -131,12 +140,6 @@ public:
 					
 					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(this->_volume, this->_drive, this->_event, &this->_progress, &this->_background)));
 
-					UINT const driveType = GetDriveType(this->_drive.c_str());
-					if (driveType != DRIVE_FIXED && driveType != DRIVE_RAMDISK && driveType != DRIVE_UNKNOWN)
-					{
-						break;
-					}
-
 					if (!GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime2, &userTime2)) { break; }
 					LARGE_INTEGER q1 = { }, q2 = { };
 					q1.LowPart = userTime1.dwLowDateTime + kernelTime1.dwLowDateTime;
@@ -161,7 +164,7 @@ public:
 			{
 				if (IsDebuggerPresent()) { throw; }
 				std::auto_ptr<std::basic_string<TCHAR> > msg(new std::basic_string<TCHAR>(_T("Error indexing ") + this->_drive + _T(": ") + GetAnyErrorText(ex.GetSENumber())));
-				if (PostMessage(this->hWnd, this->wndMessageError, ex.GetSENumber(), reinterpret_cast<LPARAM>(msg.get())))
+				if (PostMessage(this->hWnd, this->wndMessage, ex.GetSENumber(), reinterpret_cast<LPARAM>(msg.get())))
 				{ msg.release(); }
 			}
 		}
@@ -169,7 +172,7 @@ public:
 	}
 };
 
-NtfsIndexThread *NtfsIndexThread::create(HWND const hWnd, unsigned int const wndMessageError, std::basic_string<TCHAR> const &drive)
+NtfsIndexThread *NtfsIndexThread::create(HWND const hWnd, unsigned int const wndMessage, std::basic_string<TCHAR> const &drive)
 {
-	return new NtfsIndexThreadImpl(hWnd, wndMessageError, drive);
+	return new NtfsIndexThreadImpl(hWnd, wndMessage, drive);
 }

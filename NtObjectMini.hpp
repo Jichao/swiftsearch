@@ -148,6 +148,9 @@ typedef struct _IO_STATUS_BLOCK { union { NTSTATUS Status; PVOID Pointer; }; ULO
 typedef enum _IO_PRIORITY_HINT { IoPriorityVeryLow = 0, IoPriorityLow, IoPriorityNormal, IoPriorityHigh, IoPriorityCritical, MaxIoPriorityTypes } IO_PRIORITY_HINT;
 #endif
 typedef struct _CURDIR { UNICODE_STRING DosPath; HANDLE Handle; } CURDIR, *PCURDIR;
+#if !defined(_NTDDK_)
+typedef struct _FILE_BASIC_INFORMATION { LARGE_INTEGER CreationTime; LARGE_INTEGER LastAccessTime; LARGE_INTEGER LastWriteTime; LARGE_INTEGER ChangeTime; ULONG FileAttributes; } FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
+#endif
 typedef struct _FILE_END_OF_FILE_INFORMATION { LARGE_INTEGER EndOfFile; } FILE_END_OF_FILE_INFORMATION, *PFILE_END_OF_FILE_INFORMATION;
 #if !defined(_NTDDK_) || !defined(NTDDI_VISTA)
 # pragma warning(push)
@@ -200,6 +203,7 @@ inline To int_cast(const From value) //throw(std::out_of_range)
 
 namespace winnt
 {
+	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_BASIC_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(4); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_END_OF_FILE_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(20); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_IO_PRIORITY_HINT_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(43); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_MODE_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(16); }
@@ -348,6 +352,7 @@ namespace winnt
 		NTSYSAPI NTSTATUS NTAPI NtMakePermanentObject(IN HANDLE Handle);
 		NTSYSAPI NTSTATUS NTAPI NtOpenDirectoryObject(OUT PHANDLE DirectoryHandle, IN ACCESS_MASK DesiredAccess, IN struct _OBJECT_ATTRIBUTES * ObjectAttributes);
 		NTSYSAPI NTSTATUS NTAPI NtOpenFile(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN struct _OBJECT_ATTRIBUTES * ObjectAttributes, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN ULONG ShareAccess, IN ULONG OpenOptions);
+		NTSYSAPI NTSTATUS NTAPI NtQueryAttributesFile(IN struct _OBJECT_ATTRIBUTES *ObjectAttributes, IN struct _FILE_BASIC_INFORMATION * FileInformation);
 		NTSYSAPI NTSTATUS NTAPI NtQueryDirectoryFile(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN PIO_APC_ROUTINE ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN enum _FILE_INFORMATION_CLASS FileInformationClass, IN BOOLEAN ReturnSingleEntry, IN UNICODE_STRING * FileName OPTIONAL, IN BOOLEAN RestartScan);
 		NTSYSAPI NTSTATUS NTAPI NtQueryInformationFile(IN HANDLE FileHandle, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN enum _FILE_INFORMATION_CLASS FileInformationClass);
 		NTSYSAPI NTSTATUS NTAPI NtQueryObject(IN HANDLE ObjectHandle, IN enum _OBJECT_INFORMATION_CLASS ObjectInformationClass, OUT PVOID ObjectInformation, IN ULONG Length, OUT PULONG ResultLength);
@@ -854,6 +859,14 @@ namespace winnt
 
 		typedef std::vector<std::pair<long long /*LCN*/, long long /*VirtualClusterCount (negated, if LCN is negative)*/> > RetrievalPointers;
 
+		static FILE_BASIC_INFORMATION NtQueryAttributesFile(ObjectAttributes const &oa)
+		{
+			ObjectAttributes oa2 = oa;
+			FILE_BASIC_INFORMATION fi = {0};
+			NtStatus(NtDllProc(NtQueryAttributesFile)(oa2, &fi)).CheckAndThrow();
+			return fi;
+		}
+
 		static NtFile NtOpenFile(ObjectAttributes const &oa, Access desiredAccess = Access::GenericRead | Access::Synchronize, ULONG shareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE, ULONG openOptions = FILE_SYNCHRONOUS_IO_NONALERT, OUT FileCreationDisposition *pDisposition = NULL, bool throwIfNotFound = true)
 		{
 			if ((openOptions & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT)) != 0 && (desiredAccess & Access::Synchronize) == 0) { __debugbreak(); }
@@ -874,6 +887,14 @@ namespace winnt
 			/*Deprecated();*/
 			NtStatus(NtDllProc(NtQueryInformationFile)(this->get(), &iosb, &info, sizeof(info), GetInfoClass(static_cast<TInfo *>(NULL)))).CheckAndThrow();
 			return info;
+		}
+
+		template<typename TInfo>
+		void NtSetInformationFile(TInfo const &info)
+		{
+			IO_STATUS_BLOCK iosb;
+			/*Deprecated();*/
+			NtStatus(NtDllProc(NtSetInformationFile)(this->get(), &iosb, const_cast<TInfo *>(&info), sizeof(info), GetInfoClass(static_cast<TInfo *>(NULL)))).CheckAndThrow();
 		}
 
 		template<typename TInfo>

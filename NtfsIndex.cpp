@@ -200,7 +200,7 @@ public:
 									a.LastModificationTime),
 								std::make_pair(
 									a.LastAccessTime,
-									a.FileAttributes)));
+									a.FileAttributes | ((record.Flags & 2) != 0 ? FILE_ATTRIBUTE_DIRECTORY : 0))));
 						if (isBase) { standardInfoAttrs.push_back(v); }
 						else { standardInfoAttrsDerived.insert(v); }
 					}
