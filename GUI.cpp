@@ -1317,8 +1317,8 @@ private:
 				}
 				break;
 			case COLUMN_INDEX_PATH: _tcsncpy(pLV->item.pszText, adddirsep(GetPath(*row.pIndex, row.parent(), path)).c_str(), pLV->item.cchTextMax); break;
-			case COLUMN_INDEX_SIZE: _tcsncpy(pLV->item.pszText, (row.attributes() & FILE_ATTRIBUTE_DIRECTORY) == 0 ? nformat(row.size()).c_str() : _T(""), pLV->item.cchTextMax); break;
-			case COLUMN_INDEX_SIZE_ON_DISK: _tcsncpy(pLV->item.pszText, (row.attributes() & FILE_ATTRIBUTE_DIRECTORY) == 0 ? nformat(row.sizeOnDisk()).c_str() : _T(""), pLV->item.cchTextMax); break;
+			case COLUMN_INDEX_SIZE: _tcsncpy(pLV->item.pszText, nformat(row.size()).c_str(), pLV->item.cchTextMax); break;
+			case COLUMN_INDEX_SIZE_ON_DISK: _tcsncpy(pLV->item.pszText, nformat(row.sizeOnDisk()).c_str(), pLV->item.cchTextMax); break;
 			case COLUMN_INDEX_MODIFICATION_TIME: SystemTimeToString(row.modificationTime(), pLV->item.pszText, pLV->item.cchTextMax - 2 /*to be safe*/); break;
 			case COLUMN_INDEX_CREATION_TIME: SystemTimeToString(row.creationTime(), pLV->item.pszText, pLV->item.cchTextMax - 2 /*to be safe*/); break;
 			case COLUMN_INDEX_ACCESS_TIME: SystemTimeToString(row.accessTime(), pLV->item.pszText, pLV->item.cchTextMax - 2 /*to be safe*/); break;
