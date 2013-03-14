@@ -405,6 +405,7 @@
 				RuntimeLibrary="2"
 				BufferSecurityCheck="false"
 				TreatWChar_tAsBuiltInType="false"
+				ForceConformanceInForLoopScope="false"
 				UsePrecompiledHeader="2"
 				WarningLevel="4"
 				CompileAs="0"
@@ -493,6 +494,7 @@
 				RuntimeLibrary="2"
 				BufferSecurityCheck="false"
 				TreatWChar_tAsBuiltInType="false"
+				ForceConformanceInForLoopScope="false"
 				UsePrecompiledHeader="2"
 				WarningLevel="4"
 				CompileAs="0"
@@ -571,33 +573,27 @@
 					ExcludedFromBuild="true"
 					>
 					<Tool
-						Name="MASM"
-						PreprocessorDefinitions="_WIN64"
-					/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					ExcludedFromBuild="true"
-					>
-					<Tool
-						Name="MASM"
+						Name="VCCustomBuildTool"
+						CommandLine="ml64.exe /Fo&quot;$(IntDir)\$(InputName).obj&quot; /D_WIN64 /c /nologo /W3 /Zi /Ta &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
 				<FileConfiguration
 					Name="Release|x64"
-					ExcludedFromBuild="true"
 					>
 					<Tool
-						Name="MASM"
-						PreprocessorDefinitions="_WIN64"
+						Name="VCCustomBuildTool"
+						CommandLine="ml64.exe /Fo&quot;$(IntDir)\$(InputName).obj&quot; /D_WIN64 /c /nologo /W3 /Zi /Ta &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
 				<FileConfiguration
 					Name="Release (Windows 2003 DDK)|x64"
 					>
 					<Tool
-						Name="MASM"
-						PreprocessorDefinitions="_WIN64"
+						Name="VCCustomBuildTool"
+						CommandLine="ml64.exe /Fo&quot;$(IntDir)\$(InputName).obj&quot; /D_WIN64 /c /nologo /W3 /Zi /Ta &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
 			</File>

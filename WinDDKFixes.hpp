@@ -14,44 +14,76 @@ extern "C"
 #endif
 	__declspec(dllimport) int __stdcall GetModuleHandleExA(unsigned long dwFlags, char const *lpModuleName, struct HINSTANCE__** phModule);
 	__declspec(dllimport) int __stdcall GetModuleHandleExW(unsigned long dwFlags, wchar_t const *lpModuleName, struct HINSTANCE__** phModule);
+#if defined(_MSC_VER) && _MSC_VER >= 1400
+#ifdef _M_X64
 	void *__cdecl _InterlockedCompareExchangePointer(void *volatile *Destination, void *ExChange, void *Comparand);
-#pragma intrinsic(_InterlockedCompareExchangePointer)
+#	pragma intrinsic(_InterlockedCompareExchangePointer)
+#else
+	long __cdecl _InterlockedCompareExchange(long volatile *, long, long);
+#	pragma intrinsic(_InterlockedCompareExchange)
+	static void *__cdecl _InterlockedCompareExchangePointer(void *volatile *Destination, void *ExChange, void *Comparand)
+	{
+		return (void *)_InterlockedCompareExchange((long volatile *)Destination, (long)ExChange, (long)Comparand);
+	}
+#endif
+#endif
 }
-#	ifndef _C_STD_BEGIN
-#		define _C_STD_BEGIN namespace std {
-#	endif
-#	ifndef _C_STD_END
-#		define _C_STD_END }
-#	endif
-#	ifndef _CSTD
-#		define _CSTD ::std::
-#	endif
-	namespace std { template<class C, class T, class D = ptrdiff_t, class P = T *, class R = void> struct iterator; }
-#	define iterator iterator_bad
-#	define inserter inserter_bad
-#	define insert_iterator insert_iterator_bad
-#	define iterator_traits iterator_traits_bad
-#		include <iterator>
-#		include <utility>  // iterator_traits
-#	undef iterator_traits
-#	undef insert_iterator
-#	undef inserter
-#	undef iterator
+#ifndef _C_STD_BEGIN
+#	define _C_STD_BEGIN namespace std {
+#endif
+#ifndef _C_STD_END
+#	define _C_STD_END }
+#endif
+#ifndef _CSTD
+#	define _CSTD ::std::
+#endif
+namespace std { template<class C, class T, class D = ptrdiff_t, class P = T *, class R = void> struct iterator; }
+#define iterator iterator_bad
+#define inserter inserter_bad
+#define insert_iterator insert_iterator_bad
+#define iterator_traits iterator_traits_bad
+#define reverse_iterator reverse_iterator_bad
+#include <utility>  // iterator_traits
+template<class T>
+struct std::iterator_traits_bad<T *>
+{
+	typedef std::random_access_iterator_tag iterator_category;
+	typedef T value_type;
+	typedef ptrdiff_t difference_type;
+	typedef ptrdiff_t distance_type;
+	typedef T *pointer;
+	typedef T &reference;
+};
+#undef reverse_iterator
+namespace std { template<class RanIt, class T = typename iterator_traits<RanIt>::value_type, class R = T &, class P = T *, class D = ptrdiff_t> class reverse_iterator; }
+#	include <iterator>
+#undef iterator_traits
+#undef insert_iterator
+#undef inserter
+#undef iterator
 
 typedef long long _Longlong;
 typedef unsigned long long _ULonglong;
 
 #include <math.h>  // ::ceil
+#include <limits>
 
 namespace std
 {
 	using ::intptr_t;
 	using ::uintptr_t;
+	using ::memcpy;
 	using ::memset;
 	using ::abort;
 	using ::strerror;
 	using ::ceil;
 	using ::va_list;
+
+	template<class T> T *operator &(T &p) { return reinterpret_cast<T *>(&reinterpret_cast<unsigned char &>(p)); }
+	template<class T> T const *operator &(T const &p) { return reinterpret_cast<T const *>(&reinterpret_cast<unsigned char const &>(p)); }
+
+	template<> class numeric_limits<long long>;
+	template<> class numeric_limits<unsigned long long>;
 
 	template<class T>
 	struct ref_or_void { typedef T &type; };
@@ -64,28 +96,28 @@ namespace std
 	{
 		typedef D difference_type;
 		typedef P pointer;
-		typedef typename ref_or_void<R>::type reference;
+		typedef R reference;
 	};
 
-	template<class _C>
+	template<class C>
 	class insert_iterator : public iterator<output_iterator_tag, void, void>
 	{
 	public:
-		typedef _C container_type;
-		typedef typename _C::value_type value_type;
-		insert_iterator(_C& _X, typename _C::iterator _I) : container(&_X), iter(_I) {}
-		insert_iterator<_C>& operator=(const value_type& _V) { iter = container->insert(iter, _V); ++iter; return (*this); }
-		insert_iterator<_C>& operator*() { return (*this); }
-		insert_iterator<_C>& operator++() { return (*this); }
-		insert_iterator<_C>& operator++(int) { return (*this); }
+		typedef C container_type;
+		typedef typename C::value_type value_type;
+		insert_iterator(C& _X, typename C::iterator _I) : container(&_X), iter(_I) {}
+		insert_iterator<C>& operator=(const value_type& _V) { iter = container->insert(iter, _V); ++iter; return (*this); }
+		insert_iterator<C>& operator*() { return (*this); }
+		insert_iterator<C>& operator++() { return (*this); }
+		insert_iterator<C>& operator++(int) { return (*this); }
 	protected:
-		_C *container;
-		typename _C::iterator iter;
+		C *container;
+		typename C::iterator iter;
 	};
 	
-	template<class _C, class _XI>
-	inline insert_iterator<_C> inserter(_C& _X, _XI _I)
-	{ return (insert_iterator<_C>(_X, _C::iterator(_I))); }
+	template<class C, class _XI>
+	inline insert_iterator<C> inserter(C& _X, _XI _I)
+	{ return (insert_iterator<C>(_X, C::iterator(_I))); }
 
 	template<class It>
 	struct iterator_traits //: public iterator_traits_bad<It>
@@ -154,46 +186,10 @@ namespace std
 #pragma warning(push)
 #pragma warning(disable: 4251)  // class 'type' needs to have dll-interface to be used by clients of class 'type2'
 #pragma warning(disable: 4512)  // assignment operator could not be generated
-	// Fixes for 'vector' -- boost::ptr_vector chokes on the old implementation!
-#	include <vector>
 	namespace std
 	{
-		struct _PVOID
-		{
-			void *p;
-			_PVOID(void *const &p = 0) : p(p) { }
-			template<class T> operator T *&() { return reinterpret_cast<T *&>(p); }
-			template<class T> operator T *const &() const { return reinterpret_cast<T *const &>(p); }
-		};
-
-		template<>
-		class vector<void *, std::allocator<void *> > : public vector<void *, std::allocator<_PVOID> >
-		{
-		public:
-			using vector<void *, std::allocator<_PVOID> >::insert;
-			template<class It>
-			void insert(iterator it, It begin, It end) { copy(begin, end, inserter(*this, it)); }
-		};
-
-		template<>
-		struct iterator_traits<vector<_Bool,_Bool_allocator>::_It>
-		{
-			typedef random_access_iterator_tag iterator_category;
-			typedef unsigned int value_type;
-			typedef ptrdiff_t difference_type;
-			typedef ptrdiff_t distance_type;
-			typedef unsigned int *pointer;
-			typedef unsigned int &reference;
-		};
-
-	#if 0
-		template<class RanIt>
-		class reverse_iterator : public iterator<
-			typename iterator_traits<RanIt>::iterator_category,
-			typename iterator_traits<RanIt>::value_type,
-			typename iterator_traits<RanIt>::difference_type,
-			typename iterator_traits<RanIt>::pointer,
-			typename iterator_traits<RanIt>::reference>
+		template<class RanIt, class T, class R, class P, class D>
+		class reverse_iterator : public iterator<typename iterator_traits<RanIt>::iterator_category, T, D, P, R>
 		{
 		public:
 			typedef reverse_iterator<RanIt> This;
@@ -212,50 +208,65 @@ namespace std
 			This operator++(int) { This tmp = *this; --current; return (tmp); }
 			This& operator--() { ++current; return (*this); }
 			This operator--(int) { This tmp = *this; ++current; return (tmp); }
-			template<class Other>
-			bool operator ==(const reverse_iterator<Other>& right) const
+			bool operator ==(const reverse_iterator& right) const
 			{ return (current == right.base()); }
+			bool operator !=(const reverse_iterator& right) const
+			{ return (current != right.base()); }
 			This& operator+=(difference_type offset) { current -= offset; return (*this); }
 			This operator+(difference_type offset) const { return (This(current - offset)); }
 			This& operator-=(difference_type offset) { current += offset; return (*this); }
 			This operator-(difference_type offset) const { return (This(current + offset)); }
 			reference operator[](difference_type offset) const { return (*(*this + offset)); }
-			template<class Other>
-			bool operator <(const reverse_iterator<Other>& right) const
-			{ return (right.base() < current); }
-			template<class Other>
-			difference_type operator -(const reverse_iterator<Other>& right) const
-			{ return (right.base() - current); }
+			bool operator <(const reverse_iterator& right) const { return (right.base() < current); }
+			bool operator >(const reverse_iterator& right) const { return (right.base() > current); }
+			bool operator <=(const reverse_iterator& right) const { return (right.base() <= current); }
+			bool operator >=(const reverse_iterator& right) const { return (right.base() >= current); }
+			difference_type operator -(const reverse_iterator& right) const { return (right.base() - current); }
 		protected:
 			RanIt current;
 		};
-		template<class RanIt, class Diff>
-		inline reverse_iterator<RanIt> operator+(Diff offset, const reverse_iterator<RanIt>& right)
-		{ return (right + offset); }
-		template<class RanIt1, class RanIt2>
-		inline typename reverse_iterator<RanIt1>::difference_type
-			operator-(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (left - right); }
-		template<class RanIt1, class RanIt2>
-		inline bool operator==(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (left == right); }
-		template<class RanIt1, class RanIt2>
-		inline bool operator!=(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (!(left == right)); }
-		template<class RanIt1, class RanIt2>
-		inline bool operator<(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (left < right); }
-		template<class RanIt1, class RanIt2>
-		inline bool operator>(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (right < left); }
-		template<class RanIt1, class RanIt2>
-		inline bool operator<=(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (!(right < left)); }
-		template<class RanIt1, class RanIt2>
-		inline bool operator>=(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right)
-		{ return (!(left < right)); }
-	#endif
+		template<class RanIt, class Diff> inline reverse_iterator<RanIt> operator+(Diff offset, const reverse_iterator<RanIt>& right) { return (right + offset); }
+		//template<class RanIt1, class RanIt2> inline typename reverse_iterator<RanIt1>::difference_type operator-(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (left - right); }
+		//template<class RanIt1, class RanIt2> inline bool operator==(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (left == right); }
+		//template<class RanIt1, class RanIt2> inline bool operator!=(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (!(left.operator ==(right))); }
+		//template<class RanIt1, class RanIt2> inline bool operator<(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (left < right); }
+		//template<class RanIt1, class RanIt2> inline bool operator>(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (right < left); }
+		//template<class RanIt1, class RanIt2> inline bool operator<=(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (!(right < left)); }
+		//template<class RanIt1, class RanIt2> inline bool operator>=(const reverse_iterator<RanIt1>& left, const reverse_iterator<RanIt2>& right) { return (!(left < right)); }
 	}
+	// Fixes for 'vector' -- boost::ptr_vector chokes on the old implementation!
+#	include <vector>
+	namespace std
+	{
+		struct _PVOID
+		{
+			void *p;
+			_PVOID(void *const &p = 0) : p(p) { }
+			template<class T> operator T *&() { return reinterpret_cast<T *&>(p); }
+			template<class T> operator T *const &() const { return reinterpret_cast<T *const &>(p); }
+		};
+	}
+	template<>
+	class std::vector<void *, std::allocator<void *> > : public std::vector<void *, std::allocator<_PVOID> >
+	{
+	public:
+		using std::vector<void *, std::allocator<_PVOID> >::insert;
+		template<class It>
+		void insert(iterator it, It begin, It end) { std::copy(begin, end, std::inserter(*this, it)); }
+	};
+
+#if 0
+	template<>
+	struct std::iterator_traits<std::vector<_Bool,_Bool_allocator>::_It>
+	{
+		typedef std::random_access_iterator_tag iterator_category;
+		typedef unsigned int value_type;
+		typedef ptrdiff_t difference_type;
+		typedef ptrdiff_t distance_type;
+		typedef unsigned int *pointer;
+		typedef unsigned int &reference;
+	};
+#endif
 
 
 #if !defined(_NATIVE_WCHAR_T_DEFINED) && (defined(DDK_CTYPE_WCHAR_FIX) && DDK_CTYPE_WCHAR_FIX)

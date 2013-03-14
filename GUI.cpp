@@ -137,45 +137,74 @@ struct Wow64Disable
 	}
 };
 
-template<class It1, class It2, class Tr>
-bool wildcard(It1 patBegin, It1 const patEnd, It2 strBegin, It2 const strEnd, Tr const &tr = std::char_traits<typename std::iterator_traits<It2>::value_type>())
+template<class Pattern, class Text, class Traits>
+bool wildcard(
+	      Pattern const pat_begin, Pattern const pat_end,
+	      Text text_begin, Text const text_end,
+	      Traits const &tr = std::char_traits<typename std::iterator_traits<Text>::value_type>())
 {
-	(void)tr;
-	if (patBegin == patEnd) { return strBegin == strEnd; }
-	//http://xoomer.virgilio.it/acantato/dev/wildcard/wildmatch.html
-	It2 s(strBegin);
-	It1 p(patBegin);
-	bool star = false;
-
-loopStart:
-	for (s = strBegin, p = patBegin; s != strEnd; ++s, ++p)
+	ptrdiff_t const pat_size = pat_end - pat_begin;
+	ptrdiff_t stackbuf[64];
+	size_t c = sizeof(stackbuf) / sizeof(*stackbuf);
+	ptrdiff_t *p = stackbuf;
+	size_t n = 0;
+	p[n++] = 0;
+	while (n > 0 && text_begin != text_end)
 	{
-		if (tr.eq(*p, _T('*')))
+		for (size_t i = 0; i < n; i++)
 		{
-			star = true;
-			strBegin = s, patBegin = p;
-			if (++patBegin == patEnd)
-			{ return true; }
-			goto loopStart;
+			if (p[i] == pat_size)
+			{
+				p[i--] = p[--n];
+				continue;
+			}
+			switch (*(pat_begin + p[i]))
+			{
+			case '*':
+				ptrdiff_t off;
+				off = p[i];
+				while (off < pat_size &&
+					tr.eq(*(pat_begin + off), '*'))
+				{ ++off; }
+				if (n == c)
+				{
+					ptrdiff_t const *const old = p;
+					c *= 2;
+					if (c == 0) { ++c; }
+					size_t const size = c * sizeof(*p);
+					p = (ptrdiff_t *)realloc(
+						p == stackbuf ? NULL : p,
+						size);
+					if (old == stackbuf)
+					{ memcpy(p, old, n * sizeof(*old)); }
+				}
+				p[n++] = off;
+				break;
+			case '?': ++p[i]; break;
+			default:
+				if (tr.eq(*(pat_begin + p[i]), *text_begin))
+				{ ++p[i]; }
+				else { p[i--] = p[--n]; }
+				break;
+			}
 		}
-		else if (tr.eq(*p, _T('?')))
+		++text_begin;
+	}
+	bool success = false;
+	if (text_begin == text_end)
+	{
+		while (!success && n > 0)
 		{
-			if (tr.eq(*s, _T('.')))
-			{ goto starCheck; }
-		}
-		else
-		{
-			if (!tr.eq(*s, *p))
-			{ goto starCheck; }
+			--n;
+			while (p[n] != pat_size &&
+				tr.eq(*(pat_begin + p[n]), '*'))
+			{ ++p[n]; }
+			if (p[n] == pat_size)
+			{ success = true; }
 		}
 	}
-	while (p != patEnd && tr.eq(*p, _T('*'))) { ++p; }
-	return p == patEnd;
-
-starCheck:
-	if (!star) { return false; }
-	strBegin++;
-	goto loopStart;
+	if (p != stackbuf) { free(p); }
+	return success;
 }
 
 template<class R1, class R2, class Tr>
@@ -1331,6 +1360,106 @@ private:
 		return 0;
 	}
 
+
+	struct IconLoaderCallback
+	{
+		CMainDlg *this_;
+		std::basic_string<TCHAR> path;
+		SIZE size;
+		unsigned long fileAttributes;
+		int iItem;
+
+		struct MainThreadCallback
+		{
+			CMainDlg *this_;
+			std::basic_string<TCHAR> description, displayName, path;
+			SHFILEINFO shfi;
+			int iItem;
+			bool operator()()
+			{
+				WTL::CWaitCursor wait(true, IDC_APPSTARTING);
+				CMainDlg::CacheInfo &cached = this_->cache[path];
+				WTL::CIcon iconSmall(shfi.hIcon);
+				_tcscpy(cached.szTypeName, shfi.szTypeName);
+				cached.displayName = displayName;
+				cached.description = description;
+
+				if (cached.iIconSmall < 0) { cached.iIconSmall = this_->imgListSmall.AddIcon(iconSmall); }
+				else { this_->imgListSmall.ReplaceIcon(cached.iIconSmall, iconSmall); }
+
+				if (cached.iIconLarge < 0) { cached.iIconLarge = this_->imgListLarge.AddIcon(iconSmall); }
+				else { this_->imgListLarge.ReplaceIcon(cached.iIconLarge, iconSmall); }
+
+				cached.valid = true;
+
+				this_->lvFiles.RedrawItems(iItem, iItem);
+				return true;
+			}
+		};
+
+		BOOL operator()()
+		{
+			RECT rcItem = { LVIR_BOUNDS };
+			RECT rcFiles, intersection;
+			this_->lvFiles.GetClientRect(&rcFiles);  // Blocks, but should be fast
+			this_->lvFiles.GetItemRect(iItem, &rcItem, LVIR_BOUNDS);  // Blocks, but I'm hoping it's fast...
+			if (IntersectRect(&intersection, &rcFiles, &rcItem))
+			{
+				std::basic_string<TCHAR> const normalizedPath = NormalizePath(path);
+				SHFILEINFO shfi = {0};
+				std::basic_string<TCHAR> description;
+#if 0
+				{
+					std::vector<BYTE> buffer;
+					DWORD temp;
+					buffer.resize(GetFileVersionInfoSize(normalizedPath.c_str(), &temp));
+					if (GetFileVersionInfo(normalizedPath.c_str(), NULL, static_cast<DWORD>(buffer.size()), buffer.empty() ? NULL : &buffer[0]))
+					{
+						LPVOID p;
+						UINT uLen;
+						if (VerQueryValue(buffer.empty() ? NULL : &buffer[0], _T("\\StringFileInfo\\040904E4\\FileDescription"), &p, &uLen))
+						{ description = std::basic_string<TCHAR>((LPCTSTR)p, uLen); }
+					}
+				}
+#endif
+				winnt::NtFile fileTemp;  // To prevent icon retrieval from changing the file time
+				try
+				{
+					std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName((_T("\\??\\") + normalizedPath).c_str());
+					fileTemp = winnt::NtFile::NtOpenFile(ntPath, winnt::Access::QueryAttributes | winnt::Access::SetAttributes | winnt::Access::Read, 0 /*exclusive access*/, FILE_NO_INTERMEDIATE_BUFFERING | FILE_OPEN_REPARSE_POINT);
+					FILE_BASIC_INFORMATION fbi = fileTemp.NtQueryInformationFile<FILE_BASIC_INFORMATION>();
+					fbi.ChangeTime.QuadPart = fbi.LastAccessTime.QuadPart = fbi.LastWriteTime.QuadPart = -1;
+					fileTemp.NtSetInformationFile(fbi);
+				}
+				catch (CStructured_Exception &) { }
+				BOOL success = FALSE;
+				SetLastError(0);
+				if (shfi.hIcon == NULL)
+				{
+					ULONG const flags = SHGFI_ICON | SHGFI_SHELLICONSIZE | SHGFI_ADDOVERLAYS | //SHGFI_TYPENAME | SHGFI_SYSICONINDEX |
+						((std::max)(size.cx, size.cy) <= (std::max)(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) ? SHGFI_SMALLICON : SHGFI_LARGEICON);
+					CoInit com;  // MANDATORY!  Some files, like '.sln' files, won't work without it!
+					success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags) != 0;
+					if (!success && (flags & SHGFI_USEFILEATTRIBUTES) == 0)
+					{ success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags | SHGFI_USEFILEATTRIBUTES) != 0; }
+				}
+
+				if (success)
+				{
+					std::basic_string<TCHAR> const path(path), displayName(GetDisplayName(*this_, path, SHGDN_NORMAL));
+					int const iItem(iItem);
+					MainThreadCallback callback = { this_, description, displayName, path, shfi, iItem };
+					this_->InvokeAsync(callback);
+				}
+				else
+				{
+					_ftprintf(stderr, _T("Could not get the icon for file: %s\n"), normalizedPath.c_str());
+				}
+			}
+			return true;
+		}
+	};
+
 	int CacheIcon(std::basic_string<TCHAR> const &path, int const iItem, ULONG fileAttributes, bool lifo)
 	{
 		if (this->cache.find(path) == this->cache.end())
@@ -1343,86 +1472,9 @@ private:
 		if (!entry.valid)
 		{
 			SIZE size; this->lvFiles.GetImageList(LVSIL_SMALL).GetIconSize(size);
-			this->iconLoader->add([this, path, size, fileAttributes, iItem]() -> BOOL
-			{
-				RECT rcItem = { LVIR_BOUNDS };
-				RECT rcFiles, intersection;
-				this->lvFiles.GetClientRect(&rcFiles);  // Blocks, but should be fast
-				this->lvFiles.GetItemRect(iItem, &rcItem, LVIR_BOUNDS);  // Blocks, but I'm hoping it's fast...
-				if (IntersectRect(&intersection, &rcFiles, &rcItem))
-				{
-					std::basic_string<TCHAR> const normalizedPath = NormalizePath(path);
-					SHFILEINFO shfi = {0};
-					std::basic_string<TCHAR> description;
-#if 0
-					{
-						std::vector<BYTE> buffer;
-						DWORD temp;
-						buffer.resize(GetFileVersionInfoSize(normalizedPath.c_str(), &temp));
-						if (GetFileVersionInfo(normalizedPath.c_str(), NULL, static_cast<DWORD>(buffer.size()), buffer.empty() ? NULL : &buffer[0]))
-						{
-							LPVOID p;
-							UINT uLen;
-							if (VerQueryValue(buffer.empty() ? NULL : &buffer[0], _T("\\StringFileInfo\\040904E4\\FileDescription"), &p, &uLen))
-							{ description = std::basic_string<TCHAR>((LPCTSTR)p, uLen); }
-						}
-					}
-#endif
-					winnt::NtFile fileTemp;  // To prevent icon retrieval from changing the file time
-					try
-					{
-						std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName((_T("\\??\\") + normalizedPath).c_str());
-						fileTemp = winnt::NtFile::NtOpenFile(ntPath, winnt::Access::QueryAttributes | winnt::Access::SetAttributes | winnt::Access::Read, 0 /*exclusive access*/, FILE_NO_INTERMEDIATE_BUFFERING | FILE_OPEN_REPARSE_POINT);
-						FILE_BASIC_INFORMATION fbi = fileTemp.NtQueryInformationFile<FILE_BASIC_INFORMATION>();
-						fbi.ChangeTime.QuadPart = fbi.LastAccessTime.QuadPart = fbi.LastWriteTime.QuadPart = -1;
-						fileTemp.NtSetInformationFile(fbi);
-					}
-					catch (CStructured_Exception &) { }
-					BOOL success = FALSE;
-					SetLastError(0);
-					if (shfi.hIcon == NULL)
-					{
-						ULONG const flags = SHGFI_ICON | SHGFI_SHELLICONSIZE | SHGFI_ADDOVERLAYS | //SHGFI_TYPENAME | SHGFI_SYSICONINDEX |
-							((std::max)(size.cx, size.cy) <= (std::max)(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) ? SHGFI_SMALLICON : SHGFI_LARGEICON);
-						CoInit com;  // MANDATORY!  Some files, like '.sln' files, won't work without it!
-						success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags) != 0;
-						if (!success && (flags & SHGFI_USEFILEATTRIBUTES) == 0)
-						{ success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags | SHGFI_USEFILEATTRIBUTES) != 0; }
-					}
 
-					if (success)
-					{
-						std::basic_string<TCHAR> const path(path), displayName(GetDisplayName(*this, path, SHGDN_NORMAL));
-						CMainDlg *this_(this);
-						int const iItem(iItem);
-						this->InvokeAsync([this_, description, displayName, path, shfi, iItem]() -> bool
-						{
-							WTL::CWaitCursor wait(true, IDC_APPSTARTING);
-							CMainDlg::CacheInfo &cached = this_->cache[path];
-							WTL::CIcon iconSmall(shfi.hIcon);
-							_tcscpy(cached.szTypeName, shfi.szTypeName);
-							cached.displayName = displayName;
-							cached.description = description;
-
-							if (cached.iIconSmall < 0) { cached.iIconSmall = this_->imgListSmall.AddIcon(iconSmall); }
-							else { this_->imgListSmall.ReplaceIcon(cached.iIconSmall, iconSmall); }
-
-							if (cached.iIconLarge < 0) { cached.iIconLarge = this_->imgListLarge.AddIcon(iconSmall); }
-							else { this_->imgListLarge.ReplaceIcon(cached.iIconLarge, iconSmall); }
-
-							cached.valid = true;
-
-							this_->lvFiles.RedrawItems(iItem, iItem);
-							return true;
-						});
-					}
-					else
-					{
-						_ftprintf(stderr, _T("Could not get the icon for file: %s\n"), normalizedPath.c_str());
-					}
-				}
-				return true;
-			}, lifo);
+			IconLoaderCallback callback = { this, path, size, fileAttributes, iItem };
+			this->iconLoader->add(callback, lifo);
 		}
 		return entry.iIconSmall;
 	}

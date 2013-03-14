@@ -25,7 +25,9 @@ struct tchar_ci_traits : public std::char_traits<TCHAR>
 	static bool eq(TCHAR c1, TCHAR c2)
 	{
 		return c1 < SCHAR_MAX
-			? c1 == c2 || _T('A') <= c1 && c1 <= _T('Z') && c1 - c2 == _T('A') - _T('a')
+			? c1 == c2 ||
+				_T('A') <= c1 && c1 <= _T('Z') && c1 - c2 == _T('A') - _T('a') ||
+				_T('A') <= c2 && c2 <= _T('Z') && c2 - c1 == _T('A') - _T('a')
 			: _totupper(c1) == _totupper(c2);
 	}
 	static bool ne(TCHAR c1, TCHAR c2) { return !eq(c1, c2); }
@@ -80,7 +82,7 @@ loopStart:
 		}
 	}
 	while (p != patEnd && tr.eq(*p, _T('*'))) { ++p; }
-	return p == patEnd;
+	return p == patEnd && s == strEnd;
 
 starCheck:
 	if (!star) { return false; }
@@ -112,7 +114,12 @@ class RegexMatcher : public Matcher
 	boost::xpressive::basic_regex<TCHAR const *> regex;
 public:
 	RegexMatcher(boost::iterator_range<TCHAR const *> const &pattern)
-		: regex(boost::xpressive::basic_regex<TCHAR const *>::compile(pattern, boost::xpressive::regex_constants::icase | boost::xpressive::regex_constants::optimize | boost::xpressive::regex_constants::nosubs | boost::xpressive::regex_constants::single_line)) { }
+		: regex(boost::xpressive::basic_regex<TCHAR const *>::compile(
+			pattern,
+			boost::xpressive::regex_constants::icase |
+			boost::xpressive::regex_constants::optimize |
+			boost::xpressive::regex_constants::nosubs |
+			boost::xpressive::regex_constants::single_line)) { }
 	bool operator()(boost::iterator_range<TCHAR const *> const path, boost::iterator_range<TCHAR const *> const streamName)
 	{
 		if (!streamName.empty()) { throw std::logic_error("streamName must be empty!"); }

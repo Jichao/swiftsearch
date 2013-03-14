@@ -16,7 +16,7 @@
 //#define _HAS_ITERATOR_DEBUGGING 0
 #define BOOST_ALL_NO_LIB 1
 #define BOOST_USE_WINDOWS_H 1  // Otherwise it tries to include <intrin.h> which gets annoying with DDK
-#define BOOST_RESULT_OF_USE_DECLTYPE 1
+//#define BOOST_RESULT_OF_USE_DECLTYPE 1
 #define BOOST_TYPEOF_LIMIT_SIZE 16
 #define BOOST_TYPEOF_MESSAGE 1
 #define DDK_CTYPE_WCHAR_FIX 1
