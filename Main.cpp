@@ -250,7 +250,7 @@ int _tmain(int argc, LPTSTR argv[])
 	{
 		STARTUPINFO si = { sizeof(si) };
 		GetStartupInfo(&si);
-		//r = run(GetModuleHandle(NULL), si.wShowWindow);
+		r = run(GetModuleHandle(NULL), si.wShowWindow);
 	}
 	return r;
 }
