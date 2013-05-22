@@ -1,6 +1,8 @@
 ﻿#include "stdafx.h"
 #include "targetver.h"
 
+#include <io.h>
+
 #include <fstream>
 #include <sstream>
 
@@ -11,8 +13,10 @@
 #include <Windows.h>
 #include <ProvExce.h>
 
+#include "NtfsIndex.hpp"
 #include "GUI.hpp"
 #include "NtObjectMini.hpp"
+#include "path.hpp"
 
 ATL::CComModule _Module;
 
@@ -175,16 +179,87 @@ int run(HINSTANCE hInstance, int nShowCmd)
 
 int _tmain(int argc, LPTSTR argv[])
 {
-	UNREFERENCED_PARAMETER(argc);
-	UNREFERENCED_PARAMETER(argv);
-	STARTUPINFO si = { sizeof(si) };
-	GetStartupInfo(&si);
-	return run(GetModuleHandle(NULL), si.wShowWindow);
+	int r;
+	if (argc > 1)
+	{
+		_setmode(_fileno(stdout), 0x40000 /*_O_U8TEXT*/);
+		r = 0;
+		for (int i = 1; i < argc; i++)
+		{
+			winnt::NtEvent is_allowed_event(CreateEvent(NULL, TRUE, TRUE, NULL));
+			unsigned long progress = 0;
+			bool background = false;
+			std::basic_string<TCHAR> path = argv[i], name;
+			adddirsep(path);
+			path += _T("$Volume");
+			try
+			{
+				winnt::NtFile volume(CreateFile(path.c_str(), FILE_READ_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL));
+				if (!volume) { throw CStructured_Exception(GetLastError(), NULL); }
+				HANDLE const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, argv[i], is_allowed_event, &progress, &background));
+				size_t const n = index->size();
+				name.reserve(32 * 1024);
+				path.reserve(32 * 1024);
+				std::basic_string<TCHAR> str, buf1, buf2, buf3;
+				for (size_t i = 0; i < n; i++)
+				{
+					NtfsIndex::CombinedRecord const &record = index->at(i);
+					name.erase(name.begin(), name.end());
+					path.erase(path.begin(), path.end());
+					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name);
+					GetPath(*index, parent, path);
+					adddirsep(path);
+					path += name;
+					str.resize(1024 + path.size());
+					buf1.resize(1024);
+					buf2.resize(1024);
+					buf3.resize(1024);
+					str.resize(
+						static_cast<size_t>(
+							_stprintf(
+								&*str.begin(),
+								_T("%llu|%llu|%s|%s|%s|%.*s"),
+								static_cast<unsigned long long>(record.second.second.second.second.first),
+								static_cast<unsigned long long>(record.second.second.second.second.second),
+								SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size()),
+								SystemTimeToString(record.second.first.first.second, &*buf2.begin(), buf2.size()),
+								SystemTimeToString(record.second.first.second.first, &*buf3.begin(), buf3.size()),
+								static_cast<int>(path.size()), path.c_str())));
+					str.append(1, _T('\n'));
+					unsigned long nw;
+					if (!WriteConsole(hStdOut, str.c_str(), static_cast<unsigned int>(str.size()), &nw, NULL))
+					{
+						_tprintf(_T("%.*s"), static_cast<int>(str.size()), str.c_str());
+					}
+				}
+			}
+			catch (CStructured_Exception &ex)
+			{
+				std::basic_string<TCHAR> msg = GetAnyErrorText(ex.GetSENumber(), NULL);
+				while (!msg.empty() && *(msg.end() - 1) == _T('\n'))
+				{
+					msg.resize(msg.size() - 1);
+				}
+				_ftprintf(stderr, _T("Error 0x%X opening \"%s\": %s\n"), ex.GetSENumber(), path.c_str(), msg.c_str());
+				r = ex.GetSENumber();
+			}
+		}
+	}
+	else
+	{
+		STARTUPINFO si = { sizeof(si) };
+		GetStartupInfo(&si);
+		//r = run(GetModuleHandle(NULL), si.wShowWindow);
+	}
+	return r;
 }
 
 int __stdcall _tWinMain(HINSTANCE const hInstance, HINSTANCE /*hPrevInstance*/, LPTSTR /*lpCmdLine*/, int nShowCmd)
 {
-	return run(hInstance, nShowCmd);
+	(void)hInstance;
+	(void)nShowCmd;
+	return _tmain(__argc, __targv);
 }
 
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")

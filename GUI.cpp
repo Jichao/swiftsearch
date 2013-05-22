@@ -1296,38 +1296,6 @@ private:
 		return result;
 	}
 
-	static std::basic_string<TCHAR> &GetPath(NtfsIndex const &index, unsigned long segmentNumber, std::basic_string<TCHAR> &path)
-	{
-		path.erase(path.begin(), path.end());
-		try
-		{
-			while (segmentNumber != 5)
-			{
-				size_t const cchPrev = path.size();
-				segmentNumber = index.get_name(segmentNumber, path);
-				if (path.size() > cchPrev)
-				{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
-				path.append(1, _T('\\'));
-			}
-			{
-				size_t const cchPrev = path.size();
-				std::basic_string<TCHAR> const &drive = index.drive();
-				path.append(drive.begin(), trimdirsep(drive.begin(), drive.end()));
-				if (path.size() > cchPrev)
-				{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
-			}
-		}
-		catch (std::domain_error const &ex)
-		{
-			path.append(1, _T('\\'));
-			std::string msg = ex.what();
-			msg = "<" + ("error: " + msg) + ">";
-			std::copy(msg.rbegin(), msg.rend(), std::inserter(path, path.end()));
-		}
-		std::reverse(path.begin(), path.end());
-		return path;
-	}
-
 	LRESULT OnFilesGetDispInfo(LPNMHDR pnmh)
 	{
 		NMLVDISPINFO *pLV = (NMLVDISPINFO *)pnmh;
@@ -2095,5 +2063,37 @@ private:
 UINT const CMainDlg::WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
 CMainDlgBase *CMainDlgBase::create(HANDLE const hEvent) { return new CMainDlg(hEvent); }
+
+std::basic_string<TCHAR> &GetPath(NtfsIndex const &index, unsigned long segmentNumber, std::basic_string<TCHAR> &path)
+{
+	path.erase(path.begin(), path.end());
+	try
+	{
+		while (segmentNumber != 5)
+		{
+			size_t const cchPrev = path.size();
+			segmentNumber = index.get_name(segmentNumber, path);
+			if (path.size() > cchPrev)
+			{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
+			path.append(1, _T('\\'));
+		}
+		{
+			size_t const cchPrev = path.size();
+			std::basic_string<TCHAR> const &drive = index.drive();
+			path.append(drive.begin(), trimdirsep(drive.begin(), drive.end()));
+			if (path.size() > cchPrev)
+			{ std::reverse(&path[cchPrev], &path[0] + path.size()); }
+		}
+	}
+	catch (std::domain_error const &ex)
+	{
+		path.append(1, _T('\\'));
+		std::string msg = ex.what();
+		msg = "<" + ("error: " + msg) + ">";
+		std::copy(msg.rbegin(), msg.rend(), std::inserter(path, path.end()));
+	}
+	std::reverse(path.begin(), path.end());
+	return path;
+}
 
 #pragma comment(lib, "ShlWAPI.lib")

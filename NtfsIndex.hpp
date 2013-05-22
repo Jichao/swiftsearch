@@ -25,6 +25,7 @@ public:
 	virtual size_t size() const = 0;
 	virtual CombinedRecord const &at(size_t const i) const = 0;
 	virtual SegmentNumber get_name(SegmentNumber segmentNumber, std::basic_string<TCHAR> &s) const = 0;
+	virtual SegmentNumber get_name_by_record(CombinedRecord const &record, std::basic_string<TCHAR> &s) const;
 	virtual std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > get_name_by_index(size_t const i) const = 0;
 	virtual std::basic_string<TCHAR> const &drive() const = 0;
 
