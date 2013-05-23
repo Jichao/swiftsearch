@@ -219,7 +219,7 @@ int _tmain(int argc, LPTSTR argv[])
 						static_cast<size_t>(
 							_stprintf(
 								&*str.begin(),
-								_T("%llu|%llu|%s|%s|%s|%.*s"),
+								_T("%I64llu|%I64llu|%s|%s|%s|%.*s"),
 								static_cast<unsigned long long>(record.second.second.second.second.first),
 								static_cast<unsigned long long>(record.second.second.second.second.second),
 								SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size()),
