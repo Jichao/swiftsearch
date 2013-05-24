@@ -134,38 +134,22 @@ inline It fileext(It const begin, It const end)
 }
 
 #if 0
-template<class T>
-class RefCounted
-{
-protected:
-	RefCounted() : refs(0) { }
-	RefCounted(RefCounted const &) : refs(0) { }
-	~RefCounted() { }
 
-private:
-	RefCounted &operator =(RefCounted const &other);
-
-	friend void intrusive_ptr_add_ref(RefCounted const *p)
-	{
-		++p->refs;
-	}
-
-	friend void intrusive_ptr_release(RefCounted const *p)
-	{
-		if (--p->refs == 0)
-		{
-			delete static_cast<T const *>(p);
-		}
-	}
-
-	mutable unsigned int refs;
-};
+#include <boost/intrusive/intrusive_ptr.hpp>
+#include <boost/range/algorithm/copy.hpp>
+#include <boost/range/begin.hpp>
+#include <boost/range/difference_type.hpp>
+#include <boost/range/end.hpp>
+#include <boost/range/iterator.hpp>
+#include <boost/range/size.hpp>
+#include <boost/range/value_type.hpp>
+#include <boost/unordered/unordered_map.hpp>
 
 template<class Range>
 struct RangeRef;
 
 template<class Range>
-struct basic_path : public RefCounted<basic_path<Range> >
+struct basic_path
 {
 	typedef Range value_type;
 	typedef typename boost::range_value<value_type>::type char_type;

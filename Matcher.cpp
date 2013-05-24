@@ -105,7 +105,8 @@ public:
 		: pattern(pattern.begin(), pattern.end()) { }
 	bool operator()(boost::iterator_range<TCHAR const *> const path, boost::iterator_range<TCHAR const *> const streamName)
 	{
-		return streamName.empty() ? wildcard(pattern, path, traits) : wildcard(pattern, boost::join(path, boost::join(boost::as_literal(_T(":")), streamName)), traits);
+		TCHAR const colon = _T(':');
+		return streamName.empty() ? wildcard(pattern, path, traits) : wildcard(pattern, boost::join(path, boost::join(std::make_pair(&colon, &colon + 1), streamName)), traits);
 	}
 };
 

@@ -172,7 +172,7 @@ int run(HINSTANCE hInstance, int nShowCmd)
 }
 
 #if defined(NDEBUG)
-#pragma comment(linker, "/Subsystem:Windows,5.02")
+#pragma comment(linker, "/Subsystem:Console,5.02")
 #else
 #pragma comment(linker, "/Subsystem:Console,5.02")
 #endif
@@ -186,7 +186,7 @@ int _tmain(int argc, LPTSTR argv[])
 		r = 0;
 		for (int i = 1; i < argc; i++)
 		{
-			winnt::NtEvent is_allowed_event(CreateEvent(NULL, TRUE, TRUE, NULL));
+			winnt::NtObject is_allowed_event(CreateEvent(NULL, TRUE, TRUE, NULL));
 			unsigned long progress = 0;
 			bool background = false;
 			std::basic_string<TCHAR> path = argv[i], name;
@@ -194,7 +194,7 @@ int _tmain(int argc, LPTSTR argv[])
 			path += _T("$Volume");
 			try
 			{
-				winnt::NtFile volume(CreateFile(path.c_str(), FILE_READ_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL));
+				winnt::NtFile volume(CreateFile(path.c_str(), FILE_READ_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL));
 				if (!volume) { throw CStructured_Exception(GetLastError(), NULL); }
 				HANDLE const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
 				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, argv[i], is_allowed_event, &progress, &background));
@@ -273,4 +273,3 @@ namespace std
 	const ctype<wchar_t>::mask *ctype<wchar_t>::_Cltab = NULL;  // TODO: Fix
 }
 #endif
-

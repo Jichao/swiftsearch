@@ -8,7 +8,7 @@
 extern "C"
 {
 #ifdef _WIN64
-	__declspec(dllimport) long long (__stdcall *__stdcall GetProcAddress(struct HINSTANCE__* hModule, char const *lpProcName))();
+	__declspec(dllimport) __int64 (__stdcall *__stdcall GetProcAddress(struct HINSTANCE__* hModule, char const *lpProcName))();
 #else
 	__declspec(dllimport) int (__stdcall *__stdcall GetProcAddress(struct HINSTANCE__* hModule, char const *lpProcName))();
 #endif
@@ -62,8 +62,8 @@ namespace std { template<class RanIt, class T = typename iterator_traits<RanIt>:
 #undef inserter
 #undef iterator
 
-typedef long long _Longlong;
-typedef unsigned long long _ULonglong;
+typedef __int64 _Longlong;
+typedef unsigned __int64 _ULonglong;
 
 #include <math.h>  // ::ceil
 #include <limits>
@@ -82,8 +82,8 @@ namespace std
 	template<class T> T *operator &(T &p) { return reinterpret_cast<T *>(&reinterpret_cast<unsigned char &>(p)); }
 	template<class T> T const *operator &(T const &p) { return reinterpret_cast<T const *>(&reinterpret_cast<unsigned char const &>(p)); }
 
-	template<> class numeric_limits<long long>;
-	template<> class numeric_limits<unsigned long long>;
+	template<> class numeric_limits<__int64>;
+	template<> class numeric_limits<unsigned __int64>;
 
 	template<class T>
 	struct ref_or_void { typedef T &type; };
@@ -114,7 +114,7 @@ namespace std
 		C *container;
 		typename C::iterator iter;
 	};
-	
+
 	template<class C, class _XI>
 	inline insert_iterator<C> inserter(C& _X, _XI _I)
 	{ return (insert_iterator<C>(_X, C::iterator(_I))); }

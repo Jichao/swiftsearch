@@ -172,9 +172,16 @@ public:
 		winnt::NtFile *pVolume;
 		IO_PRIORITY_HINT old;
 		ScopedIoPriority(winnt::NtFile &volume, bool const lower)
-			: pVolume(&volume), old(volume.GetIoPriorityHint())
-		{ pVolume->SetIoPriorityHint(lower ? IoPriorityVeryLow : old); }
-		~ScopedIoPriority() { pVolume->SetIoPriorityHint(old); }
+			: pVolume(&volume), old()
+		{
+			(void)lower;
+			this->old = volume.GetIoPriorityHint();
+			pVolume->SetIoPriorityHint(lower ? IoPriorityVeryLow : old);
+		}
+		~ScopedIoPriority()
+		{
+			pVolume->SetIoPriorityHint(old);
+		}
 	};
 
 	NTFS::FILE_RECORD_SEGMENT_HEADER const *get(size_t &i /* might be lower */, bool cached)

@@ -9,7 +9,6 @@
 #include <iterator>
 #include <string>
 
-#include <boost/range/algorithm/copy.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
 
@@ -37,8 +36,8 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 	unsigned long volatile _progress;
 	bool volatile _background;
 	boost::shared_ptr<NtfsIndex> _index;
-	winnt::NtThread _thread;
-	winnt::NtEvent _event;
+	winnt::NtObject _thread;
+	winnt::NtObject _event;
 	winnt::NtFile _volume;
 	HWND hWnd;
 	unsigned int wndMessage;
@@ -62,7 +61,7 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 
 public:
 	NtfsIndexThreadImpl(HWND const hWnd, unsigned int wndMessage, std::basic_string<TCHAR> const drive)
-		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessage(wndMessage)
+		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessage(wndMessage), _progress()
 	{
 		struct Invoker
 		{
@@ -71,6 +70,7 @@ public:
 		};
 		unsigned int tid;
 		*this->_thread.receive() = reinterpret_cast<HANDLE>(_beginthreadex(NULL, 0, &Invoker::invoke, this, CREATE_SUSPENDED, &tid));
+		SetThreadPriority(this->_thread.get(), THREAD_PRIORITY_BELOW_NORMAL);
 		ResumeThread(this->_thread.get());
 	}
 
@@ -87,7 +87,15 @@ public:
 	void close()
 	{
 		InterlockedExchange(&reinterpret_cast<long volatile &>(this->_progress), static_cast<long>(NtfsIndex::PROGRESS_CANCEL_REQUESTED));
-		winnt::NtFile const volume = _InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(this->_volume._handle), NULL);
+		struct Helper
+		{
+			static void __stdcall cancel(ULONG_PTR p)
+			{
+				winnt::NtFile const volume = _InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(reinterpret_cast<NtfsIndexThreadImpl *>(p)->_volume._handle), NULL);
+				// throw CStructured_Exception(ERROR_CANCELLED, NULL);
+			}
+		};
+		QueueUserAPC(&Helper::cancel, this->_thread.get(), (ULONG_PTR)this);
 	}
 
 	uintptr_t volume() const { return reinterpret_cast<uintptr_t>(this->_volume.get()); }
@@ -105,7 +113,7 @@ public:
 	unsigned int operator()()
 	{
 		boost::intrusive_ptr<NtfsIndexThread> const me = this;  // Keep a reference to myself, in case others release us
-		Sleep((37 * GetCurrentThreadId()) % 100);
+		// Sleep((37 * GetCurrentThreadId()) % 100);
 		unsigned int r = 0;
 		try
 		{
@@ -114,10 +122,12 @@ public:
 				std::basic_string<TCHAR> ntPath = winnt::NtFile::RtlDosPathNameToNtPathName(this->_drive.c_str());
 				while (!ntPath.empty() && ntPath[ntPath.size() - 1] == _T('\\')) { ntPath.resize(ntPath.size() - 1); }
 				ntPath += _T("\\$Volume");
-				this->_volume = winnt::NtFile::NtOpenFile(
+				winnt::NtFile volume = winnt::NtFile::NtOpenFile(
 					ntPath,
 					winnt::Access::QueryAttributes | winnt::Access::Read | winnt::Access::Synchronize,
-					FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+					FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+					0);
+				volume.swap(this->_volume);
 			}
 			catch (CStructured_Exception &ex) { r = ex.GetSENumber(); }
 			if (this->_volume.get())
@@ -153,16 +163,21 @@ public:
 					{
 						if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
 						{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
-						Sleep(sleepInterval);
+						while (SleepEx(sleepInterval, TRUE) == WAIT_IO_COMPLETION)
+						{
+						}
 					}
 				}
 			}
 		}
 		catch (CStructured_Exception &ex)
 		{
-			if (ex.GetSENumber() != ERROR_CANCELLED && ex.GetSENumber() != STATUS_INVALID_HANDLE && ex.GetSENumber() != STATUS_NO_SUCH_DEVICE)
+			if (ex.GetSENumber() != ERROR_CANCELLED && ex.GetSENumber() != ERROR_INVALID_HANDLE && ex.GetSENumber() != STATUS_INVALID_HANDLE && ex.GetSENumber() != STATUS_NO_SUCH_DEVICE)
 			{
-				if (IsDebuggerPresent()) { throw; }
+				if (IsDebuggerPresent())
+				{
+					throw;
+				}
 				std::auto_ptr<std::basic_string<TCHAR> > msg(new std::basic_string<TCHAR>(_T("Error indexing ") + this->_drive + _T(": ") + GetAnyErrorText(ex.GetSENumber())));
 				if (PostMessage(this->hWnd, this->wndMessage, ex.GetSENumber(), reinterpret_cast<LPARAM>(msg.get())))
 				{ msg.release(); }

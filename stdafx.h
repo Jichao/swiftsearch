@@ -15,29 +15,13 @@
 #include <fstream>
 #include <iterator>
 #include <map>
-#include <queue>
-#include <set>
 #include <string>
 #include <vector>
 #include <utility>
 
-#include <boost/bind/bind.hpp>
-
-#include <boost/ptr_container/ptr_vector.hpp>
-#include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/equal.hpp>
-#include <boost/range/algorithm/equal_range.hpp>
-#include <boost/range/algorithm/find_if.hpp>
-#include <boost/range/algorithm/for_each.hpp>
-#include <boost/range/algorithm/reverse.hpp>
-#include <boost/range/algorithm/stable_sort.hpp>
-#include <boost/range/as_literal.hpp>
 #include <boost/range/iterator_range.hpp>
-#include <boost/range/join.hpp>
-#include <boost/range/sub_range.hpp>
-#include <boost/smart_ptr/scoped_array.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
-#include <boost/unordered/unordered_map.hpp>
 
 #include <Windows.h>
 #include <WinUser.h>

@@ -80,13 +80,6 @@ enum TokenPrivilege
 	SeManageVolumePrivilege = 28, SeImpersonatePrivilege = 29, SeCreateGlobalPrivilege = 30
 };
 
-#ifndef MOUNTMGR_DEVICE_NAME
-#	define MOUNTMGR_DEVICE_NAME L"\\Device\\MountPointManager"
-#endif
-#ifndef MOUNTMGR_DOS_DEVICE_NAME
-#	define MOUNTMGR_DOS_DEVICE_NAME L"\\\\.\\MountPointManager"
-#endif
-
 enum
 {
 #ifndef IOCTL_VOLUME_BASE
@@ -94,32 +87,6 @@ enum
 #endif
 #ifndef IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS
 	IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = CTL_CODE(IOCTL_VOLUME_BASE, 0, METHOD_BUFFERED, FILE_ANY_ACCESS),
-#endif
-};
-
-enum
-{
-#ifndef IOCTL_STORAGE_BASE
-	IOCTL_STORAGE_BASE = '-',
-#endif
-#ifndef IOCTL_STORAGE_GET_DEVICE_NUMBER
-	IOCTL_STORAGE_GET_DEVICE_NUMBER = CTL_CODE(IOCTL_STORAGE_BASE, 0x0420, METHOD_BUFFERED, FILE_ANY_ACCESS),
-#endif
-};
-
-enum
-{
-#ifndef MOUNTMGRCONTROLTYPE
-	MOUNTMGRCONTROLTYPE = 'm',
-#endif
-#ifndef MOUNTDEVCONTROLTYPE
-	MOUNTDEVCONTROLTYPE = 'M',
-#endif
-#ifndef IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATH
-	IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATH = CTL_CODE(MOUNTMGRCONTROLTYPE, 12, METHOD_BUFFERED, FILE_ANY_ACCESS),
-#endif
-#ifndef IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATHS
-	IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATHS = CTL_CODE(MOUNTMGRCONTROLTYPE, 13, METHOD_BUFFERED, FILE_ANY_ACCESS),
 #endif
 };
 
@@ -151,7 +118,6 @@ typedef struct _CURDIR { UNICODE_STRING DosPath; HANDLE Handle; } CURDIR, *PCURD
 #if !defined(_NTDDK_)
 typedef struct _FILE_BASIC_INFORMATION { LARGE_INTEGER CreationTime; LARGE_INTEGER LastAccessTime; LARGE_INTEGER LastWriteTime; LARGE_INTEGER ChangeTime; ULONG FileAttributes; } FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
 #endif
-typedef struct _FILE_END_OF_FILE_INFORMATION { LARGE_INTEGER EndOfFile; } FILE_END_OF_FILE_INFORMATION, *PFILE_END_OF_FILE_INFORMATION;
 #if !defined(_NTDDK_) || !defined(NTDDI_VISTA)
 # pragma warning(push)
 # pragma warning(disable: 4324)
@@ -159,19 +125,10 @@ typedef struct DECLSPEC_ALIGN(8) _FILE_IO_PRIORITY_HINT_INFORMATION { IO_PRIORIT
 # pragma warning(pop)
 #endif
 typedef struct _FILE_MODE_INFORMATION { ULONG FileMode; } FILE_MODE_INFORMATION, *PFILE_MODE_INFORMATION;
-typedef struct _FILE_NAME_INFORMATION { ULONG FileNameLength; WCHAR FileName[1]; } FILE_NAME_INFORMATION, *PFILE_NAME_INFORMATION;
-#if !defined(_NTDDK_)
-typedef struct _FILE_POSITION_INFORMATION { LARGE_INTEGER CurrentByteOffset; } FILE_POSITION_INFORMATION, *PFILE_POSITION_INFORMATION;
-#endif
 #if !defined(_NTDDK_)
 typedef struct _FILE_STANDARD_INFORMATION { LARGE_INTEGER AllocationSize; LARGE_INTEGER EndOfFile; ULONG NumberOfLinks; BOOLEAN DeletePending; BOOLEAN Directory; } FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
 #endif
-#if !defined(_NTDDK_)
-typedef struct _FILE_FS_DEVICE_INFORMATION { ULONG DeviceType; ULONG Characteristics; } FILE_FS_DEVICE_INFORMATION, *PFILE_FS_DEVICE_INFORMATION;
-#endif
 typedef struct _FILE_FS_SIZE_INFORMATION { LARGE_INTEGER TotalAllocationUnits; LARGE_INTEGER AvailableAllocationUnits; ULONG SectorsPerAllocationUnit; ULONG BytesPerSector; } FILE_FS_SIZE_INFORMATION, *PFILE_FS_SIZE_INFORMATION;
-typedef struct _MOUNTMGR_TARGET_NAME { USHORT DeviceNameLength; WCHAR DeviceName[1]; } MOUNTMGR_TARGET_NAME, *PMOUNTMGR_TARGET_NAME;
-typedef struct _MOUNTMGR_VOLUME_PATHS { ULONG MultiSzLength; WCHAR MultiSz[1]; } MOUNTMGR_VOLUME_PATHS, *PMOUNTMGR_VOLUME_PATHS;
 #if defined(_NTDDK_)
 typedef struct _NTFS_FILE_RECORD_OUTPUT_BUFFER { LARGE_INTEGER FileReferenceNumber; ULONG FileRecordLength; UCHAR FileRecordBuffer[1]; } NTFS_FILE_RECORD_OUTPUT_BUFFER, *PNTFS_FILE_RECORD_OUTPUT_BUFFER;
 typedef struct _NTFS_VOLUME_DATA_BUFFER { LARGE_INTEGER VolumeSerialNumber; LARGE_INTEGER NumberSectors; LARGE_INTEGER TotalClusters; LARGE_INTEGER FreeClusters; LARGE_INTEGER TotalReserved; ULONG BytesPerSector; ULONG BytesPerCluster; ULONG BytesPerFileRecordSegment; ULONG ClustersPerFileRecordSegment; LARGE_INTEGER MftValidDataLength; LARGE_INTEGER MftStartLcn; LARGE_INTEGER Mft2StartLcn; LARGE_INTEGER MftZoneStart; LARGE_INTEGER MftZoneEnd; } NTFS_VOLUME_DATA_BUFFER, *PNTFS_VOLUME_DATA_BUFFER;
@@ -184,10 +141,6 @@ typedef struct _OBJECT_BASIC_INFORMATION { ULONG Attributes; ACCESS_MASK Desired
 typedef struct _RETRIEVAL_POINTERS_BUFFER { ULONG ExtentCount; LARGE_INTEGER StartingVcn; struct { LARGE_INTEGER NextVcn; LARGE_INTEGER Lcn; } Extents[1]; } RETRIEVAL_POINTERS_BUFFER, *PRETRIEVAL_POINTERS_BUFFER;
 typedef struct _STARTING_VCN_INPUT_BUFFER { LARGE_INTEGER StartingVcn; } STARTING_VCN_INPUT_BUFFER, *PSTARTING_VCN_INPUT_BUFFER;
 #endif
-#if !defined(_NTDDSTOR_H_)
-typedef struct _STORAGE_DEVICE_NUMBER { DEVICE_TYPE DeviceType; ULONG DeviceNumber; ULONG PartitionNumber; } STORAGE_DEVICE_NUMBER, *PSTORAGE_DEVICE_NUMBER;
-#endif
-typedef struct _THREAD_IO_PRIORITY_INFORMATION { ULONG IoPriority; } THREAD_IO_PRIORITY_INFORMATION, *PTHREAD_IO_PRIORITY_INFORMATION;
 
 template<typename To, typename From>
 inline To int_cast(const From value) //throw(std::out_of_range)
@@ -204,13 +157,9 @@ inline To int_cast(const From value) //throw(std::out_of_range)
 namespace winnt
 {
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_BASIC_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(4); }
-	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_END_OF_FILE_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(20); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_IO_PRIORITY_HINT_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(43); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_MODE_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(16); }
-	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_NAME_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(9); }
-	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_POSITION_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(14); }
 	inline enum _FILE_INFORMATION_CLASS GetInfoClass(_FILE_STANDARD_INFORMATION const *) { return static_cast<enum _FILE_INFORMATION_CLASS>(5); }
-	inline enum _FS_INFORMATION_CLASS GetInfoClass(_FILE_FS_DEVICE_INFORMATION const *) { return static_cast<enum _FS_INFORMATION_CLASS>(4); }
 	inline enum _FS_INFORMATION_CLASS GetInfoClass(_FILE_FS_SIZE_INFORMATION const *) { return static_cast<enum _FS_INFORMATION_CLASS>(3); }
 	inline enum _OBJECT_INFORMATION_CLASS GetInfoClass(_OBJECT_BASIC_INFORMATION const *) { return static_cast<enum _OBJECT_INFORMATION_CLASS>(0); }
 	struct ObjectAttributes
@@ -329,38 +278,20 @@ namespace winnt
 		NTSYSAPI NTSTATUS NTAPI RtlAdjustPrivilege(IN ULONG Privilege, IN BOOLEAN Enable, IN BOOLEAN Client, OUT PBOOLEAN WasEnabled);
 		NTSYSAPI BOOLEAN NTAPI RtlDosPathNameToNtPathName_U(IN PCWSTR DosPathName, OUT UNICODE_STRING * NtPathName, OUT PCWSTR *NtFileNamePart, OUT struct _CURDIR *DirectoryInfo);
 		NTSYSAPI VOID NTAPI RtlFreeUnicodeString(IN OUT UNICODE_STRING * UnicodeString);
-		NTSYSAPI ULONG NTAPI RtlGetLastWin32Error(VOID);
-		NTSYSAPI NTSTATUS NTAPI RtlLocalTimeToSystemTime(IN LARGE_INTEGER const *LocalTime, OUT PLARGE_INTEGER SystemTime);
-		NTSYSAPI ULONG NTAPI RtlNtStatusToDosError(IN NTSTATUS Status);
-		NTSYSAPI NTSTATUS NTAPI RtlNtPathNameToDosPathName(IN ULONG Flags, IN OUT /*PRTL_UNICODE_STRING_BUFFER*/ UNICODE_STRING * Path, OUT PULONG Disposition OPTIONAL, IN OUT PWSTR *FilePart OPTIONAL);
 		NTSYSAPI VOID NTAPI RtlRaiseStatus(NTSTATUS Status);
 		NTSYSAPI VOID NTAPI RtlSetLastWin32Error(ULONG ErrorCode);
 		NTSYSAPI VOID NTAPI RtlSetLastWin32ErrorAndNtStatusFromNtStatus(NTSTATUS Status);
-		NTSYSAPI VOID NTAPI RtlSecondsSince1970ToTime(IN ULONG ElapsedSeconds, OUT PLARGE_INTEGER Time);
-		NTSYSAPI VOID NTAPI RtlSecondsSince1980ToTime(IN ULONG ElapsedSeconds, OUT PLARGE_INTEGER Time);
-		NTSYSAPI BOOLEAN NTAPI RtlTimeToSecondsSince1970(IN PLARGE_INTEGER Time, OUT PULONG ElapsedSeconds);
-		NTSYSAPI BOOLEAN NTAPI RtlTimeToSecondsSince1980(IN PLARGE_INTEGER Time, OUT PULONG ElapsedSeconds);
 
-		NTSYSAPI NTSTATUS NTAPI NtAssignProcessToJobObject(HANDLE JobHandle, HANDLE ProcessHandle );
 		NTSYSAPI NTSTATUS NTAPI NtClose(IN HANDLE Handle);
-		NTSYSAPI NTSTATUS NTAPI NtCreateFile(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN struct _OBJECT_ATTRIBUTES * ObjectAttributes, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN PLARGE_INTEGER AllocationSize OPTIONAL, IN ULONG FileAttributes, IN ULONG ShareAccess, IN ULONG CreateDisposition, IN ULONG CreateOptions, IN PVOID EaBuffer, IN ULONG EaLength);
-		NTSYSAPI NTSTATUS NTAPI NtCreateJobObject(OUT PHANDLE JobHandle, IN ACCESS_MASK DesiredAccess, IN struct _OBJECT_ATTRIBUTES * ObjectAttributes);
-		NTSYSAPI NTSTATUS NTAPI NtDeleteFile(IN struct _OBJECT_ATTRIBUTES * ObjectAttributes);
 		NTSYSAPI NTSTATUS NTAPI NtDeviceIoControlFile(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN PIO_APC_ROUTINE ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN ULONG IoControlCode, IN PVOID InputBuffer OPTIONAL, IN ULONG InputBufferLength, OUT PVOID OutputBuffer OPTIONAL, IN ULONG OutputBufferLength);
 		NTSYSAPI NTSTATUS NTAPI NtDuplicateObject(IN HANDLE SourceProcessHandle, IN HANDLE SourceHandle, IN HANDLE TargetProcessHandle OPTIONAL, OUT PHANDLE TargetHandle OPTIONAL, IN ACCESS_MASK DesiredAccess, IN ULONG HandleAttributes, IN ULONG Options);
 		NTSYSAPI NTSTATUS NTAPI NtFsControlFile(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN PIO_APC_ROUTINE ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN ULONG FsControlCode, IN PVOID InputBuffer OPTIONAL, IN ULONG InputBufferLength, OUT PVOID OutputBuffer OPTIONAL, IN ULONG OutputBufferLength);
-		NTSYSAPI NTSTATUS NTAPI NtMakePermanentObject(IN HANDLE Handle);
-		NTSYSAPI NTSTATUS NTAPI NtOpenDirectoryObject(OUT PHANDLE DirectoryHandle, IN ACCESS_MASK DesiredAccess, IN struct _OBJECT_ATTRIBUTES * ObjectAttributes);
 		NTSYSAPI NTSTATUS NTAPI NtOpenFile(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN struct _OBJECT_ATTRIBUTES * ObjectAttributes, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN ULONG ShareAccess, IN ULONG OpenOptions);
-		NTSYSAPI NTSTATUS NTAPI NtQueryAttributesFile(IN struct _OBJECT_ATTRIBUTES *ObjectAttributes, IN struct _FILE_BASIC_INFORMATION * FileInformation);
-		NTSYSAPI NTSTATUS NTAPI NtQueryDirectoryFile(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN PIO_APC_ROUTINE ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN enum _FILE_INFORMATION_CLASS FileInformationClass, IN BOOLEAN ReturnSingleEntry, IN UNICODE_STRING * FileName OPTIONAL, IN BOOLEAN RestartScan);
 		NTSYSAPI NTSTATUS NTAPI NtQueryInformationFile(IN HANDLE FileHandle, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN enum _FILE_INFORMATION_CLASS FileInformationClass);
-		NTSYSAPI NTSTATUS NTAPI NtQueryObject(IN HANDLE ObjectHandle, IN enum _OBJECT_INFORMATION_CLASS ObjectInformationClass, OUT PVOID ObjectInformation, IN ULONG Length, OUT PULONG ResultLength);
 		NTSYSAPI NTSTATUS NTAPI NtQueryVolumeInformationFile(IN HANDLE FileHandle, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID FsInformation, IN ULONG Length, IN enum _FS_INFORMATION_CLASS FsInformationClass);
 		NTSYSAPI NTSTATUS NTAPI NtReadFile(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN PIO_APC_ROUTINE ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, OUT PVOID Buffer, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL);
 		NTSYSAPI NTSTATUS NTAPI NtSetInformationFile(IN HANDLE FileHandle, OUT struct _IO_STATUS_BLOCK * IoStatusBlock, IN PVOID FileInformation, IN ULONG Length, IN enum _FILE_INFORMATION_CLASS FileInformationClass);
 		NTSYSAPI NTSTATUS NTAPI NtWaitForSingleObject(IN HANDLE Handle, IN BOOLEAN Alertable, IN PLARGE_INTEGER Timeout OPTIONAL);
-		NTSYSAPI NTSTATUS NTAPI NtWaitForMultipleObjects(IN ULONG HandleCount, IN PHANDLE Handles, IN enum _WAIT_TYPE WaitType, IN BOOLEAN Alertable, IN PLARGE_INTEGER Timeout OPTIONAL);
 	}
 
 	struct NtStatus
@@ -450,55 +381,8 @@ namespace winnt
 
 	namespace
 	{
-		UNICODE_STRING ToString(wchar_t const *text, size_t cchText)
-		{
-			UNICODE_STRING result =
-			{
-				int_cast<USHORT>(cchText * sizeof(*text)),
-				int_cast<USHORT>(cchText * sizeof(*text)),
-				const_cast<LPTSTR>(text)
-			};
-			return result;
-		}
-
-		UNICODE_STRING ToString(wchar_t const *text)
-		{
-			return ToString(text, wcslen(text));
-		}
-
-		UNICODE_STRING ToString(std::basic_string<wchar_t> const *pS)
-		{
-			return ToString(pS->data(), pS->size());
-		}
-
-		STRING ToString(char const *const text, size_t cchText)
-		{
-			STRING result =
-			{
-				int_cast<USHORT>(cchText * sizeof(*text)),
-				int_cast<USHORT>(cchText * sizeof(*text)),
-				const_cast<char *>(text)
-			};
-			return result;
-		}
-
-		STRING ToString(char const *const text)
-		{
-			return ToString(text, strlen(text));
-		}
-
-		STRING ToString(std::basic_string<char> const *pS)
-		{
-			return ToString(pS->data(), pS->size());
-		}
-
-		FORCEINLINE ptrdiff_t bytediff(void const *pA, void const *pB)
-		{ return static_cast<char const *>(pA) - static_cast<char const *>(pB); }
-
 		template<typename T> struct size_of { static size_t const value = sizeof(T); };
 		template<> struct size_of<void> { static size_t const value = 0; };
-		template<typename T> T &dereference(T &v) { return v; }
-		template<typename T> T const &dereference(T const &v) { return v; }
 	}
 
 	struct Access
@@ -553,44 +437,6 @@ namespace winnt
 		void Set(Mask const mask) { *this |= mask; }
 	};
 
-	class NtSystem
-	{
-	public:
-		static ULONG RtlTimeToSecondsSince1970(LONGLONG time)
-		{
-			LARGE_INTEGER time2;
-			time2.QuadPart = time;
-			ULONG result = 0;
-			if (!NtDllProc(RtlTimeToSecondsSince1970)(&time2, &result) && time != 0)
-			{ NtStatus(STATUS_UNSUCCESSFUL).CheckAndThrow(); }
-			return result;
-		}
-
-		static ULONG RtlTimeToSecondsSince1980(LONGLONG time)
-		{
-			LARGE_INTEGER time2;
-			time2.QuadPart = time;
-			ULONG result = 0;
-			if (!NtDllProc(RtlTimeToSecondsSince1980)(&time2, &result) && time != 0)
-			{ NtStatus(STATUS_UNSUCCESSFUL).CheckAndThrow(); }
-			return result;
-		}
-
-		static LONGLONG RtlSecondsSince1970ToTime(ULONG time)
-		{
-			LARGE_INTEGER time2 = {0};
-			NtDllProc(RtlSecondsSince1970ToTime)(time, &time2);
-			return time2.QuadPart;
-		}
-
-		static LONGLONG RtlSecondsSince1980ToTime(ULONG time)
-		{
-			LARGE_INTEGER time2 = {0};
-			NtDllProc(RtlSecondsSince1980ToTime)(time, &time2);
-			return time2.QuadPart;
-		}
-	};
-
 	class NtObject
 	{
 		typedef NtObject This;
@@ -622,49 +468,15 @@ namespace winnt
 		NtObject(This const &other) : _handle(NtDuplicateHandle(other.get())) { }
 		~NtObject()
 		{
-			if (this->owned() && this->get() && this->get() != reinterpret_cast<HANDLE>(-1))
+			if (this->get() && this->get() != reinterpret_cast<HANDLE>(-1))
 			{ NtStatus(NtDllProc(NtClose)(this->get())).CheckAndThrow(); }
 		}
 		This &operator =(This const &other) { if (this != &other) { This(other).swap(*this); } return *this; }
 		operator bool_type() const { return this->get() ? &This::this_type_does_not_support_comparisons : NULL; }
 		This &swap(This &other) { using std::swap; swap(this->_handle, other._handle); return *this; }
 		friend void swap(This &a, This &b) { a.swap(b); }
-		bool disown() { if (this->owned()) { this->_handle = (HANDLE)((uintptr_t)this->_handle | 2); return true; } else { return false; } }
-		bool owned() const { return (intptr_t)this->_handle > 0 && ((uintptr_t)this->_handle & 2) == 0; }
-		HANDLE detach() { HANDLE result = this->get(); this->_handle = NULL; return result; }
 		HANDLE *receive() { return this->get() == NULL || this->get() == reinterpret_cast<HANDLE>(-1) ? &this->_handle : NULL; }
 		HANDLE get() const { return (intptr_t)this->_handle < 0 ? this->_handle /* special handles are as-is */ : (HANDLE)((uintptr_t)this->_handle & (~(uintptr_t)0 << 2)); }
-
-		template<typename It>
-		It GetObjectFullName(It const &it) const
-		{
-			UCHAR buffer[sizeof(UNICODE_STRING) + 32 * 1024];
-			ULONG cb;
-			PUNICODE_STRING pUS = reinterpret_cast<PUNICODE_STRING>(&buffer[0]);
-			NtStatus(NtDllProc(NtQueryObject)(this->get(), static_cast<enum _OBJECT_INFORMATION_CLASS>(1) /*ObjectNameInformation*/, pUS, int_cast<ULONG>(sizeof(buffer)), &cb)).CheckAndThrow();
-			return std::copy(
-				checked_iterator(pUS),
-				checked_iterator(pUS) + pUS->Length / sizeof(*pUS->Buffer),
-				it);
-		}
-
-		std::basic_string<TCHAR> GetObjectFullName() const
-		{
-			std::basic_string<TCHAR> result;
-			this->GetObjectFullName(std::inserter(result, result.end()));
-			return result;
-		}
-
-		template<typename TInfo> TInfo NtQueryObject() const
-		{
-			TInfo info;
-			ULONG cb;
-			/*Deprecated();*/
-			NtStatus(NtDllProc(NtQueryObject)(this->get(), GetInfoClass(static_cast<TInfo *>(NULL)), &info, sizeof(info), &cb)).CheckAndThrow();
-			return info;
-		}
-
-		void NtMakePermanentObject() { NtStatus(NtDllProc(NtMakePermanentObject)(this->get())).CheckAndThrow(); }
 
 		NtStatus NtWaitForSingleObject(bool alertable, PLONGLONG pTimeout = NULL) const
 		{
@@ -697,19 +509,6 @@ namespace winnt
 			this->NtWaitForSingleObject(false, pTimeout);
 		}
 
-		static NtStatus NtWaitForMultipleObjects(
-			ULONG cObjects, This const objects[],
-			bool waitAny = false, bool alertable = false, LONGLONG const *pTimeout = NULL)
-		{
-			HANDLE handles[MAXIMUM_WAIT_OBJECTS];
-			for (ULONG i = 0; i < cObjects; i++) { handles[i] = objects[i].get(); }
-			LARGE_INTEGER timeout2;
-			if (pTimeout != NULL) { timeout2.QuadPart = *pTimeout; }
-			NtStatus status = NtDllProc(NtWaitForMultipleObjects)(cObjects, handles, static_cast<enum _WAIT_TYPE>(waitAny), alertable, pTimeout != NULL ? &timeout2 : NULL);
-			if (status.GetSeverity() >= STATUS_SEVERITY_WARNING) { status.CheckAndThrow(); }
-			return status;
-		}
-
 		template<typename TNtObject>
 		static TNtObject NtDuplicateObject(
 			TNtObject object, ULONG options = DUPLICATE_SAME_ACCESS | 4 /*DUPLICATE_SAME_ATTRIBUTES*/,
@@ -724,33 +523,8 @@ namespace winnt
 		}
 	};
 
-	class NtEvent : public NtObject
-	{
-	public:
-
-		NtEvent(HANDLE const value = NULL) : NtObject(value) { }
-		NtEvent(NtEvent const &other) : NtObject(other) { }
-
-	};
-
 	class NtFile : public NtObject
 	{
-		static NtFile const mountPointManager;
-		static void *NullCallback(void *, size_t /*cbInput*/, void * /*context_*/) { return NULL; }
-		struct VectorAppenderCallback { std::vector<std::basic_string<TCHAR> > *pNames; bool operator()(LPCTSTR name) { pNames->push_back(name); return true; } };
-		struct MOUNTMGR_TARGET_NAME_WITH_BUFFER { MOUNTMGR_TARGET_NAME Value; TCHAR PathBuffer[32 * 1024]; };
-		template<typename It>
-		struct MountMgrQueryDosVolumePathCallback
-		{
-			It *pIT;
-			PUCHAR pItBuffer;
-			MountMgrQueryDosVolumePathCallback(It *pIT, PUCHAR pItBuffer) : pIT(pIT), pItBuffer(pItBuffer) { }
-			bool operator()(LPCTSTR name)
-			{
-				new(pItBuffer) It(std::copy(&name[0], &name[std::char_traits<TCHAR>::length(name)], *pIT));
-				return true;
-			}
-		};
 		class scoped_ptr
 		{
 			typedef std::vector<unsigned char> element_type;
@@ -859,14 +633,6 @@ namespace winnt
 
 		typedef std::vector<std::pair<long long /*LCN*/, long long /*VirtualClusterCount (negated, if LCN is negative)*/> > RetrievalPointers;
 
-		static FILE_BASIC_INFORMATION NtQueryAttributesFile(ObjectAttributes const &oa)
-		{
-			ObjectAttributes oa2 = oa;
-			FILE_BASIC_INFORMATION fi = {0};
-			NtStatus(NtDllProc(NtQueryAttributesFile)(oa2, &fi)).CheckAndThrow();
-			return fi;
-		}
-
 		static NtFile NtOpenFile(ObjectAttributes const &oa, Access desiredAccess = Access::GenericRead | Access::Synchronize, ULONG shareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE, ULONG openOptions = FILE_SYNCHRONOUS_IO_NONALERT, OUT FileCreationDisposition *pDisposition = NULL, bool throwIfNotFound = true)
 		{
 			if ((openOptions & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT)) != 0 && (desiredAccess & Access::Synchronize) == 0) { __debugbreak(); }
@@ -907,125 +673,6 @@ namespace winnt
 			return info;
 		}
 
-		std::basic_string<TCHAR> MountMgrQueryDosVolumePath(LPCTSTR target, bool *pThrowIfNotFound = NULL) const
-		{
-			std::basic_string<TCHAR> result;
-			this->MountMgrQueryDosVolumePath(target, std::inserter(result, result.end()), pThrowIfNotFound);
-			return result;
-		}
-
-		// It is OKAY for target and name to be the same string!
-		template<typename It>
-		It MountMgrQueryDosVolumePath(LPCTSTR target, It it, bool *pThrowIfNotFound = NULL /*If pointing to 'false', the target will receive 'true' if there was an ERROR, or 'false' otherwise.*/) const
-		{
-			UCHAR itBuffer[sizeof(it)];
-
-			this->MountMgrQueryDosVolumePaths(target, false, MountMgrQueryDosVolumePathCallback<It>(&it, &itBuffer[0]), pThrowIfNotFound);
-			if (pThrowIfNotFound == NULL || *pThrowIfNotFound == false /*no error*/)
-			{
-				It itCopy(*reinterpret_cast<It *>(&itBuffer[0]));
-				reinterpret_cast<It *>(&itBuffer[0])->~It();
-				return itCopy;
-			}
-			else { return it; }
-		}
-
-		std::vector<std::basic_string<TCHAR> > MountMgrQueryDosVolumePaths(LPCTSTR target, bool *pThrowIfNotFound = NULL) const
-		{
-			std::vector<std::basic_string<TCHAR> > result;
-			this->MountMgrQueryDosVolumePaths(target, result, pThrowIfNotFound);
-			return result;
-		}
-
-		void MountMgrQueryDosVolumePaths(LPCTSTR target, std::vector<std::basic_string<TCHAR> > &names, bool *pThrowIfNotFound = NULL) const
-		{
-			VectorAppenderCallback callback = { &names };
-			this->MountMgrQueryDosVolumePaths(target, true, callback, pThrowIfNotFound);
-		}
-
-		template<typename TCallback /*bool(LPCTSTR)*/>
-		static bool __cdecl MountMgrQueryDosVolumePathsCallback(void *pOutput, size_t /*cbOutput*/, void * context_)
-		{
-			TCallback &callback = *reinterpret_cast<TCallback *>(context_);
-			MOUNTMGR_VOLUME_PATHS &paths = *static_cast<PMOUNTMGR_VOLUME_PATHS>(pOutput);
-			for (size_t i = 0; i < paths.MultiSzLength / sizeof(*paths.MultiSz) && paths.MultiSz[i] != TEXT('\0'); i += std::char_traits<TCHAR>::length(&paths.MultiSz[i]) + 1)
-			{
-				if (!dereference(callback)(&paths.MultiSz[i]))
-				{
-					return false;
-				}
-			}
-			return true;
-		}
-
-		template<typename TCallback /*bool(LPCTSTR)*/>
-		bool MountMgrQueryDosVolumePaths(LPCTSTR target, bool queryMultiplePaths, TCallback callback, bool *pThrowIfNotFound = NULL) const
-		{
-			MOUNTMGR_TARGET_NAME_WITH_BUFFER input = {};
-			input.Value.DeviceNameLength = int_cast<USHORT>(sizeof(*target) * std::char_traits<TCHAR>::length(target));
-			std::copy(&target[0], &target[std::char_traits<TCHAR>::length(target)], unchecked_iterator(&input.Value.DeviceName[0]));
-			TCallback *pCallback = &callback; // DO NOT REMOVE THIS LINE!  It serves to give an error if the address-of operator is overloaded
-			try
-			{
-				if (pThrowIfNotFound != NULL) { *pThrowIfNotFound = false; }
-				return this->NtDeviceIoControlFileConstUnsafe<bool>(queryMultiplePaths ? IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATHS : IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATH, input, sizeof(input), sizeof(MOUNTMGR_VOLUME_PATHS), ULONG_MAX, &MountMgrQueryDosVolumePathsCallback<TCallback>, pCallback);
-			}
-			catch (CStructured_Exception &ex)
-			{
-				if (pThrowIfNotFound != NULL && !*pThrowIfNotFound && ex.GetSENumber() == STATUS_OBJECT_NAME_NOT_FOUND)
-				{
-					if (pThrowIfNotFound != NULL) { *pThrowIfNotFound = true; }
-					return false;
-				}
-				else { throw; }
-			}
-		}
-
-		std::basic_string<TCHAR> GetPathOfVolume() const
-		{
-			std::basic_string<TCHAR> s;
-			this->GetPathOfVolume(std::inserter(s, s.end()));
-			return s;
-		}
-
-		template<typename It>
-		It GetPathOfVolume(It const &it, bool *pThrowOnError = NULL) const
-		{
-			TCHAR buffer[32 * 1024], myPath[32 * 1024];
-			size_t const cchVolPath = int_cast<size_t>(this->GetPath(checked_iterator(myPath), false) - checked_iterator(myPath));
-			size_t const cchFullPath = int_cast<size_t>(this->GetObjectFullName(checked_iterator(buffer)) - checked_iterator(buffer));
-			if (cchFullPath < cchVolPath) { __debugbreak(); }
-			buffer[cchFullPath - cchVolPath] = TEXT('\0');
-			It it2 = it;
-			return GetMountPointManager().MountMgrQueryDosVolumePath(buffer, it, pThrowOnError);
-		}
-
-		template<typename It>
-		It GetWin32PathByMountMgr(It const &it, bool *pThrowOnError = NULL) const
-		{
-			TCHAR buffer[32 * 1024], myPath[32 * 1024];
-			size_t const cchVolPath = int_cast<size_t>(this->GetPath(checked_iterator(myPath), false) - checked_iterator(myPath));
-			size_t const cchFullPath = int_cast<size_t>(this->GetObjectFullName(checked_iterator(buffer)) - checked_iterator(buffer));
-			if (cchFullPath < cchVolPath) { __debugbreak(); }
-			buffer[cchFullPath - cchVolPath] = TEXT('\0');
-			It it2 = it;
-			return std::copy(&myPath[0], &myPath[cchVolPath], GetMountPointManager().MountMgrQueryDosVolumePath(buffer, it2, pThrowOnError));
-		}
-
-		template<typename It>
-		It GetWin32Path(It const &it) const
-		{
-			bool throwIfNotFound = false;
-			return this->GetWin32PathByMountMgr(it, &throwIfNotFound);
-		}
-
-		std::basic_string<TCHAR> GetWin32Path() const
-		{
-			std::basic_string<TCHAR> result;
-			this->GetWin32Path(std::inserter(result, result.end()));
-			return result;
-		}
-
 		IO_PRIORITY_HINT GetIoPriorityHint() const
 		{
 			FILE_IO_PRIORITY_HINT_INFORMATION info = { IoPriorityNormal };
@@ -1045,11 +692,6 @@ namespace winnt
 			{ status.CheckAndThrow(); }
 		}
 
-		ULONG GetMode() const
-		{
-			return this->NtQueryInformationFile<FILE_MODE_INFORMATION>().FileMode;
-		}
-
 		ULONG GetSectorSize() const
 		{
 			return this->NtQueryVolumeInformationFile<FILE_FS_SIZE_INFORMATION>().BytesPerSector;
@@ -1065,72 +707,10 @@ namespace winnt
 			return this->NtQueryVolumeInformationFile<FILE_FS_SIZE_INFORMATION>().TotalAllocationUnits.QuadPart;
 		}
 
-		ULONG GetCharacteristics() const
-		{
-			return this->NtQueryVolumeInformationFile<FILE_FS_DEVICE_INFORMATION>().Characteristics;
-		}
-
-		ULONG GetDeviceType() const
-		{
-			return this->NtQueryVolumeInformationFile<FILE_FS_DEVICE_INFORMATION>().DeviceType;
-		}
-
 		ULONG GetClusterSize() const
 		{
 			FILE_FS_SIZE_INFORMATION info = this->NtQueryVolumeInformationFile<FILE_FS_SIZE_INFORMATION>();
 			return info.BytesPerSector * info.SectorsPerAllocationUnit;
-		}
-
-		ULONG GetSectorsPerCluster() const
-		{
-			return this->NtQueryVolumeInformationFile<FILE_FS_SIZE_INFORMATION>().SectorsPerAllocationUnit;
-		}
-
-		LONGLONG GetPosition() const
-		{
-			return this->NtQueryInformationFile<FILE_POSITION_INFORMATION>().CurrentByteOffset.QuadPart;
-		}
-
-		LONGLONG GetEndOfFile() const
-		{
-			return this->NtQueryInformationFile<FILE_STANDARD_INFORMATION>().EndOfFile.QuadPart;
-		}
-
-		LONGLONG GetAllocationSize() const
-		{
-			return this->NtQueryInformationFile<FILE_STANDARD_INFORMATION>().AllocationSize.QuadPart;
-		}
-
-		template<typename It>
-		It GetPath(It const &it, bool backslashTerminateIfDirectory) const
-		{
-			UCHAR buffer[sizeof(FILE_NAME_INFORMATION) + 32 * 1024];
-			IO_STATUS_BLOCK iosb;
-			PFILE_NAME_INFORMATION pInfo = reinterpret_cast<PFILE_NAME_INFORMATION>((reinterpret_cast<uintptr_t>(&buffer[0]) + (sizeof(FILE_NAME_INFORMATION) - 1)) & ~(sizeof(FILE_NAME_INFORMATION) - 1));
-			/*Deprecated();*/
-			NtStatus status = NtDllProc(NtQueryInformationFile)(this->get(), &iosb, pInfo, int_cast<ULONG>(sizeof(buffer)), GetInfoClass(static_cast<FILE_NAME_INFORMATION *>(NULL)));
-			if ((status == STATUS_INVALID_PARAMETER || status == STATUS_INVALID_PARAMETER) && this->GetDeviceType() == FILE_DEVICE_DISK)
-			{
-				// It's the volume handle, so the path is empty
-				return it;
-			}
-			else
-			{
-				status.CheckAndThrow();
-				if (backslashTerminateIfDirectory && pInfo->FileName[pInfo->FileNameLength / sizeof(*pInfo->FileName) - 1] != TEXT('\\') && this->IsDirectory())
-				{
-					pInfo->FileName[pInfo->FileNameLength / sizeof(*pInfo->FileName)] = TEXT('\\');
-					pInfo->FileNameLength += sizeof(*pInfo->FileName);
-				}
-				return std::copy(&pInfo->FileName[0], &pInfo->FileName[pInfo->FileNameLength / sizeof(*pInfo->FileName)], it);
-			}
-		}
-
-		std::basic_string<TCHAR> GetPath(bool backslashTerminateIfDirectory = true) const
-		{
-			std::basic_string<TCHAR> result;
-			this->GetPath(std::inserter(result, result.end()), backslashTerminateIfDirectory);
-			return result;
 		}
 
 		bool IsDirectory() const
@@ -1138,25 +718,9 @@ namespace winnt
 			return this->NtQueryInformationFile<FILE_STANDARD_INFORMATION>().Directory != false;
 		}
 
-		std::vector<UCHAR> NtReadFile(unsigned long length = ULONG_MAX /*Read to EOF*/, long long offset = -2, unsigned long *pKey = NULL) const
-		{
-			if (length == ULONG_MAX)
-			{
-				LONGLONG length2 = this->GetEndOfFile() - this->GetPosition();
-				if (length2 > ULONG_MAX)
-				{
-					NtStatus(STATUS_INTEGER_OVERFLOW).CheckAndThrow();
-				}
-				length = int_cast<ULONG>(length2);
-			}
-
-			std::vector<UCHAR> buffer(length);
-			buffer.resize(this->NtReadFile(&buffer[0], int_cast<ULONG>(buffer.size()), offset, pKey));
-			return buffer;
-		}
-
 		unsigned long NtReadFile(void *buffer, unsigned long length, long long offset = -2, unsigned long *pKey = NULL) const
 		{
+#if 1
 			IO_STATUS_BLOCK iosb;
 			LARGE_INTEGER offset2;
 			offset2.QuadPart = offset;
@@ -1171,6 +735,18 @@ namespace winnt
 			}
 			status.CheckAndThrow();
 			return int_cast<ULONG>(iosb.Information);
+#else
+			OVERLAPPED overlapped = { };
+			overlapped.Offset = static_cast<unsigned long>(offset);
+			overlapped.OffsetHigh = static_cast<unsigned long>(offset >> (sizeof(overlapped.Offset) * 8));
+			unsigned long read;
+			if (!ReadFile(this->_handle, buffer, length, &read, &overlapped) &&
+				(GetLastError() != ERROR_IO_PENDING || !GetOverlappedResult(this->_handle, &overlapped, &read, TRUE)))
+			{
+				NtStatus::ThrowWin32(GetLastError());
+			}
+			return read;
+#endif
 		}
 
 		NtStatus NtDeviceIoControlFileConstUnsafe(ULONG controlCode, void const *pInput, ULONG cbInput, void *pOutput, ULONG cbOutput) const
@@ -1230,27 +806,6 @@ namespace winnt
 
 			return lengthProcessed;
 		}
-
-		LONGLONG FsctlGetRetrievalPointer(LONGLONG *pStartingVcn /*Irrelevant to the result itself -- the result is correct either way.*/) const
-		{
-			STARTING_VCN_INPUT_BUFFER input = {};
-			input.StartingVcn.QuadPart = pStartingVcn != NULL ? *pStartingVcn : 0;
-			struct Callback { static RETRIEVAL_POINTERS_BUFFER callback(void *pBuffer, size_t /*cbInput*/, void * /*context_*/) { return *static_cast<PRETRIEVAL_POINTERS_BUFFER>(pBuffer); } };
-			RETRIEVAL_POINTERS_BUFFER result = this->NtFsControlFileConstUnsafe(FSCTL_GET_RETRIEVAL_POINTERS, input, sizeof(input), sizeof(RETRIEVAL_POINTERS_BUFFER), sizeof(RETRIEVAL_POINTERS_BUFFER), &Callback::callback);
-			if (pStartingVcn != NULL) { *pStartingVcn = result.StartingVcn.QuadPart; }
-			for (ULONG i = 0; i < result.ExtentCount; i++)
-			{
-				LONGLONG const currentVcn = i == 0 ? result.StartingVcn.QuadPart : result.Extents[i - 1].NextVcn.QuadPart;
-				if (currentVcn <= input.StartingVcn.QuadPart && input.StartingVcn.QuadPart < result.Extents[i].NextVcn.QuadPart)
-				{
-					return result.Extents[i].Lcn.QuadPart < 0 ? result.Extents[i].Lcn.QuadPart : result.Extents[i].Lcn.QuadPart + input.StartingVcn.QuadPart - currentVcn;
-				}
-			}
-			return -1;
-		}
-
-
-		LONGLONG FsctlGetRetrievalPointer(LONGLONG startingVcn = 0) const { return this->FsctlGetRetrievalPointer(&startingVcn); }
 
 		// Returns true if all the pointers were received, or false if there are more to query for
 		bool FsctlGetRetrievalPointers(PRETRIEVAL_POINTERS_BUFFER pOutput, size_t &cbOutput, long long startingVCN = 0) const
@@ -1333,13 +888,6 @@ namespace winnt
 			return start;
 		}
 
-		std::pair<unsigned long, std::pair<unsigned long, unsigned long> > IoctlStorageGetDeviceNumber() const
-		{
-			STORAGE_DEVICE_NUMBER output;
-			this->NtDeviceIoControlFileConstUnsafe(IOCTL_STORAGE_GET_DEVICE_NUMBER, NULL, 0, &output, sizeof(output)).CheckAndThrow();
-			return std::make_pair(output.DeviceType, std::make_pair(output.DeviceNumber, output.PartitionNumber));
-		}
-
 		std::vector<DISK_EXTENT> IoctlVolumeGetVolumeDiskExtents() const
 		{
 			struct Callback
@@ -1358,8 +906,6 @@ namespace winnt
 			return this->NtDeviceIoControlFileConstUnsafe(IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, NULL, 0, sizeof(VOLUME_DISK_EXTENTS), ULONG_MAX, &Callback::callback);
 		}
 
-		static NtFile GetMountPointManager() { return mountPointManager; }
-
 		static std::basic_string<TCHAR> NTAPI RtlDosPathNameToNtPathName(LPCTSTR dosPathName, std::basic_string<TCHAR> *pFileNamePart = NULL)
 		{
 			(void)(&RtlDosPathNameToNtPathName);
@@ -1371,14 +917,6 @@ namespace winnt
 			NtDllProc(RtlFreeUnicodeString)(&ntPathName);
 			return result;
 		}
-	};
-	DECLSPEC_SELECTANY NtFile const NtFile::mountPointManager(NtOpenFile(MOUNTMGR_DEVICE_NAME, FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_NONALERT));
-
-	class NtThread : public NtObject
-	{
-	public:
-		NtThread(HANDLE const value = NULL) : NtObject(value) { }
-
 	};
 
 	class NtProcess : public NtObject

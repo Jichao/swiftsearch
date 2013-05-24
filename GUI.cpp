@@ -17,16 +17,9 @@
 
 #include <boost/bind/bind.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
-#include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/equal.hpp>
-#include <boost/range/algorithm/find_if.hpp>
-#include <boost/range/algorithm/for_each.hpp>
-#include <boost/range/algorithm/reverse.hpp>
-#include <boost/range/algorithm/stable_sort.hpp>
 #include <boost/range/as_literal.hpp>
 #include <boost/range/iterator_range.hpp>
-#include <boost/range/join.hpp>
-#include <boost/range/sub_range.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/scoped_array.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
@@ -293,7 +286,7 @@ struct indirect_pred
 	template<class T1, class T2> bool operator()(T1 const &a, T2 const &b) const { return (*p)(a, b); }
 };
 
-template<class R, class Pred> R &const_pred_stable_sort(R &range, Pred const &pred) { return boost::stable_sort(range, indirect_pred<Pred const>(&pred)); }
+template<class R, class Pred> void const_pred_stable_sort(R &range, Pred const &pred) { return std::stable_sort(range.begin(), range.end(), indirect_pred<Pred const>(&pred)); }
 
 template<class Ch>
 class natural_less
@@ -903,7 +896,6 @@ class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl
 	WTL::CProgressBarCtrl statusbarProgress;
 	CUpDownNotify<WTL::CEdit> txtFileName;
 	static UINT const WM_TASKBARCREATED;
-	//boost::ptr_vector<NtfsIndexThread> drives;
 	class CoInit
 	{
 		CoInit(CoInit const &) : hr(S_FALSE) { }
@@ -959,6 +951,22 @@ private:
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
 	{
 		this->cmbDrive.Attach(this->GetDlgItem(IDC_COMBODRIVE));
+		if (false)
+		{
+			WTL::CRect rc;
+			this->cmbDrive.GetWindowRect(&rc);
+			this->ScreenToClient(&rc);
+			ATL::CComBSTR text;
+			this->cmbDrive.GetWindowText(*&text);
+			int const style = this->cmbDrive.GetStyle();
+			int const exstyle = this->cmbDrive.GetExStyle();
+			int const id = this->cmbDrive.GetDlgCtrlID();
+			WTL::CFontHandle const font = this->cmbDrive.GetFont();
+			this->cmbDrive.DestroyWindow();
+			this->cmbDrive.Create(*this, rc, text, style, exstyle & ~WS_EX_NOPARENTNOTIFY, id, NULL);
+			this->cmbDrive.SetFont(font);
+		}
+
 		this->lvFiles.Attach(this->GetDlgItem(IDC_LISTFILES));
 		this->txtFileName.SubclassWindow(this->GetDlgItem(IDC_EDITFILENAME));
 		this->richEdit.Create(this->lvFiles, NULL, 0, ES_MULTILINE, WS_EX_TRANSPARENT);
@@ -1011,7 +1019,7 @@ private:
 
 		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_GRIDLINES | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | 0x80000000 /*LVS_EX_COLUMNOVERFLOW*/ /*| 0x10000000 LVS_EX_AUTOSIZECOLUMNS*/);
 		this->lvFiles.InsertColumn(COLUMN_INDEX_NAME, _T("Name"), LVCFMT_LEFT, 170);
-		this->lvFiles.InsertColumn(COLUMN_INDEX_PATH, _T("Directory"), LVCFMT_LEFT, 468);
+		this->lvFiles.InsertColumn(COLUMN_INDEX_PATH, _T("Directory"), LVCFMT_LEFT, 345);
 		this->lvFiles.InsertColumn(COLUMN_INDEX_SIZE, _T("Size (bytes)"), LVCFMT_RIGHT, 96);
 		this->lvFiles.InsertColumn(COLUMN_INDEX_SIZE_ON_DISK, _T("Size on Disk"), LVCFMT_RIGHT, 96);
 		this->lvFiles.InsertColumn(COLUMN_INDEX_MODIFICATION_TIME, _T("Modified"), LVCFMT_LEFT, 80);
@@ -1057,27 +1065,29 @@ private:
 		return iSel;
 	}
 
-	void OnParentNotify(UINT message, UINT nChildID, LPARAM lParam)
-	{
-		(void)nChildID;
-		if (message == WM_DESTROY && reinterpret_cast<HWND>(lParam) == this->cmbDrive)
-		{
-			for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
-			{
-				boost::intrusive_ptr<NtfsIndexThread> const p = static_cast<NtfsIndexThread *>(this->cmbDrive.GetItemDataPtr(i));
-				if (this->cmbDrive.SetItemDataPtr(i, NULL) != CB_ERR)
-				{
-					this->cmbDrive.DeleteString(static_cast<UINT>(i));
-					intrusive_ptr_release(p.get());
-				}
-			}
-		}
-	}
-
 	void OnDestroy()
 	{
 		WTL::CWaitCursor wait;
 		this->iconLoader->clear();
+		std::vector<boost::intrusive_ptr<NtfsIndexThread> > threads;
+		for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
+		{
+			boost::intrusive_ptr<NtfsIndexThread> const p = static_cast<NtfsIndexThread *>(this->cmbDrive.GetItemDataPtr(i));
+			if (this->cmbDrive.SetItemDataPtr(i, NULL) != CB_ERR &&
+				this->cmbDrive.DeleteString(static_cast<UINT>(i)) != CB_ERR)
+			{
+				p->close();
+				threads.push_back(p);
+			}
+		}
+		while (!threads.empty())
+		{
+			boost::intrusive_ptr<NtfsIndexThread> const p = threads.back();
+			threads.pop_back();
+			HANDLE const hThread = reinterpret_cast<HANDLE>(p->thread());
+			WaitForSingleObject(hThread, INFINITE);
+			intrusive_ptr_release(p.get());
+		}
 		UnregisterWait(this->hWait);
 		this->DeleteNotifyIcon();
 	}
@@ -1129,6 +1139,11 @@ private:
 			boost::iterator_range<TCHAR const *> const fileName = row.file_name();
 			if (fileName != boost::as_literal(_T("."))) { path.append(fileName.begin(), fileName.end()); }
 
+			WTL::CMenu menu;
+			menu.CreatePopupMenu();
+			ATL::CComPtr<IContextMenu> contextMenu;
+
+			UINT const minID = 1000;
 			CShellItemIDList pItemIdList;
 			SFGAOF sfgao;
 			HRESULT hr = SHParseDisplayName(path.c_str(), NULL, &pItemIdList.m_pidl, 0, &sfgao);
@@ -1139,65 +1154,60 @@ private:
 				LPCITEMIDLIST lastItemIdList;
 				if (SHBindToParent(pItemIdList, IID_IShellFolder, &reinterpret_cast<void *&>(folder), &lastItemIdList) == S_OK)
 				{
-					ATL::CComPtr<IContextMenu> contextMenu;
 					if (folder->GetUIObjectOf(*this, 1, &lastItemIdList, IID_IContextMenu, NULL, &reinterpret_cast<void *&>(contextMenu.p)) == S_OK)
 					{
-						WTL::CMenu menu;
-						menu.CreatePopupMenu();
-						UINT const minID = 1000;
 						hr = contextMenu->QueryContextMenu(menu, 0, minID, UINT_MAX, 0x80 /*CMF_ITEMMENU*/);
-						if (SUCCEEDED(hr))
-						{
-							UINT openContainingFolderId;
-							{
-								MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
-								menu.InsertMenuItem(0, TRUE, &mii);
-							}
-							{
-								std::basic_stringstream<TCHAR> ssName;
-								ssName.imbue(std::locale(""));
-								ssName << _T("File #") << static_cast<unsigned long>(row.record().first);
-								std::basic_string<TCHAR> name = ssName.str();
-								MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
-								menu.InsertMenuItem(0, TRUE, &mii);
-							}
-							{
-								MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, (openContainingFolderId = minID - 1), NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
-								menu.InsertMenuItem(0, TRUE, &mii);
-								menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
-							}
-							WTL::CPoint cursorPos;
-							GetCursorPos(&cursorPos);
-							UINT id = menu.TrackPopupMenu(
-								TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
-								(GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN | TPM_HORNEGANIMATION : TPM_LEFTALIGN | TPM_HORPOSANIMATION),
-								cursorPos.x, cursorPos.y, *this);
-							if (!id)
-							{
-								// User cancelled
-							}
-							else if (id == openContainingFolderId)
-							{
-								if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, pItemIdList.m_pidl, WT_EXECUTEINUITHREAD))
-								{
-									pItemIdList.Detach();
-								}
-							}
-							else if (id >= minID)
-							{
-								CMINVOKECOMMANDINFO cmd = { sizeof(cmd), CMIC_MASK_ASYNCOK, *this, reinterpret_cast<LPCSTR>(id - minID), NULL, NULL, SW_SHOW };
-								hr = contextMenu->InvokeCommand(&cmd);
-								if (hr == S_OK)
-								{
-								}
-								else
-								{
-									this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR);
-								}
-							}
-						}
-						else { this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR); }
 					}
+				}
+			}
+
+			if (contextMenu)
+			{
+				MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
+				menu.InsertMenuItem(0, TRUE, &mii);
+			}
+			{
+				std::basic_stringstream<TCHAR> ssName;
+				ssName.imbue(std::locale(""));
+				ssName << _T("File #") << static_cast<unsigned long>(row.record().first);
+				std::basic_string<TCHAR> name = ssName.str();
+				MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
+				menu.InsertMenuItem(0, TRUE, &mii);
+			}
+			UINT const openContainingFolderId = minID - 1;
+			if (contextMenu)
+			{
+				MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
+				menu.InsertMenuItem(0, TRUE, &mii);
+				menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
+			}
+			WTL::CPoint cursorPos;
+			GetCursorPos(&cursorPos);
+			UINT id = menu.TrackPopupMenu(
+				TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
+				(GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN | TPM_HORNEGANIMATION : TPM_LEFTALIGN | TPM_HORPOSANIMATION),
+				cursorPos.x, cursorPos.y, *this);
+			if (!id)
+			{
+				// User cancelled
+			}
+			else if (id == openContainingFolderId)
+			{
+				if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, pItemIdList.m_pidl, WT_EXECUTEINUITHREAD))
+				{
+					pItemIdList.Detach();
+				}
+			}
+			else if (id >= minID)
+			{
+				CMINVOKECOMMANDINFO cmd = { sizeof(cmd), CMIC_MASK_ASYNCOK, *this, reinterpret_cast<LPCSTR>(id - minID), NULL, NULL, SW_SHOW };
+				hr = contextMenu ? contextMenu->InvokeCommand(&cmd) : S_FALSE;
+				if (hr == S_OK)
+				{
+				}
+				else
+				{
+					this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR);
 				}
 			}
 		}
@@ -1530,7 +1540,7 @@ private:
 				}
 				if (hditem.lParam)
 				{
-					boost::reverse(this->rows);
+					std::reverse(this->rows.begin(), this->rows.end());
 				}
 			}
 			catch (CStructured_Exception &ex)
@@ -1766,8 +1776,27 @@ private:
 					BlockIo(BlockIo const &) { throw std::logic_error(""); }
 					BlockIo &operator =(BlockIo const &) { throw std::logic_error(""); }
 				public:
-					BlockIo(boost::intrusive_ptr<NtfsIndexThread> pThread = NULL) : pThread(pThread) { if (pThread) { ResetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
-					~BlockIo() { if (pThread) { SetEvent(reinterpret_cast<HANDLE>(pThread->event())); } }
+					BlockIo(boost::intrusive_ptr<NtfsIndexThread> pThread = NULL)
+						: pThread(pThread)
+					{
+						if (pThread)
+						{
+							if (!ResetEvent(reinterpret_cast<HANDLE>(pThread->event())))
+							{
+								RaiseException(GetLastError(), 0, 0, NULL);
+							}
+						}
+					}
+					~BlockIo()
+					{
+						if (pThread)
+						{
+							if (!SetEvent(reinterpret_cast<HANDLE>(pThread->event())))
+							{
+								RaiseException(GetLastError(), 0, 0, NULL);
+							}
+						}
+					}
 					void swap(BlockIo &other) { using std::swap; swap(this->pThread, other.pThread); }
 				};
 				std::vector<boost::intrusive_ptr<NtfsIndexThread> > const threads = this->GetDrives();
@@ -1819,13 +1848,11 @@ private:
 							}
 							~ResizeRows() { rows.resize(static_cast<size_t>(nRows)); }
 						} resizeRows(rows, index->size());
-						winnt::NtEvent startEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 						class MatcherThread
 						{
 							MatcherThread &operator =(MatcherThread const &) { throw std::logic_error(""); }
 						public:
 							uintptr_t volatile h;
-							winnt::NtEvent startEvent;
 							boost::shared_ptr<NtfsIndex const> index;
 							CProgressDialog &dlg;
 							long volatile &i;
@@ -1835,8 +1862,8 @@ private:
 							std::vector<DataRow> &rows;
 							bool volatile stop;
 							long volatile &nRows;
-							MatcherThread(boost::shared_ptr<NtfsIndex const> index, winnt::NtEvent const &startEvent, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
-								: h(NULL), startEvent(startEvent), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
+							MatcherThread(boost::shared_ptr<NtfsIndex const> index, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
+								: h(NULL), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
 							{ }
 							~MatcherThread()
 							{
@@ -1865,7 +1892,6 @@ private:
 								{
 									std::basic_string<TCHAR> tempPath;
 									tempPath.reserve(32 * 1024);
-									startEvent.NtWaitForSingleObject();
 									while (!this->stop)
 									{
 										size_t const i(static_cast<size_t>(InterlockedIncrement(&i)) - 1);
@@ -1899,20 +1925,16 @@ private:
 						};
 						SYSTEM_INFO si = { };
 						GetSystemInfo(&si);
+						boost::ptr_vector<MatcherThread> threads;
+						using std::max;
+						for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
 						{
-							boost::ptr_vector<MatcherThread> threads;
-							using std::max;
-							for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
-							{
-								std::auto_ptr<MatcherThread> p(new MatcherThread(index, startEvent, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
-								unsigned int tid;
-								p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), CREATE_SUSPENDED, &tid);
-								if (ResumeThread(reinterpret_cast<HANDLE>(p->h)) != static_cast<DWORD>(-1))
-								{ threads.push_back(p); }
-							}
-							SetEvent(startEvent.get());
-							// 'threads' destroyed here
+							std::auto_ptr<MatcherThread> p(new MatcherThread(index, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
+							unsigned int tid;
+							p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), 0, &tid);
+							if (p->h) { threads.push_back(p); }
 						}
+						// 'threads' destroyed here
 					}
 				}
 				if (ownerData)
@@ -2030,7 +2052,6 @@ private:
 		MSG_WM_INITDIALOG(OnInitDialog)
 		MSG_WM_SHOWWINDOW(OnShowWindow)
 		MSG_WM_CLOSE(OnClose)
-		MSG_WM_PARENTNOTIFY(OnParentNotify)
 		MESSAGE_HANDLER_EX(WM_THREADMESSAGE, OnThreadError)
 		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
