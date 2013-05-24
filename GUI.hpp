@@ -13,5 +13,9 @@ public:
 
 TCHAR const *GetAnyErrorText(unsigned long errorCode, va_list* pArgList = NULL);
 
+EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlSystemTimeToLocalTime(IN LARGE_INTEGER const *SystemTime, OUT PLARGE_INTEGER LocalTime);
+EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlLocalTimeToSystemTime(IN LARGE_INTEGER const *LocalTime, OUT PLARGE_INTEGER SystemTime);
+LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime);
+LONGLONG RtlLocalTimeToSystemTime(LONGLONG localTime);
 LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer);
 std::basic_string<TCHAR> &GetPath(class NtfsIndex const &index, unsigned long segmentNumber, std::basic_string<TCHAR> &path);

@@ -527,8 +527,6 @@ struct Tester
 	}
 } tester;
 
-EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlSystemTimeToLocalTime(IN LARGE_INTEGER const *SystemTime, OUT PLARGE_INTEGER LocalTime);
-
 LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime)
 {
 	LARGE_INTEGER time2, localTime;
@@ -536,6 +534,15 @@ LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime)
 	NTSTATUS status = RtlSystemTimeToLocalTime(&time2, &localTime);
 	if (status != 0) { RaiseException(status, 0, 0, NULL); }
 	return localTime.QuadPart;
+}
+
+LONGLONG RtlLocalTimeToSystemTime(LONGLONG localTime)
+{
+	LARGE_INTEGER time2, systemTime;
+	time2.QuadPart = localTime;
+	NTSTATUS status = RtlLocalTimeToSystemTime(&time2, &systemTime);
+	if (status != 0) { RaiseException(status, 0, 0, NULL); }
+	return systemTime.QuadPart;
 }
 
 LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer)

@@ -184,55 +184,88 @@ int _tmain(int argc, LPTSTR argv[])
 	{
 		_setmode(_fileno(stdout), 0x40000 /*_O_U8TEXT*/);
 		r = 0;
-		for (int i = 1; i < argc; i++)
+		std::vector<std::basic_string<TCHAR> > args;
+		args.reserve(argc);
+		std::copy(&argv[1], &argv[argc], std::back_inserter(args));
+		enum
+		{
+		};
+		std::vector<std::basic_string<TCHAR> > paths;
+		std::vector<std::pair<int, long long> > date_filters;
+		for (size_t i = 0; i < args.size(); i++)
+		{
+			std::basic_string<TCHAR> const &arg = args[i];
+			if (!arg.empty() && (*arg.begin() == _T('/') || *arg.begin() == _T('-')))
+			{
+				size_t j;
+				for (j = 0; j < arg.size(); j++)
+				{
+					if (j == 0 && arg[j] != _T('-') && arg[j] != _T('/') ||
+						j == 1 && (arg[j - 1] != _T('-') || arg[j] != _T('-')) ||
+						j > 1)
+					{ break; }
+				}
+				size_t const key_start = j;
+				while (j < arg.size() && arg[j] != _T(':') && arg[j] != _T('='))
+				{ ++j; }
+				std::basic_string<TCHAR> const key = arg.substr(key_start, j - key_start);
+				std::basic_string<TCHAR> value = j < arg.size() && (arg[j] == _T(':') || arg[j] == _T('=')) ? arg.substr(++j) : std::basic_string<TCHAR>();
+				if (key == _T("C") || key == _T("M") || key == _T("A"))
+				{
+					long long factor = 1000 * 1000 * 10;  // # of seconds
+					if (!value.empty())
+					{
+						if (*value.begin() == _T('-'))
+						{
+							value.erase(value.begin());
+							factor *= -1;
+						}
+						else if (*value.begin() == _T('+'))
+						{ value.erase(value.begin()); }
+					}
+					if (!value.empty())
+					{
+						if (*(value.end() - 1) == _T('m'))
+						{
+							factor *= 60;
+							value.erase(value.end() - 1);
+						}
+						else if (*(value.end() - 1) == _T('h'))
+						{
+							factor *= 60 * 60;
+							value.erase(value.end() - 1);
+						}
+						else if (*(value.end() - 1) == _T('d'))
+						{
+							factor *= 60 * 60 * 24;
+							value.erase(value.end() - 1);
+						}
+					}
+					long long systemTime;
+					GetSystemTimeAsFileTime(&reinterpret_cast<FILETIME &>(systemTime));
+					systemTime -= _ttoi64(value.c_str()) * factor * (factor < 0 ? -1 : 1);
+					date_filters.push_back(std::make_pair(key == _T("C") ? 1 : key == _T("M") ? 2 : key == _T("A") ? 3 : 0, factor < 0 ? -systemTime : systemTime));
+				}
+			}
+			else
+			{
+				paths.push_back(arg);
+			}
+		}
+		for (size_t i = 0; i < paths.size(); i++)
 		{
 			winnt::NtObject is_allowed_event(CreateEvent(NULL, TRUE, TRUE, NULL));
 			unsigned long progress = 0;
 			bool background = false;
-			std::basic_string<TCHAR> path = argv[i], name;
-			adddirsep(path);
-			path += _T("$Volume");
+			std::basic_string<TCHAR> volume_path = paths[i], name;
+			volume_path.erase(trimdirsep(volume_path.begin(), volume_path.end()), volume_path.end());
+			if (!volume_path.empty() && !isdirsep(*volume_path.begin()))
+			{ volume_path.insert(0, _T("\\\\.\\")); }
+			winnt::NtFile volume;
 			try
 			{
-				winnt::NtFile volume(CreateFile(path.c_str(), FILE_READ_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL));
-				if (!volume) { throw CStructured_Exception(GetLastError(), NULL); }
-				HANDLE const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
-				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, argv[i], is_allowed_event, &progress, &background));
-				size_t const n = index->size();
-				name.reserve(32 * 1024);
-				path.reserve(32 * 1024);
-				std::basic_string<TCHAR> str, buf1, buf2, buf3;
-				for (size_t i = 0; i < n; i++)
-				{
-					NtfsIndex::CombinedRecord const &record = index->at(i);
-					name.erase(name.begin(), name.end());
-					path.erase(path.begin(), path.end());
-					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name);
-					GetPath(*index, parent, path);
-					adddirsep(path);
-					path += name;
-					str.resize(1024 + path.size());
-					buf1.resize(1024);
-					buf2.resize(1024);
-					buf3.resize(1024);
-					str.resize(
-						static_cast<size_t>(
-							_stprintf(
-								&*str.begin(),
-								_T("%I64llu|%I64llu|%s|%s|%s|%.*s"),
-								static_cast<unsigned long long>(record.second.second.second.second.first),
-								static_cast<unsigned long long>(record.second.second.second.second.second),
-								SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size()),
-								SystemTimeToString(record.second.first.first.second, &*buf2.begin(), buf2.size()),
-								SystemTimeToString(record.second.first.second.first, &*buf3.begin(), buf3.size()),
-								static_cast<int>(path.size()), path.c_str())));
-					str.append(1, _T('\n'));
-					unsigned long nw;
-					if (!WriteConsole(hStdOut, str.c_str(), static_cast<unsigned int>(str.size()), &nw, NULL))
-					{
-						_tprintf(_T("%.*s"), static_cast<int>(str.size()), str.c_str());
-					}
-				}
+				std::basic_string<TCHAR> ntpath = volume_path.size() > 2 && (!isdirsep(volume_path[0]) || isdirsep(volume_path[1])) ? winnt::NtFile::RtlDosPathNameToNtPathName(volume_path.c_str()) : volume_path;
+				volume = winnt::NtFile::NtOpenFile(winnt::ObjectAttributes(ntpath), winnt::Access::Read | winnt::Access::Synchronize, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
 			}
 			catch (CStructured_Exception &ex)
 			{
@@ -241,8 +274,68 @@ int _tmain(int argc, LPTSTR argv[])
 				{
 					msg.resize(msg.size() - 1);
 				}
-				_ftprintf(stderr, _T("Error 0x%X opening \"%s\": %s\n"), ex.GetSENumber(), path.c_str(), msg.c_str());
+				_ftprintf(stderr, _T("Error 0x%X opening \"%s\": %s\n"), ex.GetSENumber(), volume_path.c_str(), msg.c_str());
 				r = ex.GetSENumber();
+			}
+
+			// Example: SwiftSearch.exe /M:+20m /A:-10m D:\
+			if (volume)
+			{
+				HANDLE const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+				std::basic_string<TCHAR> path;
+				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, paths[i], is_allowed_event, &progress, &background));
+				size_t const n = index->size();
+				name.reserve(32 * 1024);
+				path.reserve(32 * 1024);
+				std::basic_string<TCHAR> str, buf1, buf2, buf3;
+				for (size_t i = 0; i < n; i++)
+				{
+					NtfsIndex::CombinedRecord const &record = index->at(i);
+					bool match = true;
+					for (size_t j = 0; j < date_filters.size(); j++)
+					{
+						long long d;
+						switch (date_filters[j].first)
+						{
+						case 1: d = record.second.first.first.first; break;
+						case 2: d = record.second.first.first.second; break;
+						case 3: d = record.second.first.second.first; break;
+						default: continue;
+						}
+						long long const boundary = date_filters[j].second;
+						match &= boundary >= 0 ? d <= boundary : d >= -boundary;
+					}
+					if (!match) { continue; }
+					name.erase(name.begin(), name.end());
+					path.erase(path.begin(), path.end());
+					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name);
+					GetPath(*index, parent, path);
+					adddirsep(path);
+					path += name;
+					if (name != _T(".") && (record.second.first.second.second & FILE_ATTRIBUTE_DIRECTORY) != 0)
+					{ adddirsep(path); }
+					str.resize(1024 + path.size());
+					buf1.resize(1024);
+					buf2.resize(1024);
+					buf3.resize(1024);
+					str.resize(
+						static_cast<size_t>(
+						_stprintf(
+						&*str.begin(),
+						_T("%I64llu|%I64llu|%s|%s|%s|%.*s"),
+						static_cast<unsigned long long>(record.second.second.second.second.first),
+						static_cast<unsigned long long>(record.second.second.second.second.second),
+						SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size()),
+						SystemTimeToString(record.second.first.first.second, &*buf2.begin(), buf2.size()),
+						SystemTimeToString(record.second.first.second.first, &*buf3.begin(), buf3.size()),
+						static_cast<int>(path.size()), path.c_str())));
+					str.append(1, _T('\n'));
+					unsigned long nw;
+					if (!WriteConsole(hStdOut, str.c_str(), static_cast<unsigned int>(str.size()), &nw, NULL))
+					{
+						_tprintf(_T("%.*s"), static_cast<int>(str.size()), str.c_str());
+					}
+				}
 			}
 		}
 	}
