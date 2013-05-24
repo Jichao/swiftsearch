@@ -8,6 +8,7 @@
 
 #include <boost/range/iterator_range.hpp>
 #include <boost/ptr_container/ptr_map.hpp>
+#include <boost/ptr_container/ptr_circular_buffer.hpp>
 
 #include "CComCritSecLock.hpp"
 #include "NTFS (1).h"
@@ -200,9 +201,8 @@ public:
 		bool volatile *pBackground;
 		bool background_old;
 		size_t counter;
-		std::vector<DISK_EXTENT> const *disk_extents;
-		ProgressReporter(winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress, bool volatile *pBackground, std::vector<DISK_EXTENT> const *disk_extents)
-			: is_allowed_event(&is_allowed_event), pProgress(pProgress), pBackground(pBackground), counter(0), disk_extents(disk_extents), background_old() { }
+		ProgressReporter(winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress, bool volatile *pBackground)
+			: is_allowed_event(&is_allowed_event), pProgress(pProgress), pBackground(pBackground), counter(0), background_old() { }
 		void operator()(unsigned long long const numerator, unsigned long long const denominator)
 		{
 			if (pBackground && *pBackground != background_old)
@@ -253,11 +253,10 @@ public:
 		unsigned long clusterSize;
 		size_t cbFileRecord, nFileRecords;
 		ProgressReporter *progressReporter;
-		bool cancelled;
 		SegmentNumber next_segment_number_to_process;
 
 		Callback(NtfsIndexImpl *me, StandardInfoAttrs &standardInfoAttrs, FileNameAttrs &fileNameAttrs, DataAttrs &dataAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrsDerived &dataAttrsDerived, Children &children, unsigned long clusterSize, size_t cbFileRecord, size_t nFileRecords, ProgressReporter &progressReporter)
-			: me(me), standardInfoAttrs(&standardInfoAttrs), fileNameAttrs(&fileNameAttrs), dataAttrs(&dataAttrs), fileNameAttrsDerived(&fileNameAttrsDerived), dataAttrsDerived(&dataAttrsDerived), children(&children), clusterSize(clusterSize), cbFileRecord(cbFileRecord), nFileRecords(nFileRecords), progressReporter(&progressReporter), cancelled(false), next_segment_number_to_process(0) { }
+			: me(me), standardInfoAttrs(&standardInfoAttrs), fileNameAttrs(&fileNameAttrs), dataAttrs(&dataAttrs), fileNameAttrsDerived(&fileNameAttrsDerived), dataAttrsDerived(&dataAttrsDerived), children(&children), clusterSize(clusterSize), cbFileRecord(cbFileRecord), nFileRecords(nFileRecords), progressReporter(&progressReporter), next_segment_number_to_process(0) { }
 
 		void operator()(unsigned long long offset, void *buffer, size_t bytes)
 		{
@@ -346,6 +345,8 @@ public:
 							me->names.append(a.FileName, a.FileNameLength);
 							if (record.LinkCount > 0)
 							{
+								if (parentSegmentNumber >= children->size())
+								{ children->resize(parentSegmentNumber + 1); }
 								(*children)[parentSegmentNumber].push_back(Children::value_type::value_type(baseSegment, record.LinkCount));
 							}
 						}
@@ -418,111 +419,73 @@ public:
 				}}
 			}
 		}
+	};
 
-		struct Context
+	class OverlappedBuffer : public OVERLAPPED
+	{
+		OverlappedBuffer(OverlappedBuffer const &)
+		{ throw std::logic_error(""); }
+		OverlappedBuffer &operator =(OverlappedBuffer const &)
+		{ throw std::logic_error(""); }
+	public:
+		OverlappedBuffer(unsigned long long const offset, unsigned long long const virtual_offset, size_t const buffer_size)
+			: OVERLAPPED(), virtual_offset(virtual_offset), buffer(operator new(buffer_size))
 		{
-			static void __stdcall completion_routine(unsigned long error, unsigned long bytes_transferred, OVERLAPPED *overlapped)
+			this->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+			this->Offset = static_cast<unsigned long>(offset);
+			this->OffsetHigh = static_cast<unsigned long>(offset >> (CHAR_BIT * sizeof(this->Offset)));
+		}
+		~OverlappedBuffer()
+		{
+			if (this->hEvent)
 			{
-				{
-					Context *const context = CONTAINING_RECORD(overlapped, Context, overlapped);
-					if (context->virtual_offset / context->callback->cbFileRecord > context->callback->next_segment_number_to_process)
-					{
-						QueueUserAPC(&RequeueCallback::completion_routine_apc, GetCurrentThread(), (ULONG_PTR)new RequeueCallback(error, bytes_transferred, overlapped));
-						return;
-					}
-					context->callback->next_segment_number_to_process =
-						1U + static_cast<SegmentNumber>((context->virtual_offset + bytes_transferred - 1) / context->callback->cbFileRecord);
-				}
-
-				struct ScopedBuffer
-				{
-					void *p;
-					ScopedBuffer(void *p) : p(p) { }
-					~ScopedBuffer() { operator delete(p); }
-				} const buffer((void *)overlapped->hEvent);
-				unsigned long long virtual_offset;
-				Callback *callback;
-				{
-					std::auto_ptr<Context> const context(CONTAINING_RECORD(overlapped, Context, overlapped));
-					virtual_offset = context->virtual_offset;
-					callback = context->callback;
-					overlapped = NULL;
-				}
-				if (error != ERROR_SUCCESS) { winnt::NtStatus::ThrowWin32(error); }
-
-				try
-				{
-					if (!callback->cancelled)
-					{
-						(*callback)(virtual_offset, buffer.p, bytes_transferred);
-					}
-				}
-				catch (CStructured_Exception &ex)
-				{
-					if (ex.GetSENumber() != ERROR_CANCELLED)
-					{
-						throw;
-					}
-					callback->cancelled = true;
-				}
+				CloseHandle(this->hEvent);
+				this->hEvent = NULL;
 			}
-
-			struct RequeueCallback
+			if (this->buffer)
 			{
-				unsigned long error;
-				unsigned long bytes_transferred;
-				OVERLAPPED *overlapped;
-
-				RequeueCallback(unsigned long error = 0, unsigned long bytes_transferred = 0, OVERLAPPED *overlapped = NULL)
-					: error(error), bytes_transferred(bytes_transferred), overlapped(overlapped) { }
-
-				static void __stdcall completion_routine_apc(ULONG_PTR dwParam)
-				{
-					RequeueCallback r;
-					{
-						RequeueCallback *const p = (RequeueCallback *)dwParam;
-						r = *p;
-						delete p;
-						dwParam = 0;
-					}
-					completion_routine(r.error, r.bytes_transferred, r.overlapped);
-				}
-			};
-
-			Callback *callback;
-			size_t *pending;
-			unsigned long long virtual_offset;
-			OVERLAPPED overlapped;
-			std::vector<HANDLE> handles;
-
-			Context(Callback &callback, size_t *pending, std::vector<DISK_EXTENT> const *disk_extents, winnt::NtObject &is_allowed_event, unsigned long long virtual_offset)
-				: callback(&callback), pending(pending), virtual_offset(virtual_offset), overlapped()
-			{
-				++*this->pending;
-
-				for (size_t i = 0; i < disk_extents->size(); ++i)
-				{
-					handles.push_back(physicalDriveLocks[(*disk_extents)[i].DiskNumber].get());
-				}
-				handles.push_back(is_allowed_event.get());
-
-				while (WaitForMultipleObjectsEx(static_cast<unsigned long>(handles.size()), reinterpret_cast<HANDLE *>(&*handles.begin()), TRUE, INFINITE, TRUE) == WAIT_IO_COMPLETION)
-				{
-				}
-				handles.pop_back();
+				operator delete(this->buffer);
+				this->buffer = NULL;
 			}
+		}
+		void *buffer;
+		unsigned long long virtual_offset;
+		unsigned long long offset() const
+		{
+			return this->Offset + (static_cast<unsigned long long>(this->OffsetHigh) << (sizeof(this->Offset) * CHAR_BIT));
+		}
+	};
 
-			~Context()
+	struct IOCP
+	{
+		bool volatile done;
+		winnt::NtObject thread_handle;
+		winnt::NtObject iocp;
+		static void nop(ULONG_PTR) { }
+		static unsigned __stdcall invoke(void *me)
+		{ return (*static_cast<IOCP *>(me))(); }
+		IOCP(winnt::NtFile &volume) :
+			done(false),
+			thread_handle((HANDLE)_beginthreadex(NULL, 0, &invoke, this, CREATE_SUSPENDED, NULL)),
+			iocp(CreateIoCompletionPort(volume.get(), NULL, (ULONG_PTR)volume.get(), 1))
+		{ ResumeThread(this->thread_handle.get()); }
+		~IOCP()
+		{
+			this->done = true;
+			this->thread_handle.NtWaitForSingleObject();
+		}
+		unsigned int operator()()
+		{
+			DWORD cb;
+			ULONG_PTR ck;
+			OVERLAPPED *lpOverlapped = NULL;
+			while (!this->done && (GetQueuedCompletionStatus(this->iocp.get(), &cb, &ck, &lpOverlapped, 25) || !lpOverlapped))
 			{
-				while (!handles.empty())
-				{
-					if (!ReleaseMutex(handles.back()))
-					{ RaiseException(GetLastError(), 0, 0, NULL); }
-					handles.pop_back();
-				}
-				--*this->pending;
+				OverlappedBuffer *const overlapped = static_cast<OverlappedBuffer *>(lpOverlapped);
+				SetEvent(overlapped->hEvent);
 			}
-		};
+			return 0;
+		}
 	};
 
 	NtfsIndexImpl(winnt::NtFile &volume, std::basic_string<TCHAR> const &win32Path, winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground)
@@ -530,7 +493,8 @@ public:
 	{
 		unsigned long const clusterSize = volume.GetClusterSize();
 
-		size_t total_mft_size = 0, file_record_size;
+		unsigned long long total_mft_size = 0;
+		size_t file_record_size;
 		std::vector<std::pair<unsigned long long, unsigned long long> > mft_extents;
 		{
 			winnt::NtFile mft = winnt::NtFile::NtOpenFile(winnt::ObjectAttributes(0x0001000000000000, volume.get()), winnt::Access::QueryAttributes | winnt::Access::Synchronize, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_BY_FILE_ID);
@@ -561,48 +525,53 @@ public:
 			}
 		}
 
-		std::vector<DISK_EXTENT> const disk_extents = volume.IoctlVolumeGetVolumeDiskExtents();
-		ProgressReporter progressReporter(is_allowed_event, pProgress, pBackground, &disk_extents);
+		ProgressReporter progressReporter(is_allowed_event, pProgress, pBackground);
 
-		size_t const nFileRecords = total_mft_size / file_record_size;
+		size_t const nFileRecords = static_cast<size_t>(total_mft_size / file_record_size);
 		this->names.reserve(nFileRecords * 12);
 
 		StandardInfoAttrs standardInfoAttrs;
-		standardInfoAttrs.reserve(nFileRecords);
+		standardInfoAttrs.reserve(nFileRecords * 2);
 
 		FileNameAttrs fileNameAttrs;
 		fileNameAttrs.reserve(nFileRecords * 2);
 
 		DataAttrs dataAttrs;
-		dataAttrs.reserve(nFileRecords);
+		dataAttrs.reserve(nFileRecords * 2);
 
 		FileNameAttrsDerived fileNameAttrsDerived;
-		fileNameAttrsDerived.reserve(nFileRecords);
+		fileNameAttrsDerived.reserve(nFileRecords * 2);
 		DataAttrsDerived dataAttrsDerived;
-		dataAttrsDerived.reserve(nFileRecords);
+		dataAttrsDerived.reserve(nFileRecords * 2);
 
-		Children children(nFileRecords);
+		Children children;
+		children.reserve(nFileRecords * 2);
 		{
 			Callback callback(this, standardInfoAttrs, fileNameAttrs, dataAttrs, fileNameAttrsDerived, dataAttrsDerived, children, clusterSize, file_record_size, nFileRecords, progressReporter);
 			{
-				struct PendingAsyncIO
+				//IOCP iocp(volume);
+
+
+				typedef boost::ptr_circular_buffer<OverlappedBuffer> PendingBuffers;
+				PendingBuffers pending(2);
+				class FinishPendingReads
 				{
-					winnt::NtFile *volume;
-					size_t count;
-					PendingAsyncIO(winnt::NtFile &volume) : volume(&volume), count(0) { }
-					~PendingAsyncIO()
+					winnt::NtFile /* duplicate handle! */ file;
+					PendingBuffers *p;
+				public:
+					FinishPendingReads(winnt::NtFile &file, PendingBuffers &p)
+						: file(file), p(&p) { }
+					~FinishPendingReads()
 					{
-						while (volume && count > 0)
+						while (!p->empty())
 						{
-							unsigned long e = SleepEx(INFINITE, TRUE);
-							if (e == WAIT_FAILED)
-							{
-								winnt::NtStatus::ThrowWin32(GetLastError());
-							}
+							DWORD nb;
+							GetOverlappedResult(file.get(), p->pop_front().get(), &nb, TRUE);
 						}
 					}
-				} pending(volume);
+				} const finish_pending_reads(volume, pending);
 				size_t chunk_size = 1 << 22;
+
 				unsigned long long virtual_offset = 0;
 				for (size_t i = 0; i < mft_extents.size(); i++)
 				{
@@ -612,43 +581,45 @@ public:
 						bool repeat_with_smaller_chunk;
 						do
 						{
-							while (pending.count > 0 && WaitForSingleObjectEx(volume.get(), INFINITE, TRUE) == WAIT_IO_COMPLETION)
-							{ }
+							while (pending.full())
+							{
+								PendingBuffers::auto_type const next(pending.pop_back());
+								DWORD br;
+								if (!GetOverlappedResult(volume.get(), next.get(), &br, TRUE))
+								{ RaiseException(GetLastError(), 0, 0, NULL); }
+								callback(next->virtual_offset, next->buffer, br);
+							}
 							unsigned long long const offset = mft_extents[i].first + j;
 							cb = static_cast<unsigned long>(min(chunk_size >> (pBackground && *pBackground ? 4 : 0), mft_extents[i].second - j));
 
 							if (!volume)
 							{
-								while (pending.count > 0 && WaitForSingleObjectEx(volume.get(), INFINITE, TRUE) == WAIT_IO_COMPLETION) { }
-								callback.cancelled = true;
-								throw CStructured_Exception(ERROR_CANCELLED, NULL);
+								// TODO: Wait for pending I/O
+								RaiseException(ERROR_CANCELLED, 0, 0, NULL);
 							}
-							void *const buf = operator new(cb);
-							std::auto_ptr<Callback::Context> context(new Callback::Context(callback, &pending.count, &disk_extents, is_allowed_event, virtual_offset));
-							context->overlapped.Offset = static_cast<unsigned long>(offset);
-							context->overlapped.OffsetHigh = static_cast<unsigned long>(offset >> (CHAR_BIT * sizeof(context->overlapped.Offset)));
-							context->overlapped.hEvent = (HANDLE)buf;
 
+							WaitForSingleObject(is_allowed_event.get(), INFINITE);
 							ScopedIoPriority const priority(volume, pBackground && *pBackground);
-							bool const success = !!ReadFileEx(volume.get(), buf, cb, &context->overlapped, &Callback::Context::completion_routine);
-							repeat_with_smaller_chunk = (GetLastError() == ERROR_NOT_ENOUGH_MEMORY || GetLastError() == ERROR_NOT_ENOUGH_QUOTA) && cb > 64 * 1024;
-							if (success && (GetLastError() == ERROR_SUCCESS || GetLastError() == ERROR_IO_PENDING) /* MUST check this! */)
-							{
-								context.release();
-								virtual_offset += cb;
-							}
-							else
-							{
-								operator delete(buf);
-								winnt::NtStatus::ThrowWin32(GetLastError());
-							}
+							pending.push_front(new OverlappedBuffer(offset, virtual_offset, cb));
+							OverlappedBuffer *const overlapped = &pending.front();
+							bool const success = !!ReadFile(volume.get(), overlapped->buffer, cb, NULL, overlapped);
+							repeat_with_smaller_chunk = !success && (GetLastError() == ERROR_NOT_ENOUGH_MEMORY || GetLastError() == ERROR_NOT_ENOUGH_QUOTA) && cb > 64 * 1024;
+							if (!repeat_with_smaller_chunk && !success && GetLastError() != ERROR_SUCCESS && GetLastError() != ERROR_IO_PENDING /* MUST check this! */)
+							{ winnt::NtStatus::ThrowWin32(GetLastError()); }
+							virtual_offset += cb;
 							if (repeat_with_smaller_chunk) { chunk_size /= 2; }
 						} while (repeat_with_smaller_chunk);
 					}
 				}
+				while (!pending.empty())
+				{
+					PendingBuffers::auto_type const next(pending.pop_back());
+					DWORD br;
+					if (!GetOverlappedResult(volume.get(), next.get(), &br, TRUE))
+					{ throw CStructured_Exception(GetLastError(), NULL); }
+					callback(next->virtual_offset, next->buffer, br);
+				}
 			}
-			if (callback.cancelled)
-			{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
 		}
 
 		struct DirectorySizeCalculator
@@ -669,6 +640,8 @@ public:
 				progressReporter(nFileRecords * 2 + seenTotal, nFileRecords * 4);
 
 				std::pair<long long, long long> result;
+				if (segmentNumber >= pChildren->size())
+				{ pChildren->resize(segmentNumber + 1); }
 				for (boost::iterator_range<Children::value_type::const_iterator> r = (*pChildren)[segmentNumber]; !r.empty(); r.pop_front())
 				{
 					Children::value_type::value_type const &p = r.front();
@@ -759,7 +732,6 @@ public:
 };
 
 NtfsIndexImpl::PhysicalDriveLocks NtfsIndexImpl::physicalDriveLocks;
-
 NtfsIndex *NtfsIndex::create(winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, bool volatile *pBackground)
 {
 	return new NtfsIndexImpl(volume, win32Path, is_allowed_event, pProgress, pBackground);

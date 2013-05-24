@@ -468,7 +468,7 @@ namespace winnt
 		NtObject(This const &other) : _handle(NtDuplicateHandle(other.get())) { }
 		~NtObject()
 		{
-			if (this->get() && this->get() != reinterpret_cast<HANDLE>(-1))
+			if (this->get() && this->get() != reinterpret_cast<HANDLE>(-1) && this->get() != reinterpret_cast<HANDLE>(-2))
 			{ NtStatus(NtDllProc(NtClose)(this->get())).CheckAndThrow(); }
 		}
 		This &operator =(This const &other) { if (this != &other) { This(other).swap(*this); } return *this; }
@@ -574,6 +574,11 @@ namespace winnt
 					else { exitAnyway = true; }
 				}
 				status = NtDllProc(NtDeviceIoControlFile)(this->get(), NULL, NULL, NULL, &iosb, controlCode, const_cast<TInput *>(&input), cbInput == ULONG_MAX ? sizeof(input) : cbInput, pOutputBuffer, int_cast<ULONG>(cbOutputBuffer));
+				if (status == STATUS_PENDING)
+				{
+					status = NtDllProc(NtWaitForSingleObject)(this->get(), FALSE, NULL);
+					status = iosb.Status;
+				}
 				if (exitAnyway) { break; }
 				looped = true;
 			} while (status.NtStatusIsBadBufferSize());
@@ -720,7 +725,6 @@ namespace winnt
 
 		unsigned long NtReadFile(void *buffer, unsigned long length, long long offset = -2, unsigned long *pKey = NULL) const
 		{
-#if 1
 			IO_STATUS_BLOCK iosb;
 			LARGE_INTEGER offset2;
 			offset2.QuadPart = offset;
@@ -735,18 +739,6 @@ namespace winnt
 			}
 			status.CheckAndThrow();
 			return int_cast<ULONG>(iosb.Information);
-#else
-			OVERLAPPED overlapped = { };
-			overlapped.Offset = static_cast<unsigned long>(offset);
-			overlapped.OffsetHigh = static_cast<unsigned long>(offset >> (sizeof(overlapped.Offset) * 8));
-			unsigned long read;
-			if (!ReadFile(this->_handle, buffer, length, &read, &overlapped) &&
-				(GetLastError() != ERROR_IO_PENDING || !GetOverlappedResult(this->_handle, &overlapped, &read, TRUE)))
-			{
-				NtStatus::ThrowWin32(GetLastError());
-			}
-			return read;
-#endif
 		}
 
 		NtStatus NtDeviceIoControlFileConstUnsafe(ULONG controlCode, void const *pInput, ULONG cbInput, void *pOutput, ULONG cbOutput) const

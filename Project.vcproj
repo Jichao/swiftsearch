@@ -247,6 +247,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
+				AdditionalOptions="/Force:Multiple"
 				AdditionalDependencies="&quot;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib&quot;"
 				AdditionalLibraryDirectories=""
 				UACExecutionLevel="2"
