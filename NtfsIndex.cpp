@@ -507,6 +507,107 @@ public:
 		}
 	};
 
+	struct FinishPendingReads
+	{
+		typedef boost::ptr_circular_buffer<OverlappedBuffer> PendingBuffers;
+		FinishPendingReads(winnt::NtFile &file, PendingBuffers &p)
+			: file(file), p(&p) { }
+		~FinishPendingReads()
+		{
+			while (!p->empty())
+			{
+				DWORD nb;
+				GetOverlappedResult(file.get(), p->pop_front().get(), &nb, TRUE);
+			}
+		}
+	private:
+		winnt::NtFile /* duplicate handle! */ file;
+		PendingBuffers *p;
+	};
+
+
+	struct DirectorySizeCalculator
+	{
+		ProgressReporter *pProgressReporter;
+		FileNameAttrs *pFileNameAttrs;
+		FileNameAttrsDerived *pFileNameAttrsDerived;
+		DataAttrs *pDataAttrs;
+		DataAttrsDerived *pDataAttrsDerived;
+		Children *pChildren;
+		std::vector<unsigned short> seenCounts;
+		size_t seenTotal, nFileRecords;
+
+		DirectorySizeCalculator(ProgressReporter &progressReporter, Children &children, FileNameAttrs &fileNameAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrs &dataAttrs, DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords)
+			: pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs), pDataAttrsDerived(&dataAttrsDerived), pFileNameAttrs(&fileNameAttrs), pFileNameAttrsDerived(&fileNameAttrsDerived), seenTotal(0), nFileRecords(nFileRecords), seenCounts(nFileRecords) { }
+
+		std::pair<long long, long long> operator()(SegmentNumber const segmentNumber)
+		{
+			ProgressReporter &progressReporter = *pProgressReporter;
+			progressReporter(nFileRecords * 2 + seenTotal, nFileRecords * 4);
+
+			std::pair<long long, long long> result;
+			if (segmentNumber >= pChildren->size())
+			{ pChildren->resize(segmentNumber + 1); }
+			for (boost::iterator_range<Children::value_type::const_iterator> r = (*pChildren)[segmentNumber]; !r.empty(); r.pop_front())
+			{
+				Children::value_type::value_type const &child = r.front();
+				if (segmentNumber == child) { continue; }
+				unsigned short const links = static_cast<unsigned short>(
+					(child < pFileNameAttrsDerived->size() ? (*pFileNameAttrsDerived)[child].size() : 0) +
+					boost::size(
+						std::equal_range(
+							pFileNameAttrs->begin(),
+							pFileNameAttrs->end(),
+							FileNameAttrs::value_type(child, FileNameAttribute()),
+							first_less()
+						)
+					)
+				);
+				std::pair<long long, long long> const sizes = (*this)(child);
+				unsigned short &seenCount = seenCounts[child];
+				result.first += sizes.first * (seenCount + 1) / links - sizes.first * seenCount / links;
+				result.second += sizes.second * (seenCount + 1) / links - sizes.second * seenCount / links;
+				seenCount++;
+			}
+			std::pair<long long, long long> const childrenSizes = result;
+			for (boost::iterator_range<DataAttrs::iterator> r =
+				std::equal_range(
+					pDataAttrs->begin(),
+					pDataAttrs->end(),
+					DataAttrs::value_type(segmentNumber, DataAttrs::value_type::second_type()), first_less());
+				!r.empty();
+				r.pop_front())
+			{
+				DataAttrs::value_type::second_type &p = r.front().second;
+				if (!p.first.second) { continue; }
+				result.first += p.second.second.first;
+				result.second += p.second.second.second;
+				if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
+				{
+					p.second.second.first += childrenSizes.first;
+					p.second.second.second += childrenSizes.second;
+				}
+			}
+			if (segmentNumber < pDataAttrsDerived->size())
+			{
+				for (boost::iterator_range<DataAttrsDerived::value_type::iterator> r = (*pDataAttrsDerived)[segmentNumber]; !r.empty(); r.pop_front())
+				{
+					DataAttrsDerived::value_type::value_type &p = r.front();
+					if (!p.first.second) { continue; }
+					result.first += p.second.second.first;
+					result.second += p.second.second.second;
+					if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
+					{
+						p.second.second.first += childrenSizes.first;
+						p.second.second.second += childrenSizes.second;
+					}
+				}
+			}
+			++seenTotal;
+			return result;
+		}
+	};
+
 	NtfsIndexImpl(winnt::NtFile &volume, std::basic_string<TCHAR> const &win32Path, winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground)
 		: _win32Path(win32Path)
 	{
@@ -571,24 +672,8 @@ public:
 				//IOCP iocp(volume);
 
 
-				typedef boost::ptr_circular_buffer<OverlappedBuffer> PendingBuffers;
-				PendingBuffers pending(2);
-				class FinishPendingReads
-				{
-					winnt::NtFile /* duplicate handle! */ file;
-					PendingBuffers *p;
-				public:
-					FinishPendingReads(winnt::NtFile &file, PendingBuffers &p)
-						: file(file), p(&p) { }
-					~FinishPendingReads()
-					{
-						while (!p->empty())
-						{
-							DWORD nb;
-							GetOverlappedResult(file.get(), p->pop_front().get(), &nb, TRUE);
-						}
-					}
-				} const finish_pending_reads(volume, pending);
+				FinishPendingReads::PendingBuffers pending(2);
+				FinishPendingReads const finish_pending_reads(volume, pending);
 				size_t chunk_size = 1 << 22;
 
 				clock_t const start = clock();
@@ -604,7 +689,7 @@ public:
 						{
 							while (pending.full())
 							{
-								PendingBuffers::auto_type const next(pending.pop_back());
+								FinishPendingReads::PendingBuffers::auto_type const next(pending.pop_back());
 								DWORD br;
 								if (!GetOverlappedResult(volume.get(), next.get(), &br, TRUE))
 								{ RaiseException(GetLastError(), 0, 0, NULL); }
@@ -634,7 +719,7 @@ public:
 				}
 				while (!pending.empty())
 				{
-					PendingBuffers::auto_type const next(pending.pop_back());
+					FinishPendingReads::PendingBuffers::auto_type const next(pending.pop_back());
 					DWORD br;
 					if (!GetOverlappedResult(volume.get(), next.get(), &br, TRUE))
 					{ throw CStructured_Exception(GetLastError(), NULL); }
@@ -643,88 +728,6 @@ public:
 				// if (unsigned int const m = 1000 * (clock() - start) / CLOCKS_PER_SEC) { _ftprintf(stderr, _T("%u MiB/s for %u ms\n"), total_mft_size * 1000 / m / (1024 * 1024), m); }
 			}
 		}
-
-		struct DirectorySizeCalculator
-		{
-			ProgressReporter *pProgressReporter;
-			FileNameAttrs *pFileNameAttrs;
-			FileNameAttrsDerived *pFileNameAttrsDerived;
-			DataAttrs *pDataAttrs;
-			DataAttrsDerived *pDataAttrsDerived;
-			Children *pChildren;
-			std::vector<unsigned short> seenCounts;
-			size_t seenTotal, nFileRecords;
-
-			DirectorySizeCalculator(ProgressReporter &progressReporter, Children &children, FileNameAttrs &fileNameAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrs &dataAttrs, DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords)
-				: pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs), pDataAttrsDerived(&dataAttrsDerived), pFileNameAttrs(&fileNameAttrs), pFileNameAttrsDerived(&fileNameAttrsDerived), seenTotal(0), nFileRecords(nFileRecords), seenCounts(nFileRecords) { }
-
-			std::pair<long long, long long> operator()(SegmentNumber const segmentNumber)
-			{
-				ProgressReporter &progressReporter = *pProgressReporter;
-				progressReporter(nFileRecords * 2 + seenTotal, nFileRecords * 4);
-
-				std::pair<long long, long long> result;
-				if (segmentNumber >= pChildren->size())
-				{ pChildren->resize(segmentNumber + 1); }
-				for (boost::iterator_range<Children::value_type::const_iterator> r = (*pChildren)[segmentNumber]; !r.empty(); r.pop_front())
-				{
-					Children::value_type::value_type const &child = r.front();
-					if (segmentNumber == child) { continue; }
-					unsigned short const links = static_cast<unsigned short>(
-						(child < pFileNameAttrsDerived->size() ? (*pFileNameAttrsDerived)[child].size() : 0) +
-						boost::size(
-							std::equal_range(
-								pFileNameAttrs->begin(),
-								pFileNameAttrs->end(),
-								FileNameAttrs::value_type(child, FileNameAttribute()),
-								first_less()
-							)
-						)
-					);
-					std::pair<long long, long long> const sizes = (*this)(child);
-					unsigned short &seenCount = seenCounts[child];
-					result.first += sizes.first * (seenCount + 1) / links - sizes.first * seenCount / links;
-					result.second += sizes.second * (seenCount + 1) / links - sizes.second * seenCount / links;
-					seenCount++;
-				}
-				std::pair<long long, long long> const childrenSizes = result;
-				for (boost::iterator_range<DataAttrs::iterator> r =
-					std::equal_range(
-						pDataAttrs->begin(),
-						pDataAttrs->end(),
-						DataAttrs::value_type(segmentNumber, DataAttrs::value_type::second_type()), first_less());
-					!r.empty();
-					r.pop_front())
-				{
-					DataAttrs::value_type::second_type &p = r.front().second;
-					if (!p.first.second) { continue; }
-					result.first += p.second.second.first;
-					result.second += p.second.second.second;
-					if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
-					{
-						p.second.second.first += childrenSizes.first;
-						p.second.second.second += childrenSizes.second;
-					}
-				}
-				if (segmentNumber < pDataAttrsDerived->size())
-				{
-					for (boost::iterator_range<DataAttrsDerived::value_type::iterator> r = (*pDataAttrsDerived)[segmentNumber]; !r.empty(); r.pop_front())
-					{
-						DataAttrsDerived::value_type::value_type &p = r.front();
-						if (!p.first.second) { continue; }
-						result.first += p.second.second.first;
-						result.second += p.second.second.second;
-						if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
-						{
-							p.second.second.first += childrenSizes.first;
-							p.second.second.second += childrenSizes.second;
-						}
-					}
-				}
-				++seenTotal;
-				return result;
-			}
-		};
 		DirectorySizeCalculator(progressReporter, children, fileNameAttrs, fileNameAttrsDerived, dataAttrs, dataAttrsDerived, nFileRecords)(0x000000000005);
 
 		FileNameAttrs::const_iterator const itFileNameAttrsEnd = fileNameAttrs.end();

@@ -180,7 +180,7 @@ int run(HINSTANCE hInstance, int nShowCmd)
 int _tmain(int argc, LPTSTR argv[])
 {
 	int r;
-	if (1 || argc > 1)
+	if (argc > 1)
 	{
 		_setmode(_fileno(stdout), 0x40000 /*_O_U8TEXT*/);
 		r = 0;
