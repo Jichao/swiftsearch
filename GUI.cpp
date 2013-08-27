@@ -1135,94 +1135,112 @@ private:
 		return SHOpenFolderAndSelectItems(pItemIdList, 0, NULL, 0);
 	}
 
-	LRESULT OnFilesRightClick(LPNMHDR pnmh)
+	LRESULT OnContextMenu(UINT uMsg, WPARAM wParam, LPARAM lParam)
 	{
-		int index;
-		WTL::CWaitCursor wait;
-		Wow64Disable wow64Disabled;
-		LPNMITEMACTIVATE pnmItem = (LPNMITEMACTIVATE)pnmh;
-		index = this->lvFiles.HitTest(pnmItem->ptAction, 0);
-		if (index >= 0)
+		(void)uMsg;
+		LRESULT result = 0;
+		POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if ((HWND)wParam == this->lvFiles)
 		{
-			DataRow const &row = this->rows[index];
-			std::basic_string<TCHAR> path;
-			adddirsep(GetPath(*row.pIndex, row.parent(), path));
-			boost::iterator_range<TCHAR const *> const fileName = row.file_name();
-			if (fileName != boost::as_literal(_T("."))) { path.append(fileName.begin(), fileName.end()); }
+			int index;
+			if (point.x == -1 && point.y == -1)
+			{
+				index = this->lvFiles.GetSelectedIndex();
+				RECT bounds = { };
+				this->lvFiles.GetItemRect(index, &bounds, LVIR_SELECTBOUNDS);
+				this->lvFiles.ClientToScreen(&bounds);
+				point.x = bounds.left;
+				point.y = bounds.top;
+			}
+			else
+			{
+				POINT clientPoint = point;
+				this->lvFiles.ScreenToClient(&clientPoint);
+				index = this->lvFiles.HitTest(clientPoint, 0);
+			}
+			this->RightClick(index, point);
+		}
+		return result;
+	}
 
-			WTL::CMenu menu;
-			menu.CreatePopupMenu();
-			ATL::CComPtr<IContextMenu> contextMenu;
+	void RightClick(int index, POINT const &point)
+	{
+		if (index < 0) { return; }
+		std::basic_string<TCHAR> path;
+		DataRow const &row = this->rows[index];
+		adddirsep(GetPath(*row.pIndex, row.parent(), path));
+		boost::iterator_range<TCHAR const *> const fileName = row.file_name();
+		if (fileName != boost::as_literal(_T("."))) { path.append(fileName.begin(), fileName.end()); }
 
-			UINT const minID = 1000;
-			CShellItemIDList pItemIdList;
-			SFGAOF sfgao;
-			HRESULT hr = SHParseDisplayName(path.c_str(), NULL, &pItemIdList.m_pidl, 0, &sfgao);
-			if (hr == S_OK)
-			{
-				CoInit const coInit;
-				ATL::CComPtr<IShellFolder> folder;
-				LPCITEMIDLIST lastItemIdList;
-				if (SHBindToParent(pItemIdList, IID_IShellFolder, &reinterpret_cast<void *&>(folder), &lastItemIdList) == S_OK)
-				{
-					if (folder->GetUIObjectOf(*this, 1, &lastItemIdList, IID_IContextMenu, NULL, &reinterpret_cast<void *&>(contextMenu.p)) == S_OK)
-					{
-						hr = contextMenu->QueryContextMenu(menu, 0, minID, UINT_MAX, 0x80 /*CMF_ITEMMENU*/);
-					}
-				}
-			}
+		WTL::CMenu menu;
+		menu.CreatePopupMenu();
+		ATL::CComPtr<IContextMenu> contextMenu;
 
-			if (contextMenu)
+		UINT const minID = 1000;
+		CShellItemIDList pItemIdList;
+		SFGAOF sfgao;
+		HRESULT hr = SHParseDisplayName(path.c_str(), NULL, &pItemIdList.m_pidl, 0, &sfgao);
+		if (hr == S_OK)
+		{
+			CoInit const coInit;
+			ATL::CComPtr<IShellFolder> folder;
+			LPCITEMIDLIST lastItemIdList;
+			if (SHBindToParent(pItemIdList, IID_IShellFolder, &reinterpret_cast<void *&>(folder), &lastItemIdList) == S_OK)
 			{
-				MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
-				menu.InsertMenuItem(0, TRUE, &mii);
-			}
-			{
-				std::basic_stringstream<TCHAR> ssName;
-				ssName.imbue(std::locale(""));
-				ssName << _T("File #") << static_cast<unsigned long>(row.record().first);
-				std::basic_string<TCHAR> name = ssName.str();
-				MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
-				menu.InsertMenuItem(0, TRUE, &mii);
-			}
-			UINT const openContainingFolderId = minID - 1;
-			if (contextMenu)
-			{
-				MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
-				menu.InsertMenuItem(0, TRUE, &mii);
-				menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
-			}
-			WTL::CPoint cursorPos;
-			GetCursorPos(&cursorPos);
-			UINT id = menu.TrackPopupMenu(
-				TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
-				(GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN | TPM_HORNEGANIMATION : TPM_LEFTALIGN | TPM_HORPOSANIMATION),
-				cursorPos.x, cursorPos.y, *this);
-			if (!id)
-			{
-				// User cancelled
-			}
-			else if (id == openContainingFolderId)
-			{
-				if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, pItemIdList.m_pidl, WT_EXECUTEINUITHREAD))
+				if (folder->GetUIObjectOf(*this, 1, &lastItemIdList, IID_IContextMenu, NULL, &reinterpret_cast<void *&>(contextMenu.p)) == S_OK)
 				{
-					pItemIdList.Detach();
-				}
-			}
-			else if (id >= minID)
-			{
-				CMINVOKECOMMANDINFO cmd = { sizeof(cmd), CMIC_MASK_ASYNCOK, *this, reinterpret_cast<LPCSTR>(id - minID), NULL, NULL, SW_SHOW };
-				hr = contextMenu ? contextMenu->InvokeCommand(&cmd) : S_FALSE;
-				if (hr == S_OK)
-				{
-				}
-				else
-				{
-					this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR);
+					hr = contextMenu->QueryContextMenu(menu, 0, minID, UINT_MAX, 0x80 /*CMF_ITEMMENU*/);
 				}
 			}
 		}
-		return 0;
+
+		if (contextMenu)
+		{
+			MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
+			menu.InsertMenuItem(0, TRUE, &mii);
+		}
+		{
+			std::basic_stringstream<TCHAR> ssName;
+			ssName.imbue(std::locale(""));
+			ssName << _T("File #") << static_cast<unsigned long>(row.record().first);
+			std::basic_string<TCHAR> name = ssName.str();
+			MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
+			menu.InsertMenuItem(0, TRUE, &mii);
+		}
+		UINT const openContainingFolderId = minID - 1;
+		if (pItemIdList.m_pidl)
+		{
+			MENUITEMINFO mii = { sizeof(mii), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
+			menu.InsertMenuItem(0, TRUE, &mii);
+			menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
+		}
+		UINT id = menu.TrackPopupMenu(
+			TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
+			(GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN | TPM_HORNEGANIMATION : TPM_LEFTALIGN | TPM_HORPOSANIMATION),
+			point.x, point.y, *this);
+		if (!id)
+		{
+			// User cancelled
+		}
+		else if (id == openContainingFolderId)
+		{
+			if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, pItemIdList.m_pidl, WT_EXECUTEINUITHREAD))
+			{
+				pItemIdList.Detach();
+			}
+		}
+		else if (id >= minID)
+		{
+			CMINVOKECOMMANDINFO cmd = { sizeof(cmd), CMIC_MASK_ASYNCOK, *this, reinterpret_cast<LPCSTR>(id - minID), NULL, NULL, SW_SHOW };
+			hr = contextMenu ? contextMenu->InvokeCommand(&cmd) : S_FALSE;
+			if (hr == S_OK)
+			{
+			}
+			else
+			{
+				this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR);
+			}
+		}
 	}
 
 	LRESULT OnFilesDoubleClick(LPNMHDR pnmh)
@@ -1234,9 +1252,11 @@ private:
 		index = this->lvFiles.HitTest(pnmItem->ptAction, 0);
 		if (index >= 0)
 		{
-			std::basic_string<TCHAR> path = GetSubItemText(this->lvFiles, index, COLUMN_INDEX_PATH);
-			path += GetSubItemText(this->lvFiles, index, COLUMN_INDEX_NAME);
-			path.erase(std::find(basename(path.begin(), path.end()), path.end(), _T(':')), path.end());
+			std::basic_string<TCHAR> path;
+			DataRow const &row = this->rows[index];
+			adddirsep(GetPath(*row.pIndex, row.parent(), path));
+			boost::iterator_range<TCHAR const *> const fileName = row.file_name();
+			if (fileName != boost::as_literal(_T("."))) { path.append(fileName.begin(), fileName.end()); }
 			CShellItemIDList pItemIdList;
 			SFGAOF sfgao;
 			HRESULT hr = SHParseDisplayName(path.c_str(), NULL, &pItemIdList.m_pidl, 0, &sfgao);
@@ -1929,10 +1949,12 @@ private:
 							tchar_ci_traits const traits;
 							Matcher &matcher;
 							std::vector<DataRow> &rows;
+							bool nondata_streams;
+							bool deleted_files;
 							bool volatile stop;
 							long volatile &nRows;
-							MatcherThread(boost::shared_ptr<NtfsIndex const> index, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows)
-								: h(NULL), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows)
+							MatcherThread(boost::shared_ptr<NtfsIndex const> index, CProgressDialog &progressDlg, long volatile &i, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows, bool nondata_streams, bool deleted_files)
+								: h(NULL), index(index), dlg(progressDlg), i(i), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows), nondata_streams(nondata_streams), deleted_files(deleted_files)
 							{ }
 							~MatcherThread()
 							{
@@ -1968,20 +1990,25 @@ private:
 										DataRow const row(index, i);
 										boost::iterator_range<TCHAR const *> const
 											fileName = row.file_name(), streamName = row.stream_name();
-										bool match;
-										if (isPath)
+										bool match =
+											(deleted_files || (row.attributes() & 0x40000000) == 0) &&
+											(nondata_streams || std::count(streamName.begin(), streamName.end(), _T(':')) <= 0);
+										if (match)
 										{
-											tempPath.erase(tempPath.begin(), tempPath.end());
-											adddirsep(GetPath(*index, row.parent(), tempPath));
-											tempPath.append(fileName.begin(), fileName.end());
-											if (!streamName.empty())
+											if (isPath)
 											{
-												tempPath.append(1, _T(':'));
-												tempPath.append(streamName.begin(), streamName.end());
+												tempPath.erase(tempPath.begin(), tempPath.end());
+												adddirsep(GetPath(*index, row.parent(), tempPath));
+												tempPath.append(fileName.begin(), fileName.end());
+												if (!streamName.empty())
+												{
+													tempPath.append(1, _T(':'));
+													tempPath.append(streamName.begin(), streamName.end());
+												}
+												match &= matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
 											}
-											match = matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
+											else { match &= matcher(fileName, streamName); }
 										}
-										else { match = matcher(fileName, streamName); }
 										if (match) { rows[static_cast<size_t>(InterlockedIncrement(&nRows)) - 1] = row; }
 									}
 									return 0;
@@ -1996,9 +2023,10 @@ private:
 						GetSystemInfo(&si);
 						boost::ptr_vector<MatcherThread> threads;
 						using std::max;
+						bool const nondata_streams = GetKeyState(VK_SHIFT) < 0, deleted_files = GetKeyState(VK_CONTROL) < 0;
 						for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
 						{
-							std::auto_ptr<MatcherThread> p(new MatcherThread(index, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows));
+							std::auto_ptr<MatcherThread> p(new MatcherThread(index, dlg, i, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows, nondata_streams, deleted_files));
 							unsigned int tid;
 							p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), 0, &tid);
 							if (p->h) { threads.push_back(p); }
@@ -2160,6 +2188,7 @@ private:
 		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
 		MESSAGE_HANDLER_EX(WM_TASKBARCREATED, OnTaskbarCreated)
+		MESSAGE_HANDLER_EX(WM_CONTEXTMENU, OnContextMenu)
 		COMMAND_ID_HANDLER_EX(ID_ACCELERATOR40006, OnRefresh)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)
@@ -2174,7 +2203,6 @@ private:
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_COLUMNCLICK, OnFilesListColumnClick)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_CUSTOMDRAW, OnFilesListCustomDraw)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_DBLCLK, OnFilesDoubleClick)
-		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_RCLICK, OnFilesRightClick)
 		NOTIFY_HANDLER_EX(IDC_EDITFILENAME, CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN, OnFileNameArrowKey)
 	END_MSG_MAP()
 

@@ -135,7 +135,10 @@ public:
 				CombinedRecords::value_type(segmentNumber, CombinedRecord::second_type()), first_less());
 		for (CombinedRecords::const_iterator i = equal_range.begin(); i != equal_range.end(); ++i)
 		{
-			return this->get_name_by_record(*i, s);
+			if (i->second.second.first.second.second == 0)
+			{
+				return this->get_name_by_record(*i, s);
+			}
 		}
 		throw std::domain_error("unable to resolve find name");
 	}
@@ -373,10 +376,7 @@ public:
 							(*children)[parentSegmentNumber].push_back(baseSegment);
 						}
 					}
-					if (	ah->Type == NTFS::AttributeIndexRoot
-						? (static_cast<NTFS::INDEX_ROOT const *>(ah->Resident.GetValue())->Header.Flags & 1) == 0
-						:	ah->Type == NTFS::AttributeData ||
-							ah->Type == NTFS::AttributeIndexAllocation)
+					if (ah->Type != NTFS::AttributeIndexRoot || (static_cast<NTFS::INDEX_ROOT const *>(ah->Resident.GetValue())->Header.Flags & 1) == 0)
 					{
 						size_t const cchNameOld = me->names.size();
 						if (!(ah->NameLength == 0 && ah->Type == NTFS::AttributeData || isI30 && (ah->Type == NTFS::AttributeIndexRoot || ah->Type == NTFS::AttributeIndexAllocation)))
