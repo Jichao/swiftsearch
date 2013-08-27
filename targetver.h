@@ -13,6 +13,7 @@
 #define _ATL_NO_COM 1
 #define _ATL_NO_AUTOMATIC_NAMESPACE 1
 #define _WTL_NO_AUTOMATIC_NAMESPACE 1
+#define _WTL_USE_VSSYM32 1
 #define _HAS_ITERATOR_DEBUGGING 0
 #define BOOST_ALL_NO_LIB 1
 #define BOOST_USE_WINDOWS_H 1  // Otherwise it tries to include <intrin.h> which gets annoying with DDK

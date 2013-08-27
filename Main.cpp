@@ -18,7 +18,7 @@
 #include "NtObjectMini.hpp"
 #include "path.hpp"
 
-ATL::CComModule _Module;
+WTL::CAppModule _Module;
 
 TCHAR const *GetAnyErrorText(unsigned long errorCode, va_list* pArgList)
 {
@@ -103,7 +103,7 @@ int run(HINSTANCE hInstance, int nShowCmd)
 						GetStartupInfo(&si);
 						PROCESS_INFORMATION pi;
 						HANDLE hJob = CreateJobObject(NULL, NULL);
-						JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits = { { { 0 }, { 0 }, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE } };
+						JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits = { { { 0 }, { 0 }, JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE } };
 						if (hJob != NULL
 							&& SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jobLimits, sizeof(jobLimits))
 							&& AssignProcessToJobObject(hJob, GetCurrentProcess()))
@@ -187,9 +187,6 @@ int _tmain(int argc, LPTSTR argv[])
 		std::vector<std::basic_string<TCHAR> > args;
 		args.reserve(argc);
 		std::copy(&argv[1], &argv[argc], std::back_inserter(args));
-		enum
-		{
-		};
 		std::vector<std::basic_string<TCHAR> > paths;
 		std::vector<std::pair<int, long long> > date_filters;
 		for (size_t i = 0; i < args.size(); i++)
@@ -255,7 +252,7 @@ int _tmain(int argc, LPTSTR argv[])
 		for (size_t i = 0; i < paths.size(); i++)
 		{
 			winnt::NtObject is_allowed_event(CreateEvent(NULL, TRUE, TRUE, NULL));
-			unsigned long progress = 0;
+			unsigned long progress = 0, speed = 0;
 			bool background = false;
 			std::basic_string<TCHAR> volume_path = paths[i], name;
 			volume_path.erase(trimdirsep(volume_path.begin(), volume_path.end()), volume_path.end());
@@ -278,20 +275,31 @@ int _tmain(int argc, LPTSTR argv[])
 				r = ex.GetSENumber();
 			}
 
-			// Example: SwiftSearch.exe /M:+20m /A:-10m D:\
+			// Example: SwiftSearch.exe /M:+20m /A:-10m D:
 			if (volume)
 			{
 				HANDLE const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
 				std::basic_string<TCHAR> path;
-				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, paths[i], is_allowed_event, &progress, &background));
+				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, paths[i], is_allowed_event, &progress, &speed, &background));
 				size_t const n = index->size();
 				name.reserve(32 * 1024);
 				path.reserve(32 * 1024);
 				std::basic_string<TCHAR> str, buf1, buf2, buf3;
+				LCID const lcid = GetThreadLocale();
+				LPCTSTR const dateFormat = _T("yyyy/MM/dd"), timeFormat = _T("HH:mm:ss");
+
+				size_t max_size_chars = 16;
+				{
+					TCHAR buf[256];
+					buf[0] = _T('0');
+					_stprintf(buf, _T("%I64llu"), 16ULL << 40);  // 16 TB should be good enough for anybody...
+					max_size_chars = _tcslen(buf);
+				}
+
 				for (size_t i = 0; i < n; i++)
 				{
 					NtfsIndex::CombinedRecord const &record = index->at(i);
-					bool match = true;
+					bool match = (record.second.first.second.second & 0x80000000) == 0;
 					for (size_t j = 0; j < date_filters.size(); j++)
 					{
 						long long d;
@@ -311,9 +319,12 @@ int _tmain(int argc, LPTSTR argv[])
 					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name);
 					GetPath(*index, parent, path);
 					adddirsep(path);
-					path += name;
-					if (name != _T(".") && (record.second.first.second.second & FILE_ATTRIBUTE_DIRECTORY) != 0)
-					{ adddirsep(path); }
+					if (name != _T("."))
+					{
+						path += name;
+						if ((record.second.first.second.second & FILE_ATTRIBUTE_DIRECTORY) != 0)
+						{ adddirsep(path); }
+					}
 					str.resize(1024 + path.size());
 					buf1.resize(1024);
 					buf2.resize(1024);
@@ -322,12 +333,13 @@ int _tmain(int argc, LPTSTR argv[])
 						static_cast<size_t>(
 						_stprintf(
 						&*str.begin(),
-						_T("%I64llu|%I64llu|%s|%s|%s|%.*s"),
-						static_cast<unsigned long long>(record.second.second.second.second.first),
-						static_cast<unsigned long long>(record.second.second.second.second.second),
-						SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size()),
-						SystemTimeToString(record.second.first.first.second, &*buf2.begin(), buf2.size()),
-						SystemTimeToString(record.second.first.second.first, &*buf3.begin(), buf3.size()),
+						_T("%0*I64llu|%0*I64llu|%s|%s|%s|0x%08X|%.*s"),
+						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.first),
+						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.second),
+						SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size(), dateFormat, timeFormat, lcid),
+						SystemTimeToString(record.second.first.first.second, &*buf2.begin(), buf2.size(), dateFormat, timeFormat, lcid),
+						SystemTimeToString(record.second.first.second.first, &*buf3.begin(), buf3.size(), dateFormat, timeFormat, lcid),
+						static_cast<unsigned int>(record.second.first.second.second),
 						static_cast<int>(path.size()), path.c_str())));
 					str.append(1, _T('\n'));
 					unsigned long nw;
@@ -357,7 +369,9 @@ int __stdcall _tWinMain(HINSTANCE const hInstance, HINSTANCE /*hPrevInstance*/, 
 
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
+#if !defined(_CPPLIB_VER) || _CPPLIB_VER < 600
 void __cdecl __report_rangecheckfailure() { abort(); }
+#endif
 
 #if !defined(_NATIVE_WCHAR_T_DEFINED) && (defined(DDK_CTYPE_WCHAR_FIX) && DDK_CTYPE_WCHAR_FIX)
 #include <iostream>

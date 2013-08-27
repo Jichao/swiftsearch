@@ -38,7 +38,7 @@
 #include <atlapp.h>
 #include <atlcrack.h>
 #include <atlmisc.h>
-extern ATL::CComModule _Module;
+extern WTL::CAppModule _Module;
 #include <atlwin.h>
 #include <atlframe.h>
 #include <atlctrls.h>

@@ -14,9 +14,11 @@ class __declspec(novtable) NtfsIndexThread : public virtual ref_counter
 public:
 	virtual ~NtfsIndexThread() { }
 	virtual volatile bool &background() = 0;
+	virtual boost::shared_ptr<NtfsIndex> delete_index() = 0;
 	virtual boost::shared_ptr<NtfsIndex> index() const = 0;
 	virtual std::basic_string<TCHAR> const &drive() const = 0;
 	virtual unsigned long progress() const = 0;
+	virtual unsigned long speed() const = 0;
 	virtual uintptr_t event() const = 0;
 	virtual uintptr_t thread() const = 0;
 	virtual uintptr_t volume() const = 0;  // MUST return the SAME handle!

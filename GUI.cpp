@@ -40,7 +40,7 @@
 #include <atlapp.h>
 #include <atlcrack.h>
 #include <atlmisc.h>
-extern ATL::CComModule _Module;
+extern WTL::CAppModule _Module;
 #include <atlwin.h>
 #include <atlframe.h>
 #include <atlctrls.h>
@@ -453,10 +453,10 @@ public:
 					{
 						std::ios_base::iostate iostate;
 						unsigned int digit1 = 0, digit2 = 0;
-						
+
 						while (it1 != it1EndDigits && (*it1 == numpunct.thousands_sep() || num_get.get(set_char(*ss1, *it1), isbiEnd, *ss1, iostate, digit1) == isbiEnd && digit1 == 0))
 						{ ++it1; }
-						
+
 						while (it2 != it2EndDigits && (*it2 == numpunct.thousands_sep() || num_get.get(set_char(*ss2, *it2), isbiEnd, *ss2, iostate, digit2) == isbiEnd && digit2 == 0))
 						{ ++it2; }
 
@@ -545,18 +545,18 @@ LONGLONG RtlLocalTimeToSystemTime(LONGLONG localTime)
 	return systemTime.QuadPart;
 }
 
-LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer)
+LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer, LPCTSTR dateFormat, LPCTSTR timeFormat, LCID lcid)
 {
 	LONGLONG time = RtlSystemTimeToLocalTime(systemTime);
 	SYSTEMTIME sysTime = {0};
 	if (FileTimeToSystemTime(&reinterpret_cast<FILETIME &>(time), &sysTime))
 	{
-		size_t const cchDate = int_cast<size_t>(GetDateFormat(LOCALE_USER_DEFAULT, 0, &sysTime, NULL, &buffer[0], int_cast<int>(cchBuffer)));
+		size_t const cchDate = int_cast<size_t>(GetDateFormat(lcid, 0, &sysTime, dateFormat, &buffer[0], int_cast<int>(cchBuffer)));
 		if (cchDate > 0)
 		{
 			// cchDate INCLUDES null-terminator
 			buffer[cchDate - 1] = _T(' ');
-			size_t const cchTime = int_cast<size_t>(GetTimeFormat(LOCALE_USER_DEFAULT, 0, &sysTime, NULL, &buffer[cchDate], int_cast<int>(cchBuffer - cchDate)));
+			size_t const cchTime = int_cast<size_t>(GetTimeFormat(lcid, 0, &sysTime, timeFormat, &buffer[cchDate], int_cast<int>(cchBuffer - cchDate)));
 			buffer[cchDate + cchTime - 1] = _T('\0');
 		}
 		else { memset(&buffer[0], 0, sizeof(buffer[0]) * cchBuffer); }
@@ -891,7 +891,7 @@ template<typename F> struct Comparator<F, void> { F f; Comparator(F f) : f(f) { 
 template<typename F> Comparator<F, void> comparator(F f) { return Comparator<F, void>(f); }
 template<typename C, typename F> Comparator<F, C> comparator(F f, C c) { return Comparator<F, C>(f, c); }
 
-class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl<CMainDlg>, public CInvokeImpl<CMainDlg>, public CMainDlgBase
+class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl<CMainDlg>, public CInvokeImpl<CMainDlg>, public CMainDlgBase, private WTL::CMessageFilter
 {
 	enum { IDC_STATUS_BAR = 1100 + 0 };
 	enum { COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_ACCESS_TIME };
@@ -902,6 +902,7 @@ class CMainDlg : public WTL::CDialogResize<CMainDlg>, public CModifiedDialogImpl
 	WTL::CStatusBarCtrl statusbar;
 	WTL::CProgressBarCtrl statusbarProgress;
 	CUpDownNotify<WTL::CEdit> txtFileName;
+	WTL::CAccelerator accel;
 	static UINT const WM_TASKBARCREATED;
 	class CoInit
 	{
@@ -957,6 +958,7 @@ private:
 
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
 	{
+		_Module.GetMessageLoop()->AddMessageFilter(this);
 		this->cmbDrive.Attach(this->GetDlgItem(IDC_COMBODRIVE));
 		if (false)
 		{
@@ -978,7 +980,8 @@ private:
 		this->txtFileName.SubclassWindow(this->GetDlgItem(IDC_EDITFILENAME));
 		this->richEdit.Create(this->lvFiles, NULL, 0, ES_MULTILINE, WS_EX_TRANSPARENT);
 		this->richEdit.SetFont(this->lvFiles.GetFont());
-		
+		this->accel.LoadAccelerators(IDR_ACCELERATOR1);
+
 		this->statusbar = CreateStatusWindow(WS_CHILD | SBT_TOOLTIPS, NULL, *this, IDC_STATUS_BAR);
 		int const rcStatusPaneWidths[] = { 360, -1 };
 		if ((this->statusbar.GetStyle() & WS_VISIBLE) != 0)
@@ -1021,6 +1024,7 @@ private:
 			this->lvFiles.SetImageList(this->imgListExtraLarge, LVSIL_NORMAL);
 		}
 
+		this->lvFiles.OpenThemeData(VSCLASS_LISTVIEW);
 		this->lvFiles.SetWindowTheme(L"Explorer", NULL);
 		this->txtFileName.SetCueBannerText(_T("Enter the file name here"));
 
@@ -1254,6 +1258,17 @@ private:
 	LRESULT OnFilesListCustomDraw(LPNMHDR pnmh)
 	{
 		LRESULT result;
+		COLORREF const deletedColor = RGB(0xFF, 0, 0);
+		COLORREF encryptedColor = RGB(0, 0xFF, 0);
+		COLORREF compressedColor = RGB(0, 0, 0xFF);
+		WTL::CRegKeyEx key;
+		if (key.Open(HKEY_CURRENT_USER, _T("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer")) == ERROR_SUCCESS)
+		{
+			key.QueryDWORDValue(_T("AltColor"), compressedColor);
+			key.QueryDWORDValue(_T("AltEncryptedColor"), encryptedColor);
+			key.Close();
+		}
+		COLORREF sparseColor = RGB(GetRValue(compressedColor), (GetGValue(compressedColor) + GetBValue(compressedColor)) / 2, (GetGValue(compressedColor) + GetBValue(compressedColor)) / 2);
 		LPNMLVCUSTOMDRAW const pLV = (LPNMLVCUSTOMDRAW)pnmh;
 		if (true)
 		{
@@ -1267,10 +1282,32 @@ private:
 				break;
 			case CDDS_ITEMPREPAINT | CDDS_SUBITEM:
 				if (pLV->iSubItem == COLUMN_INDEX_PATH) { result = 0x8 /*CDRF_DOERASE*/ | CDRF_NOTIFYPOSTPAINT; }
-				else { result = CDRF_DODEFAULT; }
+				else
+				{
+					DataRow const &row = this->rows[int_cast<int>(pLV->nmcd.dwItemSpec)];
+
+					if ((row.attributes() & 0x80000000) != 0)
+					{
+						pLV->clrText = deletedColor;
+					}
+					else if ((row.attributes() & FILE_ATTRIBUTE_ENCRYPTED) != 0)
+					{
+						pLV->clrText = encryptedColor;
+					}
+					else if ((row.attributes() & FILE_ATTRIBUTE_COMPRESSED) != 0)
+					{
+						pLV->clrText = compressedColor;
+					}
+					else if ((row.attributes() & FILE_ATTRIBUTE_SPARSE_FILE) != 0)
+					{
+						pLV->clrText = sparseColor;
+					}
+					result = CDRF_DODEFAULT;
+				}
 				break;
 			case CDDS_ITEMPOSTPAINT | CDDS_SUBITEM:
 				{
+					DataRow const &row = this->rows[int_cast<int>(pLV->nmcd.dwItemSpec)];
 					std::basic_string<TCHAR> itemText = GetSubItemText(this->lvFiles, int_cast<int>(pLV->nmcd.dwItemSpec), pLV->iSubItem);
 					WTL::CDCHandle dc(pLV->nmcd.hdc);
 					int const savedDC = dc.SaveDC();
@@ -1283,7 +1320,27 @@ private:
 						this->richEdit.SetTextEx(itemText.c_str(), ST_DEFAULT, CP_ACP);
 #endif
 						TCHAR const boundary = pLV->iSubItem == 1 ? _T('\\') : _T('\r');
-						CHARFORMAT format = { sizeof(format), CFM_COLOR, 0, 0, 0, GetSysColor(COLOR_WINDOWTEXT) };
+						CHARFORMAT format = { sizeof(format), CFM_COLOR, 0, 0, 0, 0 };
+						if ((row.attributes() & 0x80000000) != 0)
+						{
+							format.crTextColor = deletedColor;
+						}
+						else if ((row.attributes() & FILE_ATTRIBUTE_ENCRYPTED) != 0)
+						{
+							format.crTextColor = encryptedColor;
+						}
+						else if ((row.attributes() & FILE_ATTRIBUTE_COMPRESSED) != 0)
+						{
+							format.crTextColor = compressedColor;
+						}
+						else if ((row.attributes() & FILE_ATTRIBUTE_SPARSE_FILE) != 0)
+						{
+							format.crTextColor = sparseColor;
+						}
+						else
+						{
+							format.crTextColor = GetSysColor(this->lvFiles.GetSelectedIndex() == int_cast<int>(pLV->nmcd.dwItemSpec) && this->lvFiles.IsThemeNull() ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT);
+						}
 						this->richEdit.SetSel(0, static_cast<int>(itemText.find_first_not_of(boundary, itemText.find_last_of(boundary))));
 						this->richEdit.SetSelectionCharFormat(format);
 						RECT rcTwips = pLV->nmcd.rc;
@@ -1606,7 +1663,12 @@ private:
 		return result;
 	}
 
-	void OnClose(UINT /*uNotifyCode*/ = 0, int nID = IDCANCEL, HWND /*hWnd*/ = NULL) { this->EndDialog(nID); }
+	void OnClose(UINT /*uNotifyCode*/ = 0, int nID = IDCANCEL, HWND /*hWnd*/ = NULL)
+	{
+		this->DestroyWindow();
+		PostQuitMessage(nID);
+		// this->EndDialog(nID);
+	}
 
 	std::basic_string<TCHAR> GetCurrentDrive()
 	{
@@ -1726,7 +1788,7 @@ private:
 
 		WTL::CWaitCursor wait;
 
-		std::basic_string<TCHAR> 
+		std::basic_string<TCHAR>
 			driveLetter = this->GetCurrentDrive(),
 			pattern = name ? std::basic_string<TCHAR>(name) : std::basic_string<TCHAR>();
 		if (!driveLetter.empty())
@@ -1829,7 +1891,7 @@ private:
 							if (dlg.ShouldUpdate())
 							{
 								TCHAR text[256];
-								_stprintf(text, _T("Reading file table... %3u%% done"), static_cast<unsigned long>(100 * static_cast<unsigned long long>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)()));
+								_stprintf(text, _T("Reading file table... %3u%% done"), static_cast<unsigned int>(100 * static_cast<unsigned long long>(pThread->progress()) / (std::numeric_limits<unsigned long>::max)()));
 								dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
 								dlg.SetProgress(pThread->progress(), (std::numeric_limits<unsigned long>::max)());
 								dlg.Flush();
@@ -1969,6 +2031,34 @@ private:
 		SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
 	}
 
+	BOOL PreTranslateMessage(MSG* pMsg)
+	{
+		if (this->accel)
+		{
+			if (this->accel.TranslateAccelerator(this->m_hWnd, pMsg))
+			{
+				return TRUE;
+			}
+		}
+
+		return this->CWindow::IsDialogMessage(pMsg);
+	}
+
+	void OnRefresh(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		WTL::CWaitCursor wait;
+		std::basic_string<TCHAR> const driveLetter = this->GetCurrentDrive();
+		std::vector<boost::intrusive_ptr<NtfsIndexThread> > const threads = this->GetDrives();
+		boost::intrusive_ptr<NtfsIndexThread> pThread;
+		for (size_t i = 0; i < threads.size(); i++)
+		{
+			if (threads[i]->drive() == driveLetter)
+			{
+				threads[i]->delete_index();
+			}
+		}
+	}
+
 	void OnShowWindow(BOOL bShow, UINT /*nStatus*/)
 	{
 		if (bShow)
@@ -1998,7 +2088,14 @@ private:
 
 	intptr_t operator()(uintptr_t hWndParent)
 	{
-		return this->DoModal(reinterpret_cast<HWND>(hWndParent));
+		WTL::CMessageLoop msgLoop;
+		_Module.AddMessageLoop(&msgLoop);
+		this->Create(reinterpret_cast<HWND>(hWndParent), NULL);
+		this->ShowWindow(SW_SHOWDEFAULT);
+		msgLoop.Run();
+		_Module.RemoveMessageLoop();
+		//intptr_t const result = this->DoModal(reinterpret_cast<HWND>(hWndParent));
+		return 0;
 	}
 
 	void OnHelpAbout(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
@@ -2063,6 +2160,7 @@ private:
 		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
 		MESSAGE_HANDLER_EX(WM_TASKBARCREATED, OnTaskbarCreated)
+		COMMAND_ID_HANDLER_EX(ID_ACCELERATOR40006, OnRefresh)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNS, OnFileFitColumns)
 		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)

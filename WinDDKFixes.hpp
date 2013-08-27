@@ -19,12 +19,17 @@ extern "C"
 	void *__cdecl _InterlockedCompareExchangePointer(void *volatile *Destination, void *ExChange, void *Comparand);
 #	pragma intrinsic(_InterlockedCompareExchangePointer)
 #else
+#if _MSC_VER < 1800
 	long __cdecl _InterlockedCompareExchange(long volatile *, long, long);
 #	pragma intrinsic(_InterlockedCompareExchange)
 	static void *__cdecl _InterlockedCompareExchangePointer(void *volatile *Destination, void *ExChange, void *Comparand)
 	{
 		return (void *)_InterlockedCompareExchange((long volatile *)Destination, (long)ExChange, (long)Comparand);
 	}
+#else
+	void *__cdecl _InterlockedCompareExchangePointer(void *volatile *Destination, void *ExChange, void *Comparand);
+#pragma intrinsic(_InterlockedCompareExchangePointer)
+#endif
 #endif
 #endif
 }

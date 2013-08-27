@@ -34,6 +34,7 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 {
 	std::basic_string<TCHAR> _drive;
 	unsigned long volatile _progress;
+	unsigned long volatile _speed;
 	bool volatile _background;
 	boost::shared_ptr<NtfsIndex> _index;
 	winnt::NtObject _thread;
@@ -61,7 +62,7 @@ class NtfsIndexThreadImpl : public NtfsIndexThread
 
 public:
 	NtfsIndexThreadImpl(HWND const hWnd, unsigned int wndMessage, std::basic_string<TCHAR> const drive)
-		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessage(wndMessage), _progress()
+		: _drive(drive), _event(CreateEvent(NULL, TRUE, TRUE, NULL)), _background(true), hWnd(hWnd), wndMessage(wndMessage), _progress(), _speed()
 	{
 		struct Invoker
 		{
@@ -106,9 +107,22 @@ public:
 
 	unsigned long progress() const { return this->_progress; }
 
+	unsigned long speed() const { return this->_speed; }
+
 	uintptr_t event() const { return reinterpret_cast<uintptr_t>(this->_event.get()); }
 
-	boost::shared_ptr<NtfsIndex> index() const { return this->_index; }
+	boost::shared_ptr<NtfsIndex> delete_index()
+	{
+		boost::shared_ptr<NtfsIndex> const result = boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>());
+		this->_speed = 0;
+		this->_progress = 0;
+		return result;
+	}
+
+	boost::shared_ptr<NtfsIndex> index() const
+	{
+		return this->_index;
+	}
 
 	unsigned int operator()()
 	{
@@ -148,7 +162,7 @@ public:
 					FILETIME creationTime = { }, exitTime = { }, kernelTime1 = { }, kernelTime2 = { }, userTime2 = { }, userTime1 = { };
 					GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime1, &userTime1);
 					
-					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(this->_volume, this->_drive, this->_event, &this->_progress, &this->_background)));
+					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(this->_volume, this->_drive, this->_event, &this->_progress, &this->_speed, &this->_background)));
 
 					if (!GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime2, &userTime2)) { break; }
 					LARGE_INTEGER q1 = { }, q2 = { };
@@ -161,6 +175,10 @@ public:
 					using std::min;
 					for (long long nMillisToSleep = min(20 * 60 * 1000, max(10 * 60 * 1000, 80 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
 					{
+						if (!this->_index)
+						{
+							break;
+						}
 						if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
 						{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
 						while (SleepEx(sleepInterval, TRUE) == WAIT_IO_COMPLETION)

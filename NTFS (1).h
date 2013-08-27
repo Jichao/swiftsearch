@@ -532,28 +532,32 @@ namespace NTFS
 		return filePath;
 	}
 
-	inline DWORD CountFragments(PRETRIEVAL_POINTERS_BUFFER pRetPtrs, LONGLONG* lcnAfterLastContigCluster, LONGLONG* vcnAfterLastContigCluster)
+	inline DWORD CountFragments(PRETRIEVAL_POINTERS_BUFFER pRetPtrs, LONGLONG &lcnAfterLastContigCluster, LONGLONG &vcnAfterLastContigCluster)
 	{
-		*lcnAfterLastContigCluster = 0;
-		*vcnAfterLastContigCluster = pRetPtrs->StartingVcn.QuadPart;
-		LONGLONG lastLengthAllocated = 0;
-		DWORD iLastAllocated = (DWORD)(-1);
-		DWORD fragCount = 1;
-		for (DWORD i = 0; i < pRetPtrs->ExtentCount; i++)
+		DWORD fragCount = 0;
+		LONGLONG expectedLCN = -1;
+		LONGLONG vcn = pRetPtrs->StartingVcn.QuadPart;
+		lcnAfterLastContigCluster = 0;
+		vcnAfterLastContigCluster = vcn;
+		for (DWORD i = 0; i < pRetPtrs->ExtentCount; ++i)
 		{
-			if (pRetPtrs->Extents[i].Lcn.QuadPart != -1)
+			LONGLONG const lcn = pRetPtrs->Extents[i].Lcn.QuadPart;
+			LONGLONG const n = pRetPtrs->Extents[i].NextVcn.QuadPart - vcn;
+			if (lcn != -1)
 			{
-				if (pRetPtrs->Extents[i].Lcn.QuadPart != *lcnAfterLastContigCluster && iLastAllocated != (DWORD)(-1))
+				if (expectedLCN != lcn)
 				{
-					fragCount++;
+					++fragCount;
 				}
-				lastLengthAllocated = pRetPtrs->Extents[i].NextVcn.QuadPart - *vcnAfterLastContigCluster;
-				*lcnAfterLastContigCluster = pRetPtrs->Extents[i].Lcn.QuadPart + lastLengthAllocated;
-				iLastAllocated = i;
+				expectedLCN = lcn + n;
 			}
-			*vcnAfterLastContigCluster = pRetPtrs->Extents[i].NextVcn.QuadPart;
+			vcn += n;
+			if (fragCount <= 1)
+			{
+				lcnAfterLastContigCluster = expectedLCN;
+				vcnAfterLastContigCluster = vcn;
+			}
 		}
-		*lcnAfterLastContigCluster = -1;
 		return fragCount;
 	}
 }

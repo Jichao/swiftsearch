@@ -17,5 +17,5 @@ EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlSystemTimeToLocalTime(IN LARGE_INTEGER const
 EXTERN_C NTSYSAPI NTSTATUS NTAPI RtlLocalTimeToSystemTime(IN LARGE_INTEGER const *LocalTime, OUT PLARGE_INTEGER SystemTime);
 LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime);
 LONGLONG RtlLocalTimeToSystemTime(LONGLONG localTime);
-LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer);
+LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer, LPCTSTR dateFormat = NULL, LPCTSTR timeFormat = NULL, LCID lcid = GetThreadLocale());
 std::basic_string<TCHAR> &GetPath(class NtfsIndex const &index, unsigned long segmentNumber, std::basic_string<TCHAR> &path);
