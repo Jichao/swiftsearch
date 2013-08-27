@@ -193,7 +193,7 @@ public:
 		}
 	};
 
-	typedef std::vector<std::vector<std::pair<SegmentNumber, unsigned short> > > Children;
+	typedef std::vector<std::vector<SegmentNumber> > Children;
 	typedef std::pair<SegmentNumber, std::pair<NTFS::AttributeTypeCode, std::basic_string<TCHAR> > > AttributeIdentifier;
 
 	struct ProgressReporter
@@ -302,6 +302,10 @@ public:
 					ah->TryGetNextAttributeHeader() <= static_cast<void const *>(reinterpret_cast<unsigned char const *>(pRecord) + pRecord->BytesAllocated);
 					ah = ah->TryGetNextAttributeHeader())
 				{{
+					static TCHAR const I30[] = { _T('$'), _T('I'), _T('3'), _T('0') };
+					static TCHAR const BAD[] = { _T('$'), _T('B'), _T('a'), _T('d') };
+					bool const isI30 = ah->NameLength == sizeof(I30) / sizeof(*I30) && memcmp(I30, ah->GetName(), ah->NameLength) == 0;
+					bool const isBad = ah->NameLength == sizeof(BAD) / sizeof(*BAD) && memcmp(BAD, ah->GetName(), ah->NameLength) == 0;
 					long long sizeOnDisk = 0;
 					if (ah->IsNonResident)
 					{
@@ -312,15 +316,13 @@ public:
 						{
 							LONGLONG const runCount = NTFS::RunCount(pRun);
 							nextVcn += runCount;
-							currentLcn += NTFS::RunDeltaLCN(pRun);
-							if (currentLcn != 0 ||
-								ah->Type == NTFS::AttributeData && baseSegment == 0x000000000007 /* $Boot is a special case */)
+							LONGLONG const deltaLCN = NTFS::RunDeltaLCN(pRun);
+							if (!(deltaLCN == 0 && (ah->Flags || segmentNumber == 0x000000000008 /* $BadClus */ && isBad && ah->Type == NTFS::AttributeData)))
 							{ sizeOnDisk += runCount * clusterSize; }
+							currentLcn += deltaLCN;
 							currentVcn = nextVcn;
 						}
 					}
-					static TCHAR const I30[] = { _T('$'), _T('I'), _T('3'), _T('0') };
-					bool const isI30 = ah->NameLength == sizeof(I30) / sizeof(*I30) && memcmp(I30, ah->GetName(), ah->NameLength) == 0;
 					if (ah->Type == NTFS::AttributeStandardInformation)
 					{
 						NTFS::STANDARD_INFORMATION const &a = *static_cast<NTFS::STANDARD_INFORMATION const *>(ah->Resident.GetValue());
@@ -332,8 +334,8 @@ public:
 									a.LastModificationTime),
 								StandardInfoAttrs::value_type::second_type::second_type(
 									a.LastAccessTime,
-									a.FileAttributes |
-									((record.Flags & FRH_IN_USE) == 0 ? 0x80000000 : 0) |
+									(a.FileAttributes & ~0x40000000) |
+									((record.Flags & FRH_IN_USE) == 0 ? 0x40000000 : 0) |
 									((record.Flags & FRH_DIRECTORY) != 0 ? FILE_ATTRIBUTE_DIRECTORY : 0))));
 						if (isBase) { standardInfoAttrs->push_back(v); }
 						else { /* should never happen */ }
@@ -366,21 +368,15 @@ public:
 								(*fileNameAttrsDerived)[v.first].push_back(v.second);
 							}
 							me->names.append(a.FileName, a.FileNameLength);
-							if (record.LinkCount > 0)
-							{
-								if (parentSegmentNumber >= children->size())
-								{ children->resize(parentSegmentNumber + 1); }
-								(*children)[parentSegmentNumber].push_back(Children::value_type::value_type(baseSegment, record.LinkCount));
-							}
+							if (parentSegmentNumber >= children->size())
+							{ children->resize(parentSegmentNumber + 1); }
+							(*children)[parentSegmentNumber].push_back(baseSegment);
 						}
 					}
-					if (ah->Type == NTFS::AttributeData ||
-						ah->Type == NTFS::AttributeIndexAllocation ||
-						(
-							ah->Type == NTFS::AttributeIndexRoot
-							? (static_cast<NTFS::INDEX_ROOT const *>(ah->Resident.GetValue())->Header.Flags & 1) == 0
-							: !isI30 && ah->NameLength > 0 && (ah->Type != NTFS::AttributeLoggedUtilityStream || ah->IsNonResident)
-						))
+					if (	ah->Type == NTFS::AttributeIndexRoot
+						? (static_cast<NTFS::INDEX_ROOT const *>(ah->Resident.GetValue())->Header.Flags & 1) == 0
+						:	ah->Type == NTFS::AttributeData ||
+							ah->Type == NTFS::AttributeIndexAllocation)
 					{
 						size_t const cchNameOld = me->names.size();
 						if (!(ah->NameLength == 0 && ah->Type == NTFS::AttributeData || isI30 && (ah->Type == NTFS::AttributeIndexRoot || ah->Type == NTFS::AttributeIndexAllocation)))
@@ -596,6 +592,7 @@ public:
 				size_t chunk_size = 1 << 22;
 
 				clock_t const start = clock();
+				(void)start;
 				unsigned long long virtual_offset = 0;
 				for (size_t i = 0; i < mft_extents.size(); i++)
 				{
@@ -650,14 +647,16 @@ public:
 		struct DirectorySizeCalculator
 		{
 			ProgressReporter *pProgressReporter;
+			FileNameAttrs *pFileNameAttrs;
+			FileNameAttrsDerived *pFileNameAttrsDerived;
 			DataAttrs *pDataAttrs;
 			DataAttrsDerived *pDataAttrsDerived;
 			Children *pChildren;
 			std::vector<unsigned short> seenCounts;
 			size_t seenTotal, nFileRecords;
 
-			DirectorySizeCalculator(ProgressReporter &progressReporter, Children &children, DataAttrs &dataAttrs, DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords)
-				: pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs), pDataAttrsDerived(&dataAttrsDerived), seenTotal(0), nFileRecords(nFileRecords), seenCounts(nFileRecords) { }
+			DirectorySizeCalculator(ProgressReporter &progressReporter, Children &children, FileNameAttrs &fileNameAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrs &dataAttrs, DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords)
+				: pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs), pDataAttrsDerived(&dataAttrsDerived), pFileNameAttrs(&fileNameAttrs), pFileNameAttrsDerived(&fileNameAttrsDerived), seenTotal(0), nFileRecords(nFileRecords), seenCounts(nFileRecords) { }
 
 			std::pair<long long, long long> operator()(SegmentNumber const segmentNumber)
 			{
@@ -669,15 +668,24 @@ public:
 				{ pChildren->resize(segmentNumber + 1); }
 				for (boost::iterator_range<Children::value_type::const_iterator> r = (*pChildren)[segmentNumber]; !r.empty(); r.pop_front())
 				{
-					Children::value_type::value_type const &p = r.front();
-					if (segmentNumber != p.first)
-					{
-						std::pair<long long, long long> const sizes = (*this)(p.first);
-						unsigned short &seenCount = seenCounts[p.first];
-						result.first += sizes.first * (seenCount + 1) / p.second - sizes.first * seenCount / p.second;
-						result.second += sizes.second * (seenCount + 1) / p.second - sizes.second * seenCount / p.second;
-						seenCount++;
-					}
+					Children::value_type::value_type const &child = r.front();
+					if (segmentNumber == child) { continue; }
+					unsigned short const links = static_cast<unsigned short>(
+						(child < pFileNameAttrsDerived->size() ? (*pFileNameAttrsDerived)[child].size() : 0) +
+						boost::size(
+							std::equal_range(
+								pFileNameAttrs->begin(),
+								pFileNameAttrs->end(),
+								FileNameAttrs::value_type(child, FileNameAttribute()),
+								first_less()
+							)
+						)
+					);
+					std::pair<long long, long long> const sizes = (*this)(child);
+					unsigned short &seenCount = seenCounts[child];
+					result.first += sizes.first * (seenCount + 1) / links - sizes.first * seenCount / links;
+					result.second += sizes.second * (seenCount + 1) / links - sizes.second * seenCount / links;
+					seenCount++;
 				}
 				std::pair<long long, long long> const childrenSizes = result;
 				for (boost::iterator_range<DataAttrs::iterator> r =
@@ -688,28 +696,36 @@ public:
 					!r.empty();
 					r.pop_front())
 				{
-					DataAttrs::value_type &p = r.front();
-					result.first += p.second.second.second.first;
-					result.second += p.second.second.second.second;
-					p.second.second.second.first += childrenSizes.first;
-					p.second.second.second.second += childrenSizes.second;
+					DataAttrs::value_type::second_type &p = r.front().second;
+					if (!p.first.second) { continue; }
+					result.first += p.second.second.first;
+					result.second += p.second.second.second;
+					if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
+					{
+						p.second.second.first += childrenSizes.first;
+						p.second.second.second += childrenSizes.second;
+					}
 				}
 				if (segmentNumber < pDataAttrsDerived->size())
 				{
 					for (boost::iterator_range<DataAttrsDerived::value_type::iterator> r = (*pDataAttrsDerived)[segmentNumber]; !r.empty(); r.pop_front())
 					{
 						DataAttrsDerived::value_type::value_type &p = r.front();
+						if (!p.first.second) { continue; }
 						result.first += p.second.second.first;
 						result.second += p.second.second.second;
-						p.second.second.first += childrenSizes.first;
-						p.second.second.second += childrenSizes.second;
+						if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
+						{
+							p.second.second.first += childrenSizes.first;
+							p.second.second.second += childrenSizes.second;
+						}
 					}
 				}
 				++seenTotal;
 				return result;
 			}
 		};
-		DirectorySizeCalculator(progressReporter, children, dataAttrs, dataAttrsDerived, nFileRecords)(0x000000000005);
+		DirectorySizeCalculator(progressReporter, children, fileNameAttrs, fileNameAttrsDerived, dataAttrs, dataAttrsDerived, nFileRecords)(0x000000000005);
 
 		FileNameAttrs::const_iterator const itFileNameAttrsEnd = fileNameAttrs.end();
 		DataAttrs::const_iterator const itDataAttrsEnd = dataAttrs.end();

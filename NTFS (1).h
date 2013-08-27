@@ -323,20 +323,31 @@ namespace NTFS
 		for (i = n; i > 0; i--) { count = (count * (1 << CHAR_BIT)) + run[i]; }
 		return count;
 	}
-	inline bool FindRun(ATTRIBUTE_RECORD_HEADER* NresAttr, ULONGLONG vcn, PULONGLONG lcn, PULONGLONG count)
+	inline bool FindRun(ATTRIBUTE_RECORD_HEADER* NresAttr, ULONGLONG vcn, PULONGLONG lcn, PULONGLONG count, LONGLONG segmentNumber)
 	{
+		static TCHAR const BAD[] = { _T('$'), _T('B'), _T('a'), _T('d') };
 		PBYTE run;
 		ULONGLONG base = NresAttr->NonResident.LowestVCN;
 		if (vcn < NresAttr->NonResident.LowestVCN || vcn > NresAttr->NonResident.HighestVCN) { return false; }
 		*lcn = 0;
 		for (run = (PBYTE)NresAttr->NonResident.GetMappingPairs(); *run != 0; run += RunLength(run))
 		{
-			*lcn += RunDeltaLCN(run);
+			LONGLONG const deltaLCN = RunDeltaLCN(run);
+			*lcn += deltaLCN;
 			*count = RunCount(run);
 
 			if (base <= vcn && vcn < base + *count)
 			{
-				*lcn = (RunDeltaLCN(run) == 0) ? 0 : *lcn + vcn - base;
+				*lcn = (deltaLCN == 0 && (
+						NresAttr->Flags ||
+						segmentNumber == 0x000000000008 /* $BadClus */ &&
+						NresAttr->NameLength == sizeof(BAD) / sizeof(*BAD) &&
+						NresAttr->Type == AttributeData &&
+						memcmp(BAD, NresAttr->GetName(), NresAttr->NameLength) == 0
+						)
+					)
+					? 0
+					: *lcn + (vcn - base);
 				*count -= (ULONG)(vcn - base);
 				return true;
 			}
@@ -345,7 +356,7 @@ namespace NTFS
 		return false;
 	}
 
-	static PRETRIEVAL_POINTERS_BUFFER AllocAndConvertRetrievalPointers(ATTRIBUTE_RECORD_HEADER* pNRA)
+	static PRETRIEVAL_POINTERS_BUFFER AllocAndConvertRetrievalPointers(ATTRIBUTE_RECORD_HEADER* pNRA, LONGLONG segmentNumber)
 	{
 		DWORD counter = 0;
 
@@ -367,6 +378,7 @@ namespace NTFS
 		pRetPtrs->ExtentCount = counter;
 		counter = 0;
 		{
+			static TCHAR const BAD[] = { _T('$'), _T('B'), _T('a'), _T('d') };
 			LONGLONG runLCN = 0;
 			LONGLONG runVCN = pRetPtrs->StartingVcn.QuadPart = pNRA->NonResident.LowestVCN;
 			BYTE* pRuns = pNRA->NonResident.GetMappingPairs();
@@ -377,7 +389,17 @@ namespace NTFS
 				ULONGLONG runCount = RunCount(pRun);
 				runVCN += runCount;
 
-				pRetPtrs->Extents[counter].Lcn.QuadPart = deltaLCN == 0 ? -1 : runLCN;
+				pRetPtrs->Extents[counter].Lcn.QuadPart =
+					(
+						deltaLCN == 0 && (
+						pNRA->Flags ||
+						segmentNumber == 0x000000000008 /* $BadClus */ &&
+						pNRA->NameLength == sizeof(BAD) / sizeof(*BAD) &&
+						pNRA->Type == AttributeData &&
+						memcmp(BAD, pNRA->GetName(), pNRA->NameLength) == 0)
+					)
+					? -1
+					: runLCN;
 				pRetPtrs->Extents[counter].NextVcn.QuadPart = runVCN;
 
 				counter++;
@@ -386,7 +408,7 @@ namespace NTFS
 		assert(pRetPtrs->ExtentCount == 0 || pRetPtrs->Extents[pRetPtrs->ExtentCount - 1].NextVcn.QuadPart == (LONGLONG)pNRA->NonResident.HighestVCN + 1);
 		return pRetPtrs;
 	}
-	static ATTRIBUTE_RECORD_HEADER* FindAttribute(HANDLE hVolume, PRETRIEVAL_POINTERS_BUFFER pMFT, ULONG clusterSize, FILE_RECORD_SEGMENT_HEADER* pFileRecord, USHORT instance, AttributeTypeCode type, LPCTSTR name, ReadFileRecordProc readProc, PVOID readProcState)
+	static ATTRIBUTE_RECORD_HEADER* FindAttribute(HANDLE hVolume, PRETRIEVAL_POINTERS_BUFFER pMFT, ULONG clusterSize, FILE_RECORD_SEGMENT_HEADER *pFileRecord, LONGLONG const segmentNumber, USHORT instance, AttributeTypeCode type, LPCTSTR name, ReadFileRecordProc readProc, PVOID readProcState)
 	{
 		ATTRIBUTE_RECORD_HEADER* pListFound = NULL;
 		ATTRIBUTE_RECORD_HEADER* pBackup = NULL;
@@ -423,7 +445,7 @@ namespace NTFS
 				attributeListHeapBuffer.resize(static_cast<size_t>(alignedLength));
 				pAttributeList = static_cast<ATTRIBUTE_LIST *>(static_cast<PVOID>(attributeListHeapBuffer.empty() ? NULL : &attributeListHeapBuffer[0]));
 				if (pListFound->NonResident.LowestVCN != 0) { __debugbreak(); }
-				PRETRIEVAL_POINTERS_BUFFER pRetPtrs = AllocAndConvertRetrievalPointers(pListFound);
+				PRETRIEVAL_POINTERS_BUFFER pRetPtrs = AllocAndConvertRetrievalPointers(pListFound, segmentNumber);
 				ProcessFileVirtual(false, hVolume, pRetPtrs, clusterSize, pListFound->NonResident.LowestVCN * clusterSize, pAttributeList, (DWORD)alignedLength);
 				free(pRetPtrs);
 				//BUG: Fixups needed??
@@ -445,7 +467,7 @@ namespace NTFS
 						union { FILE_RECORD_SEGMENT_HEADER Header; BYTE Buffer[1024]; } record;
 						ProcessFileVirtual(false, hVolume, pMFT, clusterSize, (pCurrent->FileReferenceNumber & FILE_SEGMENT_NUMBER_MASK) * pFileRecord->BytesAllocated, &record, sizeof(record));
 						record.Header.MultiSectorHeader.UnFixup();
-						return FindAttribute(hVolume, pMFT, clusterSize, &record.Header, pCurrent->AttributeNumber, pCurrent->AttributeType, pCurrent->NameLength > 0 ? pCurrent->GetName() : NULL, readProc, readProcState);
+						return FindAttribute(hVolume, pMFT, clusterSize, &record.Header, pFileRecord->GetSegmentNumber(), pCurrent->AttributeNumber, pCurrent->AttributeType, pCurrent->NameLength > 0 ? pCurrent->GetName() : NULL, readProc, readProcState);
 					}
 				}
 			}
@@ -455,7 +477,7 @@ namespace NTFS
 			union { BYTE Buffer[FILE_RECORD_SIZE]; FILE_RECORD_SEGMENT_HEADER Header; } baseFileRecord;
 			ProcessFileVirtual(false, hVolume, pMFT, clusterSize, (pFileRecord->BaseFileRecordSegment & FILE_SEGMENT_NUMBER_MASK) * FILE_RECORD_SIZE, &baseFileRecord, sizeof(baseFileRecord));
 			baseFileRecord.Header.MultiSectorHeader.UnFixup();
-			pBackup = FindAttribute(hVolume, pMFT, clusterSize, &baseFileRecord.Header, instance, type, name, readProc, readProcState);
+			pBackup = FindAttribute(hVolume, pMFT, clusterSize, &baseFileRecord.Header, segmentNumber, instance, type, name, readProc, readProcState);
 		}
 		return pBackup;
 	}
@@ -490,7 +512,7 @@ namespace NTFS
 			if ((pFileRecord->Flags & FRH_DIRECTORY) != 0) { _tcscat(filePath, TEXT("\\")); }
 		}
 
-		ATTRIBUTE_RECORD_HEADER* pAttrFileName = FindAttribute(hVolume, pMFT, bytesPerCluster, pFileRecord, (USHORT)(-1), AttributeFileName, NULL, readProc, readProcState);
+		ATTRIBUTE_RECORD_HEADER* pAttrFileName = FindAttribute(hVolume, pMFT, bytesPerCluster, pFileRecord, 0x000000000000, (USHORT)(-1), AttributeFileName, NULL, readProc, readProcState);
 
 		if (pAttrFileName == NULL) { __debugbreak(); }
 
@@ -517,7 +539,7 @@ namespace NTFS
 			}
 			//*/
 
-			ATTRIBUTE_RECORD_HEADER* pNameAttr = FindAttribute(hVolume, pMFT, bytesPerCluster, (FILE_RECORD_SEGMENT_HEADER*)fileRecord.Output.FileRecordBuffer, (USHORT)(-1), AttributeFileName, NULL, readProc, readProcState);
+			ATTRIBUTE_RECORD_HEADER* pNameAttr = FindAttribute(hVolume, pMFT, bytesPerCluster, (FILE_RECORD_SEGMENT_HEADER*)fileRecord.Output.FileRecordBuffer, 0x000000000000, (USHORT)(-1), AttributeFileName, NULL, readProc, readProcState);
 			if (pNameAttr != NULL)
 			{
 				FILENAME_INFORMATION* pName = (FILENAME_INFORMATION*)pNameAttr->Resident.GetValue();

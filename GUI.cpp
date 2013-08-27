@@ -1286,7 +1286,7 @@ private:
 				{
 					DataRow const &row = this->rows[int_cast<int>(pLV->nmcd.dwItemSpec)];
 
-					if ((row.attributes() & 0x80000000) != 0)
+					if ((row.attributes() & 0x40000000) != 0)
 					{
 						pLV->clrText = deletedColor;
 					}
@@ -1321,7 +1321,7 @@ private:
 #endif
 						TCHAR const boundary = pLV->iSubItem == 1 ? _T('\\') : _T('\r');
 						CHARFORMAT format = { sizeof(format), CFM_COLOR, 0, 0, 0, 0 };
-						if ((row.attributes() & 0x80000000) != 0)
+						if ((row.attributes() & 0x40000000) != 0)
 						{
 							format.crTextColor = deletedColor;
 						}

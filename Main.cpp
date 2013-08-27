@@ -299,7 +299,7 @@ int _tmain(int argc, LPTSTR argv[])
 				for (size_t i = 0; i < n; i++)
 				{
 					NtfsIndex::CombinedRecord const &record = index->at(i);
-					bool match = (record.second.first.second.second & 0x80000000) == 0;
+					bool match = (record.second.first.second.second & 0x40000000) == 0;
 					for (size_t j = 0; j < date_filters.size(); j++)
 					{
 						long long d;
