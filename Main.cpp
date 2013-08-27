@@ -180,7 +180,7 @@ int run(HINSTANCE hInstance, int nShowCmd)
 int _tmain(int argc, LPTSTR argv[])
 {
 	int r;
-	if (argc > 1)
+	if (1 || argc > 1)
 	{
 		_setmode(_fileno(stdout), 0x40000 /*_O_U8TEXT*/);
 		r = 0;
@@ -317,6 +317,8 @@ int _tmain(int argc, LPTSTR argv[])
 					name.erase(name.begin(), name.end());
 					path.erase(path.begin(), path.end());
 					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name);
+					match &= name.find_last_of(_T(':')) == name.find_first_of(_T(':'));
+					if (!match) { continue; }
 					GetPath(*index, parent, path);
 					adddirsep(path);
 					if (name != _T("."))
