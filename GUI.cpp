@@ -2003,13 +2003,17 @@ private:
 				}
 				void swap(BlockIo &other) { using std::swap; swap(this->pThread, other.pThread); }
 			};
-			std::vector<boost::intrusive_ptr<NtfsIndexThread> > const threads = this->GetDrives();
+			std::vector<boost::intrusive_ptr<NtfsIndexThread> > threads = this->GetDrives();
 			boost::scoped_array<BlockIo> suspendedThreads(new BlockIo[threads.size()]);
 			for (size_t i = 0; i < threads.size(); i++)
 			{
 				if (!driveLetter.empty() && threads[i]->drive() != driveLetter)
-				{ BlockIo(threads[i]).swap(suspendedThreads[i]); }
+				{
+					BlockIo(threads[i]).swap(suspendedThreads[i]);
+					threads[i].reset();
+				}
 			}
+			threads.erase(std::remove(threads.begin(), threads.end(), boost::intrusive_ptr<NtfsIndexThread>()), threads.end());
 			std::vector<MoveToForeground> setUncached(threads.size());
 			for (size_t i = 0; i < threads.size(); i++)
 			{
@@ -2021,7 +2025,6 @@ private:
 				dlg.SetProgressTitle(_T("Reading drive(s)..."));
 				while (!dlg.HasUserCancelled())
 				{
-					for (size_t i = 0; i < threads.size(); i++)
 					long long progress = 0;
 					size_t n_remaining = 0;
 					std::basic_string<TCHAR> drives;
