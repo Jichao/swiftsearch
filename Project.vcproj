@@ -51,7 +51,7 @@
 			/>
 			<Tool
 				Name="VCCLCompilerTool"
-				AdditionalOptions="/we4535 /Zm200"
+				AdditionalOptions="/we4535 /Zm200 /MP"
 				Optimization="0"
 				AdditionalIncludeDirectories=""
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;_DEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
@@ -137,7 +137,7 @@
 			/>
 			<Tool
 				Name="VCCLCompilerTool"
-				AdditionalOptions="/we4535 /Zm200"
+				AdditionalOptions="/we4535 /Zm200 /MP"
 				Optimization="0"
 				AdditionalIncludeDirectories=""
 				PreprocessorDefinitions="_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_AMD64_;_DEBUG;_CONSOLE;_WIN64;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501"
@@ -451,8 +451,7 @@
 			/>
 			<Tool
 				Name="VCPostBuildEventTool"
-				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Windows,5.01 /OSVersion:4&#x0D;&#x0A;Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1&#x0D;&#x0A;"
-				ExcludedFromBuild="true"
+				CommandLine="EditBin.exe /NoLogo &quot;$(TargetPath)&quot; /Subsystem:Console,5.01 /OSVersion:4&#x0D;&#x0A;Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite &quot;$(TargetPath)&quot;, &quot;$(TargetPath)&quot;, &quot;$(SolutionDir)x64\$(ConfigurationName)\$(TargetFileName)&quot;, BINARY, x64, 1&#x0D;&#x0A;"
 			/>
 		</Configuration>
 		<Configuration

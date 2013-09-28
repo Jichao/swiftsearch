@@ -355,6 +355,15 @@ int _tmain(int argc, LPTSTR argv[])
 	}
 	else
 	{
+		CONSOLE_SCREEN_BUFFER_INFO csbi;
+		DWORD consoleProcess;
+		if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi) &&
+			GetConsoleScreenBufferInfo(GetStdHandle(STD_ERROR_HANDLE), &csbi) &&
+			GetConsoleProcessList(&consoleProcess, 1) == 1)
+		{
+			_ftprintf(stderr, _T("Closing console window..."));
+			FreeConsole();
+		}
 		STARTUPINFO si = { sizeof(si) };
 		GetStartupInfo(&si);
 		r = run(GetModuleHandle(NULL), si.wShowWindow);

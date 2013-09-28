@@ -13,11 +13,13 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// English (United States) resources
+// English (U.S.) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 #pragma code_page(1252)
+#endif //_WIN32
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
@@ -60,7 +62,7 @@ BEGIN
     COMBOBOX        IDC_COMBODRIVE,2,3,89,12,CBS_DROPDOWNLIST | CBS_SORT | WS_VSCROLL | WS_TABSTOP,WS_EX_TRANSPARENT
     EDITTEXT        IDC_EDITFILENAME,93,3,421,12,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "&Search",IDOK,515,2,52,14
-    CONTROL         "",IDC_LISTFILES,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | LVS_OWNERDATA | WS_TABSTOP,2,17,564,262,WS_EX_CLIENTEDGE
+    CONTROL         "",IDC_LISTFILES,"SysListView32",LVS_REPORT | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | LVS_OWNERDATA | WS_TABSTOP,2,17,564,262,WS_EX_CLIENTEDGE
 END
 
 IDD_DIALOGPROGRESS DIALOGEX 0, 0, 266, 57
@@ -81,7 +83,7 @@ END
 //
 
 #ifdef APSTUDIO_INVOKED
-GUIDELINES DESIGNINFO
+GUIDELINES DESIGNINFO 
 BEGIN
     IDD_DIALOGMAIN, DIALOG
     BEGIN
@@ -116,7 +118,7 @@ IDI_ICONMAIN            ICON                    "Search Drive.ico"
 // Menu
 //
 
-IDR_MENUMAIN MENU
+IDR_MENUMAIN MENU 
 BEGIN
     POPUP "&File"
     BEGIN
@@ -136,12 +138,12 @@ END
 // Accelerator
 //
 
-IDR_ACCELERATOR1 ACCELERATORS
+IDR_ACCELERATOR1 ACCELERATORS 
 BEGIN
     VK_F5,          ID_ACCELERATOR40006,    VIRTKEY, NOINVERT
 END
 
-#endif    // English (United States) resources
+#endif    // English (U.S.) resources
 /////////////////////////////////////////////////////////////////////////////
 
 
