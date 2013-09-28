@@ -92,7 +92,8 @@ public:
 		{
 			static void __stdcall cancel(ULONG_PTR p)
 			{
-				winnt::NtFile const volume = _InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(reinterpret_cast<NtfsIndexThreadImpl *>(p)->_volume._handle), NULL);
+				winnt::NtFile const volume =
+					_InterlockedExchangePointer(&reinterpret_cast<void *volatile &>(reinterpret_cast<NtfsIndexThreadImpl *>(p)->_volume._handle), NULL);
 				// throw CStructured_Exception(ERROR_CANCELLED, NULL);
 			}
 		};
@@ -162,7 +163,10 @@ public:
 					FILETIME creationTime = { }, exitTime = { }, kernelTime1 = { }, kernelTime2 = { }, userTime2 = { }, userTime1 = { };
 					GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime1, &userTime1);
 					
-					boost::atomic_exchange(&this->_index, boost::shared_ptr<NtfsIndex>(NtfsIndex::create(this->_volume, this->_drive, this->_event, &this->_progress, &this->_speed, &this->_background)));
+					boost::atomic_exchange(
+						&this->_index,
+						boost::shared_ptr<NtfsIndex>(
+							NtfsIndex::create(this->_volume, this->_drive, this->_event, &this->_progress, &this->_speed, &this->_background)));
 
 					if (!GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime2, &userTime2)) { break; }
 					LARGE_INTEGER q1 = { }, q2 = { };
@@ -173,7 +177,9 @@ public:
 					unsigned long const sleepInterval = 100;  // The program can't exit while sleeping! So keep this value low.
 					using std::max;
 					using std::min;
-					for (long long nMillisToSleep = min(20 * 60 * 1000, max(10 * 60 * 1000, 80 * (q2.QuadPart - q1.QuadPart) / 10000)); nMillisToSleep > 0; nMillisToSleep -= sleepInterval)
+					for (long long nMillisToSleep = min(20 * 60 * 1000, max(10 * 60 * 1000, 80 * (q2.QuadPart - q1.QuadPart) / 10000));
+						nMillisToSleep > 0;
+						nMillisToSleep -= sleepInterval)
 					{
 						if (!this->_index)
 						{
@@ -190,13 +196,17 @@ public:
 		}
 		catch (CStructured_Exception &ex)
 		{
-			if (ex.GetSENumber() != ERROR_CANCELLED && ex.GetSENumber() != ERROR_INVALID_HANDLE && ex.GetSENumber() != STATUS_INVALID_HANDLE && ex.GetSENumber() != STATUS_NO_SUCH_DEVICE)
+			if (ex.GetSENumber() != ERROR_CANCELLED &&
+				ex.GetSENumber() != ERROR_INVALID_HANDLE &&
+				ex.GetSENumber() != STATUS_INVALID_HANDLE &&
+				ex.GetSENumber() != STATUS_NO_SUCH_DEVICE)
 			{
 				if (IsDebuggerPresent())
 				{
 					throw;
 				}
-				std::auto_ptr<std::basic_string<TCHAR> > msg(new std::basic_string<TCHAR>(_T("Error indexing ") + this->_drive + _T(": ") + GetAnyErrorText(ex.GetSENumber())));
+				std::auto_ptr<std::basic_string<TCHAR> >
+					msg(new std::basic_string<TCHAR>(_T("Error indexing ") + this->_drive + _T(": ") + GetAnyErrorText(ex.GetSENumber())));
 				if (PostMessage(this->hWnd, this->wndMessage, ex.GetSENumber(), reinterpret_cast<LPARAM>(msg.get())))
 				{ msg.release(); }
 			}

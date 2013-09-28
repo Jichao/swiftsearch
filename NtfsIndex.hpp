@@ -19,7 +19,19 @@ public:
 	typedef std::pair<std::pair<long long, long long>, std::pair<long long, unsigned long> > StandardInformationAttribute;
 	typedef std::pair<std::pair<NameOffset /*file name*/, NameLength>, SegmentNumber /* parent */> FileNameAttribute;
 	typedef std::pair<std::pair<NameOffset /*stream name*/, NameLength>, std::pair<long long /*logical size*/, long long /*size on disk*/> > DataAttribute;
-	typedef std::pair<SegmentNumber, std::pair<StandardInformationAttribute, std::pair<std::pair<std::pair<NameOffset /*file name*/, NameOffset /*stream name*/>, std::pair<NameLength, NameLength> >, std::pair<FileNameAttribute::second_type, DataAttribute::second_type> > > > CombinedRecord;
+	typedef std::pair<
+		SegmentNumber,
+		std::pair<
+			StandardInformationAttribute,
+			std::pair<
+				std::pair<
+					std::pair<NameOffset /*file name*/, NameOffset /*stream name*/>,
+					std::pair<NameLength, NameLength>
+				>,
+				std::pair<FileNameAttribute::second_type, DataAttribute::second_type>
+			>
+		>
+	> CombinedRecord;
 
 	virtual ~NtfsIndex() { }
 	virtual size_t size() const = 0;
@@ -29,5 +41,7 @@ public:
 	virtual std::pair<boost::iterator_range<TCHAR const *>, boost::iterator_range<TCHAR const *> > get_name_by_index(size_t const i) const = 0;
 	virtual std::basic_string<TCHAR> const &drive() const = 0;
 
-	static NtfsIndex *create(winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground);
+	static NtfsIndex *create(
+		winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtObject &is_allowed_event,
+		unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground);
 };

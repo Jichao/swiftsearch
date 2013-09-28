@@ -45,7 +45,10 @@ class NtfsIndexImpl : public NtfsIndex
 	typedef std::vector<CombinedRecord> CombinedRecords;
 	CombinedRecords index;
 
-	inline void process_file_name(SegmentNumber const segmentNumber, StandardInformationAttribute const standardInfoAttr, FileNameAttribute const fileNameAttr, DataAttrs::const_iterator &itDataAttr, DataAttrs::const_iterator const itDataAttrsEnd, DataAttrsDerived const &dataAttrsDerived)
+	inline void process_file_name(
+		SegmentNumber const segmentNumber,
+		StandardInformationAttribute const standardInfoAttr, FileNameAttribute const fileNameAttr,
+		DataAttrs::const_iterator &itDataAttr, DataAttrs::const_iterator const itDataAttrsEnd, DataAttrsDerived const &dataAttrsDerived)
 	{
 		/*
 		for (boost::iterator_range<DataAttrs::const_iterator> range =
@@ -274,8 +277,17 @@ public:
 		ProgressReporter *progressReporter;
 		SegmentNumber next_segment_number_to_process;
 
-		Callback(NtfsIndexImpl *me, StandardInfoAttrs &standardInfoAttrs, FileNameAttrs &fileNameAttrs, DataAttrs &dataAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrsDerived &dataAttrsDerived, Children &children, unsigned long clusterSize, size_t cbFileRecord, size_t nFileRecords, ProgressReporter &progressReporter)
-			: me(me), standardInfoAttrs(&standardInfoAttrs), fileNameAttrs(&fileNameAttrs), dataAttrs(&dataAttrs), fileNameAttrsDerived(&fileNameAttrsDerived), dataAttrsDerived(&dataAttrsDerived), children(&children), clusterSize(clusterSize), cbFileRecord(cbFileRecord), nFileRecords(nFileRecords), progressReporter(&progressReporter), next_segment_number_to_process(0) { }
+		Callback(
+			NtfsIndexImpl *me,
+			StandardInfoAttrs &standardInfoAttrs, FileNameAttrs &fileNameAttrs, DataAttrs &dataAttrs,
+			FileNameAttrsDerived &fileNameAttrsDerived, DataAttrsDerived &dataAttrsDerived,
+			Children &children, unsigned long clusterSize, size_t cbFileRecord, size_t nFileRecords, ProgressReporter &progressReporter
+		) :
+			me(me),
+			standardInfoAttrs(&standardInfoAttrs), fileNameAttrs(&fileNameAttrs), dataAttrs(&dataAttrs),
+			fileNameAttrsDerived(&fileNameAttrsDerived), dataAttrsDerived(&dataAttrsDerived),
+			children(&children), clusterSize(clusterSize), cbFileRecord(cbFileRecord),
+			nFileRecords(nFileRecords), progressReporter(&progressReporter), next_segment_number_to_process(0) { }
 
 		void operator()(unsigned long long offset, void *buffer, size_t bytes)
 		{
@@ -379,7 +391,8 @@ public:
 					if (ah->Type != NTFS::AttributeIndexRoot || (static_cast<NTFS::INDEX_ROOT const *>(ah->Resident.GetValue())->Header.Flags & 1) == 0)
 					{
 						size_t const cchNameOld = me->names.size();
-						if (!(ah->NameLength == 0 && ah->Type == NTFS::AttributeData || isI30 && (ah->Type == NTFS::AttributeIndexRoot || ah->Type == NTFS::AttributeIndexAllocation)))
+						if (!(ah->NameLength == 0 && ah->Type == NTFS::AttributeData ||
+							isI30 && (ah->Type == NTFS::AttributeIndexRoot || ah->Type == NTFS::AttributeIndexAllocation)))
 						{
 							if (me->names.size() + 1 /* ':' */ + ah->NameLength + 64 /* max attribute name length */ > me->names.capacity())
 							{
@@ -537,8 +550,15 @@ public:
 		std::vector<unsigned short> seenCounts;
 		size_t seenTotal, nFileRecords;
 
-		DirectorySizeCalculator(ProgressReporter &progressReporter, Children &children, FileNameAttrs &fileNameAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrs &dataAttrs, DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords)
-			: pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs), pDataAttrsDerived(&dataAttrsDerived), pFileNameAttrs(&fileNameAttrs), pFileNameAttrsDerived(&fileNameAttrsDerived), seenTotal(0), nFileRecords(nFileRecords), seenCounts(nFileRecords) { }
+		DirectorySizeCalculator(
+			ProgressReporter &progressReporter, Children &children,
+			FileNameAttrs &fileNameAttrs, FileNameAttrsDerived &fileNameAttrsDerived, DataAttrs &dataAttrs,
+			DataAttrsDerived &dataAttrsDerived, size_t const nFileRecords
+		) :
+			pProgressReporter(&progressReporter), pChildren(&children), pDataAttrs(&dataAttrs),
+			pDataAttrsDerived(&dataAttrsDerived), pFileNameAttrs(&fileNameAttrs), pFileNameAttrsDerived(&fileNameAttrsDerived),
+			seenTotal(0), nFileRecords(nFileRecords), seenCounts(nFileRecords)
+		{ }
 
 		std::pair<long long, long long> operator()(SegmentNumber const segmentNumber)
 		{
@@ -608,7 +628,9 @@ public:
 		}
 	};
 
-	NtfsIndexImpl(winnt::NtFile &volume, std::basic_string<TCHAR> const &win32Path, winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground)
+	NtfsIndexImpl(
+		winnt::NtFile &volume, std::basic_string<TCHAR> const &win32Path, winnt::NtObject &is_allowed_event,
+		unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground)
 		: _win32Path(win32Path)
 	{
 		unsigned long const clusterSize = volume.GetClusterSize();
@@ -617,7 +639,11 @@ public:
 		size_t file_record_size;
 		std::vector<std::pair<unsigned long long, unsigned long long> > mft_extents;
 		{
-			winnt::NtFile mft = winnt::NtFile::NtOpenFile(winnt::ObjectAttributes(0x0001000000000000, volume.get()), winnt::Access::QueryAttributes | winnt::Access::Synchronize, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_BY_FILE_ID);
+			winnt::NtFile mft = winnt::NtFile::NtOpenFile(
+				winnt::ObjectAttributes(0x0001000000000000, volume.get()),
+				winnt::Access::QueryAttributes | winnt::Access::Synchronize,
+				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_BY_FILE_ID);
 			file_record_size = mft.FsctlGetVolumeData().BytesPerFileRecordSegment;
 			std::vector<unsigned char> buf(sizeof(RETRIEVAL_POINTERS_BUFFER));
 			BOOL success;
@@ -667,7 +693,11 @@ public:
 		Children children;
 		children.reserve(nFileRecords * 2);
 		{
-			Callback callback(this, standardInfoAttrs, fileNameAttrs, dataAttrs, fileNameAttrsDerived, dataAttrsDerived, children, clusterSize, file_record_size, nFileRecords, progressReporter);
+			Callback callback(
+				this,
+				standardInfoAttrs, fileNameAttrs, dataAttrs,
+				fileNameAttrsDerived, dataAttrsDerived,
+				children, clusterSize, file_record_size, nFileRecords, progressReporter);
 			{
 				//IOCP iocp(volume);
 
@@ -709,8 +739,10 @@ public:
 							pending.push_front(new OverlappedBuffer(offset, virtual_offset, cb));
 							OverlappedBuffer *const overlapped = &pending.front();
 							bool const success = !!ReadFile(volume.get(), overlapped->buffer, cb, NULL, overlapped);
-							repeat_with_smaller_chunk = !success && (GetLastError() == ERROR_NOT_ENOUGH_MEMORY || GetLastError() == ERROR_NOT_ENOUGH_QUOTA) && cb > 64 * 1024;
-							if (!repeat_with_smaller_chunk && !success && GetLastError() != ERROR_SUCCESS && GetLastError() != ERROR_IO_PENDING /* MUST check this! */)
+							repeat_with_smaller_chunk = !success &&  cb > 64 * 1024 &&
+								(GetLastError() == ERROR_NOT_ENOUGH_MEMORY || GetLastError() == ERROR_NOT_ENOUGH_QUOTA);
+							if (!repeat_with_smaller_chunk && !success &&
+								GetLastError() != ERROR_SUCCESS && GetLastError() != ERROR_IO_PENDING /* MUST check this! */)
 							{ winnt::NtStatus::ThrowWin32(GetLastError()); }
 							virtual_offset += cb;
 							if (repeat_with_smaller_chunk) { chunk_size /= 2; }
@@ -776,7 +808,9 @@ public:
 };
 
 NtfsIndexImpl::PhysicalDriveLocks NtfsIndexImpl::physicalDriveLocks;
-NtfsIndex *NtfsIndex::create(winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtObject &is_allowed_event, unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground)
+NtfsIndex *NtfsIndex::create(
+	winnt::NtFile &volume, std::basic_string<TCHAR> const win32Path, winnt::NtObject &is_allowed_event,
+	unsigned long volatile *const pProgress  /* out of numeric_limits::max() */, unsigned long volatile *const pSpeed, bool volatile *pBackground)
 {
 	return new NtfsIndexImpl(volume, win32Path, is_allowed_event, pProgress, pSpeed, pBackground);
 }
