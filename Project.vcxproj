@@ -138,6 +138,7 @@
       <CompileAs>Default</CompileAs>
       <DisableSpecificWarnings>4820;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ErrorReporting>None</ErrorReporting>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalDependencies>libcmtd.lib;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -167,6 +168,7 @@
       <CompileAs>Default</CompileAs>
       <DisableSpecificWarnings>4820;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ErrorReporting>None</ErrorReporting>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -183,7 +185,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <AdditionalOptions>/we4535 /Zm200 /MP %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/we4535 /Zm200 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
       <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;NDEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -192,6 +194,7 @@
       <CompileAs>Default</CompileAs>
       <DisableSpecificWarnings>4820;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ErrorReporting>None</ErrorReporting>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalOptions>/Force:Multiple %(AdditionalOptions)</AdditionalOptions>
@@ -213,7 +216,7 @@
       <TargetEnvironment>X64</TargetEnvironment>
     </Midl>
     <ClCompile>
-      <AdditionalOptions>/we4535 /Zm200 /MP %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/we4535 /Zm200 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
       <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_AMD64_;NDEBUG;_CONSOLE;_WIN64;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -222,6 +225,7 @@
       <CompileAs>Default</CompileAs>
       <DisableSpecificWarnings>4820;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ErrorReporting>None</ErrorReporting>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -239,7 +243,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release (Windows 2003 DDK)|Win32'">
     <ClCompile>
-      <AdditionalOptions>/we4535 /Zm200 /MP %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/we4535 /Zm200 /QIfist %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
       <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;NDEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -254,6 +258,7 @@
       <ForcedIncludeFiles>WinDDKFixes.hpp;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <ErrorReporting>None</ErrorReporting>
       <DebugInformationFormat>None</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SystemDrive)\WinDDK\3790.1830\lib\crt\i386\msvcrt.lib;$(SystemDrive)\WinDDK\3790.1830\lib\crt\i386\msvcprt.lib;$(SystemDrive)\WinDDK\3790.1830\lib\atl\i386\atlthunk.lib;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -277,7 +282,7 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
       <TargetEnvironment>X64</TargetEnvironment>
     </Midl>
     <ClCompile>
-      <AdditionalOptions>/we4535 /Zm200 /MP %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/we4535 /Zm200 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
       <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_AMD64_;NDEBUG;_CONSOLE;_WIN64;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -292,6 +297,7 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
       <ForcedIncludeFiles>WinDDKFixes.hpp;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <ErrorReporting>None</ErrorReporting>
       <DebugInformationFormat>None</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SystemDrive)\WinDDK\3790.1830\lib\crt\amd64\msvcrt.lib;$(SystemDrive)\WinDDK\3790.1830\lib\crt\amd64\msvcprt.lib;$(SystemDrive)\WinDDK\3790.1830\lib\atl\amd64\atlthunk.lib;$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
