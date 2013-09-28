@@ -2053,121 +2053,141 @@ private:
 				}
 			}
 			assert(this->rows.empty());
+			class ResizeRows
+			{
+				ResizeRows &operator =(ResizeRows const &) { throw std::logic_error(""); }
+			public:
+				long volatile nRows;
+				std::vector<DataRow> *rows;
+				ResizeRows(std::vector<DataRow> &rows, size_t tempSize)
+					: nRows(static_cast<long>(rows.size())), rows(&rows)
+				{
+					rows.resize(tempSize);
+				}
+				~ResizeRows() { if (rows) { rows->resize(static_cast<size_t>(nRows)); } }
+			};
+			class MatcherThread
+			{
+				MatcherThread &operator =(MatcherThread const &) { throw std::logic_error(""); }
+			public:
+				uintptr_t volatile h;
+				boost::shared_ptr<NtfsIndex const> index;
+				CProgressDialog &dlg;
+				size_t ji;
+				std::vector<long> &js;
+				bool const isPath, isRegex;
+				tchar_ci_traits const traits;
+				Matcher &matcher;
+				std::vector<DataRow> &rows;
+				bool nondata_streams;
+				bool deleted_files;
+				bool volatile stop;
+				long volatile &nRows;
+				long max_rows;
+				MatcherThread(boost::shared_ptr<NtfsIndex const> index, CProgressDialog &progressDlg, size_t const ji, std::vector<long> &js, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows, long const max_rows, bool nondata_streams, bool deleted_files)
+					: h(NULL), index(index), dlg(progressDlg), ji(ji), js(js), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows), max_rows(max_rows), nondata_streams(nondata_streams), deleted_files(deleted_files)
+				{ }
+				~MatcherThread()
+				{
+					while (!dlg.HasUserCancelled())
+					{
+						CProgressDialog::WaitMessageLoop();
+						size_t const j(static_cast<size_t>(static_cast<long volatile const &>(js[ji])));
+						if (j >= index->size()) { break; }
+						if (dlg.ShouldUpdate())
+						{
+							long progress = 0;
+							for (size_t i = 0; i < js.size(); ++i)
+							{
+								progress += static_cast<long volatile const &>(js[i]);
+							}
+							dlg.SetProgress(progress, max_rows);
+							dlg.SetProgressText(j < index->size() ? index->get_name_by_index(j).first : boost::as_literal(_T("")));
+							dlg.Flush();
+						}
+					}
+					this->stop = true;
+					WaitForSingleObject(reinterpret_cast<HANDLE>(h), INFINITE);
+				}
+				static unsigned int __stdcall invoke(void *p)
+				{
+					return (*static_cast<MatcherThread *>(p))();
+				}
+				unsigned int operator()()
+				{
+					try
+					{
+						std::basic_string<TCHAR> tempPath;
+						tempPath.reserve(32 * 1024);
+						while (!this->stop)
+						{
+							size_t const j(static_cast<size_t>(InterlockedIncrement(&js[ji])) - 1);
+							if (j >= index->size()) { break; }
+							DataRow const row(index, j);
+							boost::iterator_range<TCHAR const *> const
+								fileName = row.file_name(), streamName = row.stream_name();
+							bool match =
+								(deleted_files || (row.attributes() & 0x40000000) == 0) &&
+								(nondata_streams || std::count(streamName.begin(), streamName.end(), _T(':')) <= 0);
+							if (match)
+							{
+								if (isPath)
+								{
+									tempPath.erase(tempPath.begin(), tempPath.end());
+									adddirsep(GetPath(*index, row.parent(), tempPath));
+									tempPath.append(fileName.begin(), fileName.end());
+									if (!streamName.empty())
+									{
+										tempPath.append(1, _T(':'));
+										tempPath.append(streamName.begin(), streamName.end());
+									}
+									match &= matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
+								}
+								else { match &= matcher(fileName, streamName); }
+							}
+							if (match)
+							{
+								rows[static_cast<size_t>(InterlockedIncrement(&nRows)) - 1] = row;
+							}
+						}
+						return 0;
+					}
+					catch (CStructured_Exception &ex)
+					{
+						return ex.GetSENumber();
+					}
+				}
+			};
+
+			std::basic_stringstream<TCHAR> title;
+			title << _T("Searching ") << (isPath ? _T("file paths, please wait") : _T("file names")) << _T("...");
+			dlg.SetProgressTitle(title.str().c_str());
+			size_t total_rows = 0;
 			for (size_t i = 0; i < indices.size(); ++i)
 			{
 				if (!indices[i]) { continue; }
-				std::basic_stringstream<TCHAR> title;
-				title << _T("Searching ") << (isPath ? _T("file paths, please wait") : _T("file names")) << _T("...");
-				dlg.SetProgressTitle(title.str().c_str());
-				long volatile j = 0;
-				class ResizeRows
-				{
-					ResizeRows &operator =(ResizeRows const &) { throw std::logic_error(""); }
-				public:
-					long volatile nRows;
-					std::vector<DataRow> *rows;
-					ResizeRows(std::vector<DataRow> &rows, size_t tempSize)
-						: nRows(static_cast<long>(rows.size())), rows(&rows)
-					{
-						rows.resize(tempSize);
-					}
-					~ResizeRows() { rows->resize(static_cast<size_t>(nRows)); }
-				} resizeRows(rows, rows.size() + indices[i]->size());
-				class MatcherThread
-				{
-					MatcherThread &operator =(MatcherThread const &) { throw std::logic_error(""); }
-				public:
-					uintptr_t volatile h;
-					boost::shared_ptr<NtfsIndex const> index;
-					CProgressDialog &dlg;
-					long volatile &j;
-					bool const isPath, isRegex;
-					tchar_ci_traits const traits;
-					Matcher &matcher;
-					std::vector<DataRow> &rows;
-					bool nondata_streams;
-					bool deleted_files;
-					bool volatile stop;
-					long volatile &nRows;
-					MatcherThread(boost::shared_ptr<NtfsIndex const> index, CProgressDialog &progressDlg, long volatile &j, bool isPath, bool isRegex, Matcher &matcher, std::vector<DataRow> &rows, long volatile &nRows, bool nondata_streams, bool deleted_files)
-						: h(NULL), index(index), dlg(progressDlg), j(j), isPath(isPath), isRegex(isRegex), matcher(matcher), rows(rows), stop(false), nRows(nRows), nondata_streams(nondata_streams), deleted_files(deleted_files)
-					{ }
-					~MatcherThread()
-					{
-						while (!dlg.HasUserCancelled())
-						{
-							CProgressDialog::WaitMessageLoop();
-							size_t const j(static_cast<size_t>(j));
-							if (j >= index->size()) { break; }
-							if (dlg.ShouldUpdate())
-							{
-								dlg.SetProgress(j, index->size());
-								dlg.SetProgressText(j < index->size() ? index->get_name_by_index(j).first : boost::as_literal(_T("")));
-								dlg.Flush();
-							}
-						}
-						this->stop = true;
-						WaitForSingleObject(reinterpret_cast<HANDLE>(h), INFINITE);
-					}
-					static unsigned int __stdcall invoke(void *p)
-					{
-						return (*static_cast<MatcherThread *>(p))();
-					}
-					unsigned int operator()()
-					{
-						try
-						{
-							std::basic_string<TCHAR> tempPath;
-							tempPath.reserve(32 * 1024);
-							while (!this->stop)
-							{
-								size_t const j(static_cast<size_t>(InterlockedIncrement(&j)) - 1);
-								if (j >= index->size()) { break; }
-								DataRow const row(index, j);
-								boost::iterator_range<TCHAR const *> const
-									fileName = row.file_name(), streamName = row.stream_name();
-								bool match =
-									(deleted_files || (row.attributes() & 0x40000000) == 0) &&
-									(nondata_streams || std::count(streamName.begin(), streamName.end(), _T(':')) <= 0);
-								if (match)
-								{
-									if (isPath)
-									{
-										tempPath.erase(tempPath.begin(), tempPath.end());
-										adddirsep(GetPath(*index, row.parent(), tempPath));
-										tempPath.append(fileName.begin(), fileName.end());
-										if (!streamName.empty())
-										{
-											tempPath.append(1, _T(':'));
-											tempPath.append(streamName.begin(), streamName.end());
-										}
-										match &= matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
-									}
-									else { match &= matcher(fileName, streamName); }
-								}
-								if (match) { rows[static_cast<size_t>(InterlockedIncrement(&nRows)) - 1] = row; }
-							}
-							return 0;
-						}
-						catch (CStructured_Exception &ex)
-						{
-							return ex.GetSENumber();
-						}
-					}
-				};
-				SYSTEM_INFO si = { };
+				total_rows += indices[i]->size();
+			}
+			{
+				SYSTEM_INFO si = {};
 				GetSystemInfo(&si);
-				boost::ptr_vector<MatcherThread> threads;
-				using std::max;
-				bool const nondata_streams = GetKeyState(VK_SHIFT) < 0, deleted_files = GetKeyState(VK_CONTROL) < 0;
-				for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
+				ResizeRows resizeRows(rows, total_rows);
+				std::vector<long> js(indices.size());
+				for (size_t i = 0; i < indices.size(); ++i)
 				{
-					std::auto_ptr<MatcherThread> p(new MatcherThread(indices[i], dlg, j, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows, nondata_streams, deleted_files));
-					unsigned int tid;
-					p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), 0, &tid);
-					if (p->h) { threads.push_back(p); }
+					if (!indices[i]) { continue; }
+					boost::ptr_vector<MatcherThread> threads;
+					using std::max;
+					bool const nondata_streams = GetKeyState(VK_SHIFT) < 0, deleted_files = GetKeyState(VK_CONTROL) < 0;
+					for (unsigned long k = 0; k < si.dwNumberOfProcessors - (si.dwNumberOfProcessors > 2 ? 1 : 0); k++)
+					{
+						std::auto_ptr<MatcherThread> p(new MatcherThread(indices[i], dlg, i, js, isPath, isRegex, *matcher.get(), rows, resizeRows.nRows, static_cast<long>(total_rows), nondata_streams, deleted_files));
+						unsigned int tid;
+						p->h = _beginthreadex(NULL, 0, &MatcherThread::invoke, p.get(), 0, &tid);
+						if (p->h) { threads.push_back(p); }
+					}
+					// 'threads' destroyed here
 				}
-				// 'threads' destroyed here
 			}
 			if (ownerData)
 			{
@@ -2262,7 +2282,7 @@ private:
 
 	void OnHelpAbout(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
 	{
-		this->MessageBox(_T("© 2012 Mehrdad N.\r\nAll rights reserved."), _T("About"), MB_ICONINFORMATION);
+		this->MessageBox(_T("© 2013 Mehrdad N.\r\nAll rights reserved."), _T("About"), MB_ICONINFORMATION);
 	}
 
 	void OnHelpRegex(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
