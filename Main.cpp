@@ -280,7 +280,7 @@ int _tmain(int argc, LPTSTR argv[])
 			{
 				HANDLE const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
 				std::basic_string<TCHAR> path;
-				std::auto_ptr<NtfsIndex> const index(NtfsIndex::create(volume, paths[i], is_allowed_event, &progress, &speed, &background));
+				std::auto_ptr<NtfsIndex> const index(new NtfsIndex(volume, paths[i], is_allowed_event, &progress, &speed, &background));
 				size_t const n = index->size();
 				name.reserve(32 * 1024);
 				path.reserve(32 * 1024);
@@ -316,7 +316,7 @@ int _tmain(int argc, LPTSTR argv[])
 					if (!match) { continue; }
 					name.erase(name.begin(), name.end());
 					path.erase(path.begin(), path.end());
-					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name);
+					NtfsIndex::SegmentNumber const parent = index->get_name_by_record(record, name, true);
 					match &= name.find_last_of(_T(':')) == name.find_first_of(_T(':'));
 					if (!match) { continue; }
 					GetPath(*index, parent, path);
@@ -336,8 +336,8 @@ int _tmain(int argc, LPTSTR argv[])
 						_stprintf(
 						&*str.begin(),
 						_T("%0*I64llu|%0*I64llu|%s|%s|%s|0x%08X|%.*s"),
-						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.first),
-						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.second),
+						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.second.first),
+						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.second.second),
 						SystemTimeToString(record.second.first.first.first , &*buf1.begin(), buf1.size(), dateFormat, timeFormat, lcid),
 						SystemTimeToString(record.second.first.first.second, &*buf2.begin(), buf2.size(), dateFormat, timeFormat, lcid),
 						SystemTimeToString(record.second.first.second.first, &*buf3.begin(), buf3.size(), dateFormat, timeFormat, lcid),
@@ -366,7 +366,15 @@ int _tmain(int argc, LPTSTR argv[])
 		}
 		STARTUPINFO si = { sizeof(si) };
 		GetStartupInfo(&si);
-		r = run(GetModuleHandle(NULL), si.wShowWindow);
+		try
+		{
+			r = run(GetModuleHandle(NULL), si.wShowWindow);
+		}
+		catch (CStructured_Exception &ex)
+		{
+			r = ex.GetSENumber();
+			WTL::AtlMessageBox(NULL, GetAnyErrorText(ex.GetSENumber()), _T("Fatal Error"), MB_ICONERROR);
+		}
 	}
 	return r;
 }

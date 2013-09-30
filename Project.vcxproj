@@ -147,6 +147,7 @@
       <RandomizedBaseAddress />
       <DataExecutionPrevention />
       <LinkErrorReporting />
+      <AdditionalOptions>/PDBAltPath:"%_PDB%" %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command />
@@ -178,6 +179,7 @@
       <DataExecutionPrevention />
       <LinkErrorReporting />
       <ForceFileOutput>MultiplyDefinedSymbolOnly</ForceFileOutput>
+      <AdditionalOptions>/PDBAltPath:"%_PDB%" %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command />
@@ -202,7 +204,6 @@
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <RandomizedBaseAddress />
-      <FixedBaseAddress>true</FixedBaseAddress>
       <DataExecutionPrevention />
       <MergeSections>.rdata=.text</MergeSections>
       <LinkErrorReporting />
@@ -232,7 +233,6 @@
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <RandomizedBaseAddress />
-      <FixedBaseAddress>true</FixedBaseAddress>
       <DataExecutionPrevention />
       <MergeSections>.rdata=.text</MergeSections>
       <LinkErrorReporting />

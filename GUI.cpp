@@ -75,27 +75,41 @@ struct DataRow
 	NtfsIndex::CombinedRecord const &record() const { return this->pIndex->at(this->i); }
 	boost::iterator_range<TCHAR const *> file_name() const
 	{ return this->pIndex->get_name_by_index(this->i).first; }
-	boost::iterator_range<TCHAR const *> stream_name() const { return this->pIndex->get_name_by_index(this->i).second; }
+	boost::iterator_range<TCHAR const *> stream_name() const { return this->pIndex->get_name_by_index(this->i).second.first; }
+	boost::iterator_range<TCHAR const *> attribute_name() const { return this->pIndex->get_name_by_index(this->i).second.second; }
 	std::basic_string<TCHAR> combined_name() const
 	{
 		std::basic_string<TCHAR> s;
-		boost::iterator_range<TCHAR const *> name = this->file_name();
-		s.append(name.begin(), name.end());
-		name = this->stream_name();
-		if (!name.empty())
+		std::pair<
+			boost::iterator_range<TCHAR const *>,
+			std::pair<
+				boost::iterator_range<TCHAR const *>,
+				boost::iterator_range<TCHAR const *>
+			>
+		> const names = this->pIndex->get_name_by_index(this->i);
+		s.append(names.first.begin(), names.first.end());
+		if (!names.second.first.empty() || !names.second.second.empty())
 		{
 			s.append(1, _T(':'));
-			s.append(name.begin(), name.end());
+		}
+		if (!names.second.first.empty())
+		{
+			s.append(names.second.first.begin(), names.second.first.end());
+		}
+		if (!names.second.second.empty())
+		{
+			s.append(1, _T(':'));
+			s.append(names.second.second.begin(), names.second.second.end());
 		}
 		return s;
 	}
-	unsigned long parent() const { return this->record().second.second.second.first; }
+	unsigned long parent() const { return this->record().second.second.first.second; }
 	long long creationTime() const { return this->record().second.first.first.first; }
 	long long modificationTime() const { return this->record().second.first.first.second; }
 	long long accessTime() const { return this->record().second.first.second.first; }
 	unsigned long attributes() const { return this->record().second.first.second.second; }
-	long long size() const { return this->record().second.second.second.second.first; }
-	long long sizeOnDisk() const { return this->record().second.second.second.second.second; }
+	long long size() const { return this->record().second.second.second.second.second.first; }
+	long long sizeOnDisk() const { return this->record().second.second.second.second.second.second; }
 };
 
 struct Wow64Disable
@@ -244,6 +258,7 @@ class iless
 {
 	mutable std::basic_string<TCHAR> s1, s2;
 	std::ctype<TCHAR> const &ctype;
+	bool logical;
 	struct iless_ch
 	{
 		iless const *p;
@@ -268,13 +283,12 @@ class iless
 	}
 
 public:
-	iless(std::locale const &loc) : ctype(static_cast<std::ctype<TCHAR> const &>(use_facet<std::ctype<TCHAR> >(loc))) { }
+	iless(std::locale const &loc, bool const logical) : ctype(static_cast<std::ctype<TCHAR> const &>(use_facet<std::ctype<TCHAR> >(loc))), logical(logical) {}
 	bool operator()(boost::iterator_range<TCHAR const *> const a, boost::iterator_range<TCHAR const *> const b) const
 	{
 		s1.assign(a.begin(), a.end());
 		s2.assign(b.begin(), b.end());
-		return StrCmpLogicalW(s1.c_str(), s2.c_str()) < 0;
-		//return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), iless_ch(*this));
+		return logical ? StrCmpLogicalW(s1.c_str(), s2.c_str()) < 0 : std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), iless_ch(*this));
 	}
 };
 
@@ -762,8 +776,7 @@ public:
 
 	bool ShouldUpdate() const
 	{
-		unsigned long const tickCount = GetTickCount();
-		return tickCount - this->lastUpdateTime >= UPDATE_INTERVAL;
+		return GetTickCount() - this->lastUpdateTime >= UPDATE_INTERVAL;
 	}
 
 	bool HasUserCancelled()
@@ -1066,7 +1079,7 @@ private:
 				TCHAR fsName[MAX_PATH];
 				if (GetVolumeInformation(drive, NULL, 0, NULL, 0, NULL, fsName, sizeof(fsName) / sizeof(*fsName)) && _tcsicmp(fsName, _T("NTFS")) == 0)
 				{
-					boost::intrusive_ptr<NtfsIndexThread> const p(NtfsIndexThread::create(this->m_hWnd, WM_THREADMESSAGE, drive));
+					boost::intrusive_ptr<NtfsIndexThread> const p(new NtfsIndexThread(this->m_hWnd, WM_THREADMESSAGE, drive));
 					int const index = this->cmbDrive.AddString(drive);
 					// if (drive[0] != _T('\0') && drive[0] == windowsDir[0] && drive[1] == _T(':')) { iSel = index; }
 					if (this->cmbDrive.SetItemDataPtr(index, p.get()) != CB_ERR)
@@ -1719,14 +1732,13 @@ private:
 		{
 			//natural_less<TCHAR> less;
 			std::locale loc("");
-			iless less(loc);
 			try
 			{
 				// TODO: Compare paths case-insensitively
 				switch (pLV->iSubItem)
 				{
-				case COLUMN_INDEX_NAME: const_pred_stable_sort(this->rows, cancellable_comparator(name_comparator(less))); break;
-				case COLUMN_INDEX_PATH: const_pred_stable_sort(this->rows, cancellable_comparator(path_comparator(less))); break;
+				case COLUMN_INDEX_NAME: const_pred_stable_sort(this->rows, cancellable_comparator(name_comparator(iless(loc, true)))); break;
+				case COLUMN_INDEX_PATH: const_pred_stable_sort(this->rows, cancellable_comparator(path_comparator(iless(loc, false)))); break;
 				case COLUMN_INDEX_SIZE: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::size, _1)))); break;
 				case COLUMN_INDEX_SIZE_ON_DISK: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::sizeOnDisk, _1)))); break;
 				case COLUMN_INDEX_CREATION_TIME: const_pred_stable_sort(this->rows, cancellable_comparator(comparator(boost::bind(&DataRow::creationTime, _1)))); break;
@@ -2025,30 +2037,47 @@ private:
 				dlg.SetProgressTitle(_T("Reading drive(s)..."));
 				while (!dlg.HasUserCancelled())
 				{
-					long long progress = 0;
-					size_t n_remaining = 0;
-					std::basic_string<TCHAR> drives;
+					bool missing_indices = false;
 					for (size_t i = 0; i < threads.size(); ++i)
 					{
-						indices[i] = threads[i]->index();
-						progress += threads[i]->progress();
-
-						if (!indices[i])
+						if (!threads[i]->has_index())
 						{
-							++n_remaining;
-							if (!drives.empty()) { drives += _T(", "); }
-							drives += threads[i]->drive();
+							missing_indices = true;
+							break;
 						}
 					}
-					if (n_remaining == 0) { break; }
+					if (!missing_indices)
+					{
+						for (size_t i = 0; i < threads.size(); ++i)
+						{ threads[i]->index().swap(indices[i]); }
+						break;
+					}
+					long long progress = 0;
+					for (size_t i = 0; i < threads.size(); ++i)
+					{
+						progress += threads[i]->progress();
+					}
 					CProgressDialog::WaitMessageLoop();
 					if (dlg.ShouldUpdate())
 					{
+						std::basic_string<TCHAR> drives;
+						for (size_t i = 0; i < threads.size(); ++i)
+						{
+							if (!threads[i]->has_index())
+							{
+								if (!drives.empty()) { drives += _T(", "); }
+								drives += threads[i]->drive();
+							}
+						}
 						TCHAR text[256];
-						_stprintf(text, _T("Reading file table of %s... %3u%% done"), drives.c_str(), static_cast<unsigned int>(progress * 100LL / (threads.size() * (std::numeric_limits<unsigned long>::max)())));
+						_stprintf(text, _T("Reading file table of %s... %3u%% done"), drives.c_str(), static_cast<unsigned int>(progress * 100LL / (threads.size() * static_cast<unsigned long long>((std::numeric_limits<unsigned long>::max)()))));
 						dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
-						dlg.SetProgress(progress, (static_cast<long long>(threads.size()) * (std::numeric_limits<unsigned long>::max)()));
+						dlg.SetProgress(progress, (threads.size() * static_cast<long long>((std::numeric_limits<unsigned long>::max)())));
 						dlg.Flush();
+					}
+					else
+					{
+						Sleep(0);
 					}
 				}
 			}
@@ -2125,10 +2154,12 @@ private:
 							if (j >= index->size()) { break; }
 							DataRow const row(index, j);
 							boost::iterator_range<TCHAR const *> const
-								fileName = row.file_name(), streamName = row.stream_name();
+								fileName = row.file_name(),
+								streamName = row.stream_name(),
+								attrName = row.attribute_name();
 							bool match =
 								(deleted_files || (row.attributes() & 0x40000000) == 0) &&
-								(nondata_streams || std::count(streamName.begin(), streamName.end(), _T(':')) <= 0);
+								(nondata_streams || attrName.empty());
 							if (match)
 							{
 								if (isPath)
@@ -2136,10 +2167,17 @@ private:
 									tempPath.erase(tempPath.begin(), tempPath.end());
 									adddirsep(GetPath(*index, row.parent(), tempPath));
 									tempPath.append(fileName.begin(), fileName.end());
-									if (!streamName.empty())
+									if (!streamName.empty() || !attrName.empty())
 									{
 										tempPath.append(1, _T(':'));
+									}
+									if (!streamName.empty())
+									{
 										tempPath.append(streamName.begin(), streamName.end());
+									}
+									if (!attrName.empty())
+									{
+										tempPath.append(attrName.begin(), attrName.end());
 									}
 									match &= matcher(boost::make_iterator_range(tempPath.data(), tempPath.data() + static_cast<ptrdiff_t>(tempPath.size())), boost::iterator_range<TCHAR const *>());
 								}
@@ -2234,7 +2272,7 @@ private:
 		boost::intrusive_ptr<NtfsIndexThread> pThread;
 		for (size_t i = 0; i < threads.size(); i++)
 		{
-			if (threads[i]->drive() == driveLetter)
+			if (driveLetter.empty() || threads[i]->drive() == driveLetter)
 			{
 				threads[i]->delete_index();
 			}
@@ -2372,7 +2410,7 @@ UINT const CMainDlg::WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreate
 
 CMainDlgBase *CMainDlgBase::create(HANDLE const hEvent) { return new CMainDlg(hEvent); }
 
-std::basic_string<TCHAR> &GetPath(NtfsIndex const &index, unsigned long segmentNumber, std::basic_string<TCHAR> &path)
+__declspec(noinline) std::basic_string<TCHAR> &GetPath(NtfsIndex const &index, unsigned long segmentNumber, std::basic_string<TCHAR> &path)
 {
 	path.erase(path.begin(), path.end());
 	try

@@ -59,7 +59,7 @@
 				RuntimeLibrary="1"
 				UsePrecompiledHeader="2"
 				WarningLevel="4"
-				DebugInformationFormat="3"
+				DebugInformationFormat="1"
 				CompileAs="0"
 				DisableSpecificWarnings="4820"
 				ForcedIncludeFiles=""
@@ -76,6 +76,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
+				AdditionalOptions="/PDBPath:None"
 				AdditionalDependencies="libcmtd.lib &quot;$(SystemDrive)\WinDDK\3790.1830\lib\wxp\i386\ntdll.lib&quot;"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="C:\WinDDK\3790.1830\lib\wxp\i386"
@@ -145,7 +146,7 @@
 				RuntimeLibrary="1"
 				UsePrecompiledHeader="2"
 				WarningLevel="4"
-				DebugInformationFormat="3"
+				DebugInformationFormat="1"
 				CompileAs="0"
 				DisableSpecificWarnings="4820"
 				ForcedIncludeFiles=""
@@ -162,6 +163,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
+				AdditionalOptions="/PDBPath:None"
 				AdditionalDependencies="&quot;$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib&quot;"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="C:\WinDDK\7600.16385.1\lib\wnet\amd64"
