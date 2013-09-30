@@ -1058,18 +1058,18 @@ private:
 		RegisterWaitForSingleObject(&this->hWait, hEvent, &WaitCallback, this->m_hWnd, INFINITE, WT_EXECUTEINUITHREAD);
 
 		this->cmbDrive.SetCurSel(-1);
-		this->cmbDrive.SetCurSel(this->RefreshVolumes());
+		this->cmbDrive.SetCurSel(this->RefreshVolumes(true));
 
 		this->OnSearchParamsChange(CBN_SELCHANGE, IDC_COMBODRIVE, this->cmbDrive);
 		return TRUE;
 	}
 
-	int RefreshVolumes()
+	int RefreshVolumes(bool add_defaults)
 	{
 		std::basic_string<TCHAR> logicalDrives(GetLogicalDriveStrings(0, NULL) + 1, _T('\0'));
 		logicalDrives.resize(GetLogicalDriveStrings(static_cast<DWORD>(logicalDrives.size()) - 1, &logicalDrives[0]));
-		int iSel = this->cmbDrive.AddString(_T("(All drives)"));
-		// int iSel = this->cmbDrive.GetCurSel();
+		int iSel = this->cmbDrive.GetCurSel();
+		if (add_defaults) { iSel = this->cmbDrive.AddString(_T("(All drives)")); }
 		TCHAR windowsDir[MAX_PATH] = { 0 };
 		windowsDir[GetWindowsDirectory(windowsDir, sizeof(windowsDir) / sizeof(*windowsDir))] = _T('\0');
 		for (LPCTSTR drive = logicalDrives.c_str(); *drive != _T('\0'); drive += _tcslen(drive) + 1)
@@ -1862,7 +1862,9 @@ private:
 	{
 		for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
 		{
-			boost::intrusive_ptr<NtfsIndexThread> const p = static_cast<NtfsIndexThread *>(this->cmbDrive.GetItemDataPtr(i));
+			void *const data = this->cmbDrive.GetItemDataPtr(i);
+			if (!data) { continue; }
+			boost::intrusive_ptr<NtfsIndexThread> const p = static_cast<NtfsIndexThread *>(data);
 			if (reinterpret_cast<HANDLE>(p->volume()) == handle)
 			{
 				int const curSel = this->cmbDrive.GetCurSel();
@@ -1894,7 +1896,7 @@ private:
 		{
 		case DBT_DEVICEQUERYREMOVEFAILED:
 			{
-				this->RefreshVolumes();
+				this->RefreshVolumes(false);
 			}
 			break;
 		case DBT_DEVICEQUERYREMOVE:
@@ -1916,7 +1918,7 @@ private:
 				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
 				if (header.dbch_devicetype == DBT_DEVTYP_VOLUME)
 				{
-					this->RefreshVolumes();
+					this->RefreshVolumes(false);
 				}
 			}
 			break;
