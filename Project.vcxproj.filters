@@ -30,9 +30,6 @@
     <ClCompile Include="NtfsIndexThread.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="NtfsReader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="stdafx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -66,9 +63,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="NtfsIndexThread.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="NtfsReader.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="NtObjectMini.hpp">
