@@ -342,7 +342,6 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
     <ClCompile Include="Matcher.cpp" />
     <ClCompile Include="NtfsIndex.cpp" />
     <ClCompile Include="NtfsIndexThread.cpp" />
-    <ClCompile Include="NtfsReader.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -375,7 +374,6 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
     <ClInclude Include="NTFS (1).h" />
     <ClInclude Include="NtfsIndex.hpp" />
     <ClInclude Include="NtfsIndexThread.hpp" />
-    <ClInclude Include="NtfsReader.hpp" />
     <ClInclude Include="NtObjectMini.hpp" />
     <ClInclude Include="path.hpp" />
     <ClInclude Include="ref_counter.hpp" />
