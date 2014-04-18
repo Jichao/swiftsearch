@@ -8,6 +8,7 @@
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x502
 #endif
+
 #define _WIN32_IE 0x600
 #define _STRALIGN_USE_SECURE_CRT 0
 #define _ATL_NO_COM 1

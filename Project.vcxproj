@@ -42,14 +42,14 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v120_xp</PlatformToolset>
+    <PlatformToolset>CTP_Nov2013</PlatformToolset>
     <UseOfAtl>Static</UseOfAtl>
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>false</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v120_xp</PlatformToolset>
+    <PlatformToolset>CTP_Nov2013</PlatformToolset>
     <UseOfAtl>Static</UseOfAtl>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -62,14 +62,14 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v120_xp</PlatformToolset>
+    <PlatformToolset>CTP_Nov2013</PlatformToolset>
     <UseOfAtl>Static</UseOfAtl>
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>false</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v120_xp</PlatformToolset>
+    <PlatformToolset>CTP_Nov2013</PlatformToolset>
     <UseOfAtl>Static</UseOfAtl>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -245,7 +245,7 @@
     <ClCompile>
       <AdditionalOptions>/we4535 /Zm200 /QIfist %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
-      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;$(VCInstallDir)\crt\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_X86_;NDEBUG;_CONSOLE;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -283,7 +283,7 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
     <ClCompile>
       <AdditionalOptions>/we4535 /Zm200 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
-      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;$(VCInstallDir)\crt\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;_CRT_SECURE_NO_WARNINGS;WIN32;_AMD64_;NDEBUG;_CONSOLE;_WIN64;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0501;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>

@@ -23,6 +23,8 @@
 #include <boost/range/iterator_range.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
 
+#include <sal.h>
+
 #include <Windows.h>
 #include <WinUser.h>
 #include <ComDef.h>
