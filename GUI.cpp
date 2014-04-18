@@ -774,9 +774,11 @@ public:
 		}
 	}
 
+	unsigned long Elapsed() const { return GetTickCount() - this->creationTime; }
+
 	bool ShouldUpdate() const
 	{
-		return GetTickCount() - this->lastUpdateTime >= UPDATE_INTERVAL;
+		return this->Elapsed() >= UPDATE_INTERVAL;
 	}
 
 	bool HasUserCancelled()
@@ -2072,7 +2074,7 @@ private:
 							}
 						}
 						TCHAR text[256];
-						_stprintf(text, _T("Reading file table of %s... %3u%% done"), drives.c_str(), static_cast<unsigned int>(progress * 100LL / (threads.size() * static_cast<unsigned long long>((std::numeric_limits<unsigned long>::max)()))));
+						_stprintf(text, _T("Reading file table of %s... %3u%% done\n%.1f seconds elapsed"), drives.c_str(), static_cast<unsigned int>(progress * 100LL / (threads.size() * static_cast<unsigned long long>((std::numeric_limits<unsigned long>::max)()))), dlg.Elapsed() / 1000.0);
 						dlg.SetProgressText(boost::make_iterator_range(text, text + std::char_traits<TCHAR>::length(text)));
 						dlg.SetProgress(progress, (threads.size() * static_cast<long long>((std::numeric_limits<unsigned long>::max)())));
 						dlg.Flush();
@@ -2120,6 +2122,7 @@ private:
 				{ }
 				~MatcherThread()
 				{
+					std::basic_string<TCHAR> text2;
 					while (!dlg.HasUserCancelled())
 					{
 						CProgressDialog::WaitMessageLoop();
@@ -2133,7 +2136,12 @@ private:
 								progress += static_cast<long volatile const &>(js[i]);
 							}
 							dlg.SetProgress(progress, max_rows);
-							dlg.SetProgressText(j < index->size() ? index->get_name_by_index(j).first : boost::as_literal(_T("")));
+							boost::iterator_range<TCHAR const *> const text = j < index->size() ? index->get_name_by_index(j).first : boost::as_literal(_T(""));
+							text2.assign(text.begin(), text.end());
+							TCHAR buf[256];
+							_stprintf(buf, _T("\n%.1f seconds elapsed"), dlg.Elapsed() / 1000.0);
+							text2.append(buf);
+							dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text2.data(), text2.data() + text2.size()));
 							dlg.Flush();
 						}
 					}
@@ -2234,7 +2242,8 @@ private:
 				this->lvFiles.SetItemCountEx(int_cast<int>(this->rows.size()), LVSICF_NOINVALIDATEALL);
 			}
 			std::basic_stringstream<TCHAR> ss;
-			ss << _T("Found ") << nformat(static_cast<int>(this->lvFiles.GetItemCount())) << _T(" file(s) on ") << (driveLetter.empty() ? _T("all drives") : driveLetter);
+			TCHAR buf[256]; _stprintf(buf, _T("%.1f"), dlg.Elapsed() / 1000.0);
+			ss << _T("Found ") << nformat(static_cast<int>(this->lvFiles.GetItemCount())) << _T(" file(s) on ") << (driveLetter.empty() ? _T("all drives") : driveLetter) << _T(" in ") << buf << _T(" second(s)");
 			this->statusbar.SetWindowText(ss.str().c_str());
 		}
 		catch (std::domain_error &ex)

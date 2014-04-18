@@ -13,13 +13,11 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// English (U.S.) resources
+// English (United States) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
-#ifdef _WIN32
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 #pragma code_page(1252)
-#endif //_WIN32
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
@@ -65,15 +63,15 @@ BEGIN
     CONTROL         "",IDC_LISTFILES,"SysListView32",LVS_REPORT | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | LVS_OWNERDATA | WS_TABSTOP,2,17,564,262,WS_EX_CLIENTEDGE
 END
 
-IDD_DIALOGPROGRESS DIALOGEX 0, 0, 266, 57
+IDD_DIALOGPROGRESS DIALOGEX 0, 0, 266, 63
 STYLE DS_SETFONT | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
 CAPTION "Dialog"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    DEFPUSHBUTTON   "Cancel",IDCANCEL,209,36,50,14
-    CONTROL         "",IDC_PROGRESS1,"msctls_progress32",PBS_SMOOTH,7,19,252,14,WS_EX_TRANSPARENT
-    CONTROL         "",IDC_RICHEDITPROGRESS,"RichEdit20W",WS_VSCROLL | WS_TABSTOP | 0x84,7,7,252,10
-    PUSHBUTTON      "&Pause",IDRETRY,155,36,50,14,NOT WS_VISIBLE
+    DEFPUSHBUTTON   "Cancel",IDCANCEL,209,42,50,14
+    CONTROL         "",IDC_PROGRESS1,"msctls_progress32",PBS_SMOOTH,7,26,252,14,WS_EX_TRANSPARENT
+    CONTROL         "",IDC_RICHEDITPROGRESS,"RichEdit20W",ES_MULTILINE | ES_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP,7,7,252,17
+    PUSHBUTTON      "&Pause",IDRETRY,155,42,50,14,NOT WS_VISIBLE
 END
 
 
@@ -83,7 +81,7 @@ END
 //
 
 #ifdef APSTUDIO_INVOKED
-GUIDELINES DESIGNINFO 
+GUIDELINES DESIGNINFO
 BEGIN
     IDD_DIALOGMAIN, DIALOG
     BEGIN
@@ -98,7 +96,7 @@ BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 259
         TOPMARGIN, 7
-        BOTTOMMARGIN, 50
+        BOTTOMMARGIN, 56
     END
 END
 #endif    // APSTUDIO_INVOKED
@@ -118,7 +116,7 @@ IDI_ICONMAIN            ICON                    "Search Drive.ico"
 // Menu
 //
 
-IDR_MENUMAIN MENU 
+IDR_MENUMAIN MENU
 BEGIN
     POPUP "&File"
     BEGIN
@@ -138,12 +136,12 @@ END
 // Accelerator
 //
 
-IDR_ACCELERATOR1 ACCELERATORS 
+IDR_ACCELERATOR1 ACCELERATORS
 BEGIN
     VK_F5,          ID_ACCELERATOR40006,    VIRTKEY, NOINVERT
 END
 
-#endif    // English (U.S.) resources
+#endif    // English (United States) resources
 /////////////////////////////////////////////////////////////////////////////
 
 
