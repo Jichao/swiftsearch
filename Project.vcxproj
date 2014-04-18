@@ -294,8 +294,8 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
       <DisableSpecificWarnings>4820;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>WinDDKFixes.hpp;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <ErrorReporting>None</ErrorReporting>
-      <DebugInformationFormat>None</DebugInformationFormat>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>None</DebugInformationFormat>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SystemDrive)\WinDDK\3790.1830\lib\crt\amd64\msvcrt.lib;$(SystemDrive)\WinDDK\3790.1830\lib\crt\amd64\msvcprt.lib;$(SystemDrive)\WinDDK\3790.1830\lib\atl\amd64\atlthunk.lib;$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -372,6 +372,7 @@ Echo Embedding 64-bit version...&amp;&amp; Path %25PATH%25%3b%25ProgramFiles%25\
     <ClInclude Include="Matcher.hpp" />
     <ClInclude Include="nformat.hpp" />
     <ClInclude Include="NTFS (1).h" />
+    <ClInclude Include="NtfsFileLayout.h" />
     <ClInclude Include="NtfsIndex.hpp" />
     <ClInclude Include="NtfsIndexThread.hpp" />
     <ClInclude Include="NtObjectMini.hpp" />

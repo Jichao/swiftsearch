@@ -104,10 +104,10 @@ struct DataRow
 		return s;
 	}
 	unsigned long parent() const { return this->record().second.second.first.second; }
-	long long creationTime() const { return this->record().second.first.first.first; }
-	long long modificationTime() const { return this->record().second.first.first.second; }
-	long long accessTime() const { return this->record().second.first.second.first; }
-	unsigned long attributes() const { return this->record().second.first.second.second; }
+	long long creationTime() const { return this->record().second.first.creationTime; }
+	long long modificationTime() const { return this->record().second.first.modificationTime; }
+	long long accessTime() const { return this->record().second.first.accessTime; }
+	unsigned long attributes() const { return this->record().second.first.attributes; }
 	long long size() const { return this->record().second.second.second.second.second.first; }
 	long long sizeOnDisk() const { return this->record().second.second.second.second.second.second; }
 };
@@ -755,7 +755,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 
 	DWORD GetMinDelay() const
 	{
-		return IsDebuggerPresent() ? 0 : 100;
+		return IsDebuggerPresent() ? 0 : 250;
 	}
 
 public:
@@ -2079,7 +2079,7 @@ private:
 					}
 					else
 					{
-						Sleep(0);
+						Sleep(1);
 					}
 				}
 			}

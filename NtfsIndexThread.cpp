@@ -144,18 +144,23 @@ unsigned int NtfsIndexThread::operator()()
 				unsigned long const sleepInterval = 100;  // The program can't exit while sleeping! So keep this value low.
 				using std::max;
 				using std::min;
-				for (long long nMillisToSleep = min(20 * 60 * 1000, max(10 * 60 * 1000, 80 * (q2.QuadPart - q1.QuadPart) / 10000));
-					nMillisToSleep > 0;
-					nMillisToSleep -= sleepInterval)
+				// if (!IsDebuggerPresent())
 				{
-					if (!this->_index)
+					for (long long nMillisToSleep = min(20 * 60 * 1000, max(10 * 60 * 1000, 80 * (q2.QuadPart - q1.QuadPart) / 10000));
+						nMillisToSleep > 0;
+						nMillisToSleep -= sleepInterval)
 					{
-						break;
-					}
-					if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
-					{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
-					while (SleepEx(sleepInterval, TRUE) == WAIT_IO_COMPLETION)
-					{
+						if (!this->_index)
+						{
+							break;
+						}
+						if (this->_progress == NtfsIndex::PROGRESS_CANCEL_REQUESTED)
+						{
+							throw CStructured_Exception(ERROR_CANCELLED, NULL);
+						}
+						while (SleepEx(sleepInterval, TRUE) == WAIT_IO_COMPLETION)
+						{
+						}
 					}
 				}
 			}

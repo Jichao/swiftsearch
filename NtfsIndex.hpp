@@ -5,6 +5,8 @@
 
 #include <utility>
 
+#include "named_tuple.hpp"
+
 #include <boost/range/iterator_range.hpp>
 
 namespace NTFS { enum AttributeTypeCode; }
@@ -20,7 +22,11 @@ public:
 	typedef unsigned long NameOffset;
 	typedef unsigned int NameLength;
 	typedef unsigned long SegmentNumber;
-	typedef std::pair<std::pair<long long, long long>, std::pair<long long, unsigned long> > StandardInformationAttribute;
+	DECLARE_NAMED_4TUPLE(StandardInformationAttribute,
+		long long, creationTime,
+		long long, modificationTime,
+		long long, accessTime,
+		unsigned long, attributes);
 	typedef std::pair<std::pair<NameOffset /*file name*/, NameLength>, SegmentNumber /* parent */> FileNameAttribute;
 	typedef std::pair<
 		std::pair<NTFS::AttributeTypeCode, bool /* file valid? (not deleted) */>,
@@ -72,12 +78,19 @@ private:
 	typedef FileNameAttrs::const_iterator FileNameIt;
 	typedef std::vector<CombinedRecord> CombinedRecords;
 
+	struct ProgressReporter;
+	class DupeChecker;
+	struct Callback;
+	class OverlappedBuffer;
+	struct FinishPendingReads;
+	struct DirectorySizeCalculator;
+
 	void process_file_name(
 		SegmentNumber const segmentNumber,
-		StandardInformationAttribute const standardInfoAttr, FileNameAttribute const fileNameAttr,
+		StandardInformationAttribute const &standardInfoAttr, FileNameAttribute const &fileNameAttr,
 		DataAttrs::const_iterator &itDataAttr, DataAttrs::const_iterator const itDataAttrsEnd, DataAttrsDerived const &dataAttrsDerived);
 
-	void process_file_data(SegmentNumber const segmentNumber, StandardInformationAttribute const standardInfoAttr, FileNameAttribute const fileNameAttr, DataAttribute const dataAttr);
+	void process_file_data(SegmentNumber const segmentNumber, StandardInformationAttribute const &standardInfoAttr, FileNameAttribute const &fileNameAttr, DataAttribute const &dataAttr);
 
 	std::basic_string<TCHAR> _win32Path;
 	std::basic_string<TCHAR> names;

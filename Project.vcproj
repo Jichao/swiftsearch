@@ -626,10 +626,6 @@
 				>
 			</File>
 			<File
-				RelativePath=".\NtfsReader.cpp"
-				>
-			</File>
-			<File
 				RelativePath=".\stdafx.cpp"
 				>
 				<FileConfiguration
@@ -731,10 +727,6 @@
 			</File>
 			<File
 				RelativePath=".\NtfsIndexThread.hpp"
-				>
-			</File>
-			<File
-				RelativePath=".\NtfsReader.hpp"
 				>
 			</File>
 			<File

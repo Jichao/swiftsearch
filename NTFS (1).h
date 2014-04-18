@@ -260,6 +260,7 @@ namespace NTFS
 
 		return lengthProcessed;
 	}
+
 	static LPCTSTR GetAttributeName(AttributeTypeCode typeCode)
 	{
 		switch (typeCode)
@@ -297,11 +298,25 @@ namespace NTFS
 			case AttributeLoggedUtilityStream:
 				return TEXT("$LOGGED_UTILITY_STREAM");
 			default:
-				RaiseException(ERROR_INVALID_PARAMETER, 0, 0, NULL);
-				break;
+				return NULL;
 		}
-		return NULL;
 	}
+
+	static AttributeTypeCode ParseAttributeName(LPCTSTR const begin, size_t const cch)
+	{
+		for (size_t i = 1;; ++i)
+		{
+			AttributeTypeCode const type = static_cast<AttributeTypeCode>(i << (CHAR_BIT / 2));
+			LPCTSTR const test = GetAttributeName(type);
+			if (!test) { break; }
+			if (_tcsnicmp(test, begin, cch) == 0 && test[cch] == _T('\0'))
+			{
+				return type;
+			}
+		}
+		return AttributeTypeCode();
+	}
+
 	inline ULONG RunLength(unsigned char const *run) { return(*run & 0x0f) + ((*run >> 4) & 0x0f) + 1; }
 	inline LONGLONG RunDeltaLCN(unsigned char const *run)
 	{
