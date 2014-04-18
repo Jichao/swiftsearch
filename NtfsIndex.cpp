@@ -702,6 +702,7 @@ NtfsIndex::NtfsIndex(
 				}
 			}
 		}
+		if (iteration == static_cast<size_t>(-1)) { iteration = 0; }
 		Callback callback(
 			this,
 			standardInfoAttrs, fileNameAttrs, dataAttrs,
