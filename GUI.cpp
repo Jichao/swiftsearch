@@ -146,9 +146,9 @@ struct Wow64Disable
 
 template<class Pattern, class Text, class Traits>
 bool wildcard(
-	      Pattern const pat_begin, Pattern const pat_end,
-	      Text text_begin, Text const text_end,
-	      Traits const &tr = std::char_traits<typename std::iterator_traits<Text>::value_type>())
+		Pattern const pat_begin, Pattern const pat_end,
+		Text text_begin, Text const text_end,
+		Traits const &tr = std::char_traits<typename std::iterator_traits<Text>::value_type>())
 {
 	ptrdiff_t const pat_size = pat_end - pat_begin;
 	ptrdiff_t stackbuf[64];
@@ -2306,7 +2306,7 @@ private:
 		}
 		this->lastSortIsDescending = -1;
 		this->lastSortColumn = -1;
-        }
+	}
 
 	intptr_t operator()(uintptr_t hWndParent)
 	{
