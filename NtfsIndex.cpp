@@ -868,15 +868,14 @@ std::pair<NtfsIndex::SubTString, std::pair<NtfsIndex::SubTString, NtfsIndex::Sub
 	TCHAR const *const data = this->names.data();
 	NTFS::AttributeTypeCode const type = record.second.second.second.first.first;
 	record.second.second.second.second.first;
-	SubTString const stream_name(data + record.second.second.second.second.first.first, data + record.second.second.second.second.first.first + record.second.second.second.second.first.second);
 	LPCTSTR const attribute_name = type == NTFS::AttributeData ||
-		(stream_name == _T("$I30") && (type == NTFS::AttributeIndexRoot || type == NTFS::AttributeIndexAllocation))
+		((type == NTFS::AttributeIndexRoot || type == NTFS::AttributeIndexAllocation) && !record.second.second.second.second.first.second)
 		? _T("")
 		: NTFS::GetAttributeName(type);
 	return std::pair<SubTString, std::pair<SubTString, SubTString> >(
 		SubTString(data + record.second.second.first.first.first, data + record.second.second.first.first.first + record.second.second.first.first.second),
 		std::pair<SubTString, SubTString>(
-			stream_name,
+			SubTString(data + record.second.second.second.second.first.first, data + record.second.second.second.second.first.first + record.second.second.second.second.first.second),
 			SubTString(attribute_name, attribute_name + std::char_traits<TCHAR>::length(attribute_name))));
 }
 

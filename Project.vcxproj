@@ -172,14 +172,12 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>C:\WinDDK\7600.16385.1\lib\wnet\amd64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <RandomizedBaseAddress />
       <DataExecutionPrevention />
       <LinkErrorReporting />
-      <ForceFileOutput>MultiplyDefinedSymbolOnly</ForceFileOutput>
-      <AdditionalOptions>/PDBAltPath:"%_PDB%" %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/PDBAltPath:"%_PDB%" /DefaultLib:"libcmtd.lib" /DefaultLib:"$(SystemDrive)\WinDDK\3790.1830\lib\wnet\amd64\ntdll.lib" %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command />

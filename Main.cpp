@@ -63,6 +63,15 @@ LONG WINAPI MyUnhandledExceptionFilter(IN struct _EXCEPTION_POINTERS* ExceptionI
 }
 #endif
 
+#ifndef _WIN64
+BOOL WINAPI GetLogicalProcessorInformation(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION Buffer, PDWORD ReturnedLength)
+{
+	HMODULE kernel32;
+	return GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCTSTR>(&GetProcessAffinityMask), &kernel32)
+		&& (*reinterpret_cast<BOOL(WINAPI *)(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION, PDWORD)>(GetProcAddress(kernel32, "GetLogicalProcessorInformation")))(Buffer, ReturnedLength);
+}
+#endif
+
 int run(HINSTANCE hInstance, int nShowCmd)
 {
 	//SetUnhandledExceptionFilter(MyUnhandledExceptionFilter);
