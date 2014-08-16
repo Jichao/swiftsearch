@@ -92,8 +92,8 @@ namespace ntfs
 		unsigned long Checksum;
 
 		unsigned char BootStrap[0x200 - 0x54];
-		size_t file_record_size() const { return this->ClustersPerFileRecordSegment >= 0 ? this->ClustersPerFileRecordSegment * this->SectorsPerCluster * this->BytesPerSector : 1U << static_cast<int>(-this->ClustersPerFileRecordSegment); }
-		size_t cluster_size() const { return this->SectorsPerCluster * this->BytesPerSector; }
+		unsigned int file_record_size() const { return this->ClustersPerFileRecordSegment >= 0 ? this->ClustersPerFileRecordSegment * this->SectorsPerCluster * this->BytesPerSector : 1U << static_cast<int>(-this->ClustersPerFileRecordSegment); }
+		unsigned int cluster_size() const { return this->SectorsPerCluster * this->BytesPerSector; }
 	};
 #pragma pack(pop)
 	struct MULTI_SECTOR_HEADER
@@ -345,7 +345,7 @@ void read(void *const file, unsigned long long const offset, void *const buffer,
 		overlapped.Offset = static_cast<unsigned int>(offset);
 		overlapped.OffsetHigh = static_cast<unsigned int>(offset >> (CHAR_BIT * sizeof(overlapped.Offset)));
 		unsigned long nr;
-		CheckAndThrow(ReadFile(file, buffer, size, &nr, &overlapped) || (GetLastError() == ERROR_IO_PENDING && GetOverlappedResult(file, &overlapped, &nr, TRUE)));
+		CheckAndThrow(ReadFile(file, buffer, static_cast<unsigned long>(size), &nr, &overlapped) || (GetLastError() == ERROR_IO_PENDING && GetOverlappedResult(file, &overlapped, &nr, TRUE)));
 	}
 }
 
@@ -420,7 +420,7 @@ std::vector<std::pair<unsigned long long, long long> > get_mft_retrieval_pointer
 		result.resize(1 + (sizeof(RETRIEVAL_POINTERS_BUFFER) - 1) / sizeof(Result::value_type));
 		STARTING_VCN_INPUT_BUFFER input = {};
 		BOOL success;
-		for (unsigned long nr; !(success = DeviceIoControl(handle, FSCTL_GET_RETRIEVAL_POINTERS, &input, sizeof(input), &*result.begin(), result.size() * sizeof(*result.begin()), &nr, NULL), success) && GetLastError() == ERROR_MORE_DATA;)
+		for (unsigned long nr; !(success = DeviceIoControl(handle, FSCTL_GET_RETRIEVAL_POINTERS, &input, sizeof(input), &*result.begin(), static_cast<unsigned long>(result.size()) * sizeof(*result.begin()), &nr, NULL), success) && GetLastError() == ERROR_MORE_DATA;)
 		{
 			size_t const n = result.size();
 			Result(/* free old memory */).swap(result);
@@ -659,7 +659,7 @@ int _tmain(int argc, TCHAR* argv[])
 			while (!this->empty())
 			{
 				size_t n = std::min(this->size(), static_cast<size_t>(MAXIMUM_WAIT_OBJECTS));
-				WaitForMultipleObjects(n, reinterpret_cast<void *const *>(&*this->begin() + this->size() - n), TRUE, INFINITE);
+				WaitForMultipleObjects(static_cast<unsigned long>(n), reinterpret_cast<void *const *>(&*this->begin() + this->size() - n), TRUE, INFINITE);
 				while (n) { this->pop_back(); --n; }
 			}
 		}
@@ -694,7 +694,7 @@ int _tmain(int argc, TCHAR* argv[])
 					// Completed synchronously... call the method
 					if (pass)
 					{
-						CheckAndThrow(PostQueuedCompletionStatus(iocp, overlapped->InternalHigh, reinterpret_cast<uintptr_t>(static_cast<void *>(volume)), overlapped.get()));
+						CheckAndThrow(PostQueuedCompletionStatus(iocp, static_cast<unsigned long>(overlapped->InternalHigh), reinterpret_cast<uintptr_t>(static_cast<void *>(volume)), overlapped.get()));
 						overlapped.release();
 					}
 				}
