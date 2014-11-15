@@ -30,6 +30,16 @@ extern WTL::CAppModule _Module;
 #include "resource.h"
 
 namespace std { typedef basic_string<TCHAR> tstring; }
+namespace std
+{
+	template<class> struct is_scalar;
+#ifdef _XMEMORY_
+	template<class T1, class T2> struct is_scalar<std::pair<T1, T2> > : integral_constant<bool, is_pod<T1>::value && is_pod<T2>::value>{};
+	template<class T1, class T2, class _Diff, class _Valty>
+	inline void _Uninit_def_fill_n(std::pair<T1, T2> *_First, _Diff _Count, _Wrap_alloc<allocator<std::pair<T1, T2> > >&, _Valty *, _Scalar_ptr_iterator_tag)
+	{ _Fill_n(_First, _Count, _Valty()); }
+#endif
+}
 
 class mutex
 {
@@ -614,27 +624,32 @@ class NtfsIndex
 	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
 	std::tstring names;
 #pragma pack(push)
-	// #pragma pack(1)
+#pragma pack(2)
 	struct StandardInfo
 	{
 		long long created, written, accessed;
 		unsigned long attributes;
 	};
+	friend struct std::is_scalar<StandardInfo>;
 	struct NameInfo
 	{
 		unsigned int offset;
 		unsigned char length;
 	};
+	friend struct std::is_scalar<NameInfo>;
 	struct LinkInfo
 	{
-		unsigned int parent;
 		NameInfo name;
+		unsigned int parent;
+		TCHAR buf[8];
 	};
+	friend struct std::is_scalar<LinkInfo>;
 	struct StreamInfo
 	{
 		NameInfo name;
 		long long length, allocated;
 	};
+	friend struct std::is_scalar<StreamInfo>;
 #pragma pack(pop)
 	typedef std::vector<std::pair<LinkInfo, size_t /* next */> > LinkInfos;
 	typedef std::vector<std::pair<StreamInfo, size_t /* next */> > StreamInfos;
@@ -644,10 +659,11 @@ class NtfsIndex
 	struct Record
 	{
 		StandardInfo stdinfo;
-		LinkInfos::size_type inameinfo;
-		StreamInfos::size_type istreaminfo;
-		ChildInfos::size_type children;
+		LinkInfos::value_type first_name;
+		StreamInfos::value_type first_stream;
+		ChildInfos::value_type first_child;
 	};
+	friend struct std::is_scalar<Record>;
 	Records records;
 	LinkInfos nameinfos;
 	StreamInfos streaminfos;
@@ -656,7 +672,6 @@ class NtfsIndex
 	size_t loads_so_far;
 	size_t total_loads;
 public:
-	std::vector<bool> mft_bitmap;
 	unsigned int mft_record_size;
 	NtfsIndex() : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), loads_so_far(), total_loads(), mft_record_size() { this->check_finished(); }
 	typedef std::pair<unsigned int, std::pair<unsigned short, unsigned short> > key_type;
@@ -709,11 +724,13 @@ public:
 	{
 		return reinterpret_cast<uintptr_t>(this->_finished_event.value);
 	}
-	void check_finished() volatile
+	static Record empty_record()
 	{
-		this_type *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
-		return me->check_finished();
+		Record empty_record = Record(/* TODO: Should be -1 */);
+		empty_record.first_stream.second = empty_record.first_name.second = empty_record.first_child.second = ~size_t();
+		empty_record.first_child.first = ~size_t();
+		empty_record.first_stream.first.name.offset = empty_record.first_name.first.name.offset = ~unsigned int();
+		return empty_record;
 	}
 	void check_finished()
 	{
@@ -729,6 +746,7 @@ public:
 	void set_total_loads(size_t const n)
 	{
 		this->total_loads = n;
+		this->check_finished();
 	}
 	void load(unsigned long long const virtual_offset, void *const buffer, size_t const size) volatile
 	{
@@ -736,83 +754,98 @@ public:
 		lock_guard<mutex> const lock(me->_mutex);
 		me->load(virtual_offset, buffer, size);
 	}
+	void reserve(unsigned int const records)
+	{
+		if (this->records.size() < records)
+		{
+			this->nameinfos.reserve(records * 2);
+			this->streaminfos.reserve(records);
+			this->childinfos.reserve(records + records / 2);
+			this->records.resize(records, NtfsIndex::empty_record());
+		}
+	}
 	void load(unsigned long long const virtual_offset, void *const buffer, size_t const size)
 	{
-		Record empty_record = Record(/* TODO: Should be -1 */);
-		empty_record.istreaminfo = empty_record.inameinfo = empty_record.children = ~size_t();
-
-
+		Record const empty_record = NtfsIndex::empty_record();
 		if (size % this->mft_record_size)
 		{ throw std::runtime_error("cluster size is smaller than MFT record size; split MFT records not supported"); }
 		for (size_t i = virtual_offset % this->mft_record_size ? this->mft_record_size - virtual_offset % this->mft_record_size : 0; i + this->mft_record_size <= size; i += this->mft_record_size)
 		{
 			unsigned int const frs = static_cast<unsigned int>((virtual_offset + i) / this->mft_record_size);
-			if (this->mft_bitmap[frs])
+			ntfs::FILE_RECORD_SEGMENT_HEADER *const frsh = reinterpret_cast<ntfs::FILE_RECORD_SEGMENT_HEADER *>(&static_cast<unsigned char *>(buffer)[i]);
+			if (frsh->MultiSectorHeader.Magic == 'ELIF' && frsh->MultiSectorHeader.unfixup(this->mft_record_size) && !!(frsh->Flags & ntfs::FRH_IN_USE))
 			{
-				ntfs::FILE_RECORD_SEGMENT_HEADER *const frsh = reinterpret_cast<ntfs::FILE_RECORD_SEGMENT_HEADER *>(&static_cast<unsigned char *>(buffer)[i]);
-				if (frsh->MultiSectorHeader.Magic == 'ELIF' && frsh->MultiSectorHeader.unfixup(this->mft_record_size) && !!(frsh->Flags & ntfs::FRH_IN_USE))
+				unsigned int const frs_base = frsh->BaseFileRecordSegment ? static_cast<unsigned int>(frsh->BaseFileRecordSegment) : frs;
+				if (frs_base >= this->records.size()) { this->records.resize(frs_base + 1, empty_record); }
+				Records::iterator record = this->records.begin() + static_cast<ptrdiff_t>(frs_base);
+				for (ntfs::ATTRIBUTE_RECORD_HEADER const
+					*ah = frsh->begin(); ah < frsh->end(this->mft_record_size) && ah->Type != ntfs::AttributeTypeCode() && ah->Type != ntfs::AttributeEnd; ah = ah->next())
 				{
-					unsigned int const frs_base = frsh->BaseFileRecordSegment ? static_cast<unsigned int>(frsh->BaseFileRecordSegment) : frs;
-					if (frs_base >= this->records.size()) { this->records.resize(frs_base + 1, empty_record); }
-					Records::iterator record = this->records.begin() + static_cast<ptrdiff_t>(frs_base);
-					for (ntfs::ATTRIBUTE_RECORD_HEADER const
-						*ah = frsh->begin(); ah < frsh->end(this->mft_record_size) && ah->Type != ntfs::AttributeTypeCode() && ah->Type != ntfs::AttributeEnd; ah = ah->next())
+					switch (ah->Type)
 					{
-						switch (ah->Type)
+					case ntfs::AttributeStandardInformation:
+						if (ntfs::STANDARD_INFORMATION const *const fn = static_cast<ntfs::STANDARD_INFORMATION const *>(ah->Resident.GetValue()))
 						{
-						case ntfs::AttributeStandardInformation:
-							if (ntfs::STANDARD_INFORMATION const *const fn = static_cast<ntfs::STANDARD_INFORMATION const *>(ah->Resident.GetValue()))
-							{
-								record->stdinfo.created = fn->CreationTime;
-								record->stdinfo.written = fn->LastModificationTime;
-								record->stdinfo.accessed = fn->LastAccessTime;
-								record->stdinfo.attributes = fn->FileAttributes;
-							}
-							break;
-						case ntfs::AttributeFileName:
-							if (ntfs::FILENAME_INFORMATION const *const fn = static_cast<ntfs::FILENAME_INFORMATION const *>(ah->Resident.GetValue()))
-							{
-								unsigned int const frs_parent = static_cast<unsigned int>(fn->ParentDirectory);
-								if (frs_base != frs_parent && fn->Flags != 0x02 /* FILE_NAME_DOS */)
-								{
-									LinkInfo const info = { frs_parent, static_cast<unsigned int>(this->names.size()), fn->FileNameLength };
-									this->names.append(fn->FileName, fn->FileName + fn->FileNameLength);
-									{
-										size_t const link_index = this->nameinfos.size();
-										this->nameinfos.push_back(LinkInfos::value_type(info, record->inameinfo));
-										record->inameinfo = link_index;
-									}
-									if (frs_parent >= this->records.size())
-									{
-										this->records.resize(frs_parent + 1, empty_record);
-										record = this->records.begin() + static_cast<ptrdiff_t>(frs_base);
-									}
-									size_t const ichild = this->childinfos.size();
-									this->childinfos.push_back(ChildInfos::value_type(frs_base, this->records[frs_parent].children));
-									this->records[frs_parent].children = ichild;
-								}
-							}
-							break;
-						case ntfs::AttributeData:
-							{
-								StreamInfo const info = { { static_cast<unsigned int>(this->names.size()), ah->NameLength }, ah->IsNonResident ? ah->Resident.ValueLength : ah->NonResident.DataSize, ah->IsNonResident ? ah->Length : ah->NonResident.CompressionUnit ? ah->NonResident.CompressedSize : ah->NonResident.AllocatedSize };
-								this->names.append(ah->name(), ah->name() + ah->NameLength);
-								{
-									size_t const stream_index = this->streaminfos.size();
-									this->streaminfos.push_back(StreamInfos::value_type(info, record->istreaminfo));
-									record->istreaminfo = stream_index;
-								}
-							}
-							break;
-						default:
-							break;
+							record->stdinfo.created = fn->CreationTime;
+							record->stdinfo.written = fn->LastModificationTime;
+							record->stdinfo.accessed = fn->LastAccessTime;
+							record->stdinfo.attributes = fn->FileAttributes;
 						}
+						break;
+					case ntfs::AttributeFileName:
+						if (ntfs::FILENAME_INFORMATION const *const fn = static_cast<ntfs::FILENAME_INFORMATION const *>(ah->Resident.GetValue()))
+						{
+							unsigned int const frs_parent = static_cast<unsigned int>(fn->ParentDirectory);
+							if (frs_base != frs_parent && fn->Flags != 0x02 /* FILE_NAME_DOS */)
+							{
+								LinkInfo info = { { static_cast<unsigned int>(this->names.size()), fn->FileNameLength }, frs_parent };
+								size_t const cch_cached = std::min(sizeof(info.buf) / sizeof(*info.buf), static_cast<size_t>(fn->FileNameLength));
+								std::copy(fn->FileName, fn->FileName + static_cast<ptrdiff_t>(cch_cached), info.buf);
+								this->names.append(fn->FileName + static_cast<ptrdiff_t>(cch_cached), fn->FileNameLength - cch_cached);
+								if (~record->first_name.first.name.offset)
+								{
+									size_t const link_index = this->nameinfos.size();
+									this->nameinfos.push_back(record->first_name);
+									record->first_name.second = link_index;
+								}
+								record->first_name.first = info;
+								if (frs_parent >= this->records.size())
+								{
+									this->records.resize(frs_parent + 1, empty_record);
+									record = this->records.begin() + static_cast<ptrdiff_t>(frs_base);
+								}
+								if (~this->records[frs_parent].first_child.first)
+								{
+									size_t const ichild = this->childinfos.size();
+									this->childinfos.push_back(this->records[frs_parent].first_child);
+									this->records[frs_parent].first_child.second = ichild;
+								}
+								this->records[frs_parent].first_child.first = frs_base;
+							}
+						}
+						break;
+					case ntfs::AttributeData:
+						{
+							StreamInfo const info = { { static_cast<unsigned int>(this->names.size()), ah->NameLength }, ah->IsNonResident ? ah->Resident.ValueLength : ah->NonResident.DataSize, ah->IsNonResident ? ah->Length : ah->NonResident.CompressionUnit ? ah->NonResident.CompressedSize : ah->NonResident.AllocatedSize };
+							this->names.append(ah->name(), ah->name() + ah->NameLength);
+							if (~record->first_stream.first.name.offset)
+							{
+								size_t const stream_index = this->streaminfos.size();
+								this->streaminfos.push_back(record->first_stream);
+								record->first_stream.second = stream_index;
+							}
+							record->first_stream.first = info;
+						}
+						break;
+					default:
+						break;
 					}
-					// fprintf(stderr, "%llx\n", frsh->BaseFileRecordSegment);
 				}
+				// fprintf(stderr, "%llx\n", frsh->BaseFileRecordSegment);
 			}
 		}
 		++this->loads_so_far;
+		this->check_finished();
 	}
 
 	size_t get_path(key_type key, std::tstring &result) const volatile
@@ -834,19 +867,19 @@ public:
 			}
 			bool found = false;
 			unsigned short ji = 0;
-			for (size_t j = this->records[key.first].inameinfo; ~j; j = this->nameinfos[j].second, ++ji)
+			for (LinkInfos::value_type const *j = &this->records[key.first].first_name; j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
 				if (ji == key.second.first)
 				{
 					found = true;
-					std::tstring::const_iterator const
-						sb = this->names.begin() + static_cast<ptrdiff_t>(this->nameinfos[j].first.name.offset),
-						se = sb + static_cast<ptrdiff_t>(this->nameinfos[j].first.name.length);
-					result.append(sb, se);
-					std::reverse(result.end() - (se - sb), result.end());
-					actual_length += static_cast<size_t>(se - sb);
+					size_t const cch_cached = std::min(sizeof(j->first.buf) / sizeof(*j->first.buf), static_cast<size_t>(j->first.name.length));
+					result.append(j->first.buf, cch_cached);
+					if (cch_cached < j->first.name.length)
+					{ result.append(this->names.data() + static_cast<ptrdiff_t>(j->first.name.offset), j->first.name.length - cch_cached); }
+					std::reverse(result.end() - static_cast<ptrdiff_t>(j->first.name.length), result.end());
+					actual_length += static_cast<size_t>(j->first.name.length);
 					key = key_type();
-					key.first = this->nameinfos[j].first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/;
+					key.first = j->first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/;
 					break;
 				}
 			}
@@ -863,41 +896,61 @@ public:
 	template<class F>
 	void matches(F func, std::tstring const &pattern, std::tstring &path) const
 	{
-		std::vector<size_t> scratch;
+		std::vector<uintptr_t> scratch;
 		return lock_guard<mutex>(this->_mutex), this->matches<F>(func, pattern, path, 5, scratch);
 	}
 
 	template<class F>
-	void matches(F func, std::tstring const &pattern, std::tstring &path, size_t const frs, std::vector<size_t> &scratch) const
+	void matches(F func, std::tstring const &pattern, std::tstring &path, size_t const frs, std::vector<uintptr_t> &scratch) const
 	{
-		bool const is_root = frs == 5;
-		for (size_t i = frs < this->records.size() ? this->records[frs].children : ~size_t(); ~i; i = this->childinfos[i].second)
+		size_t ii = 0;
+		for (ChildInfos::value_type const *i = frs < this->records.size() ? &this->records[frs].first_child : NULL; i && ~i->first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
 		{
-			unsigned int const frs_child = static_cast<unsigned int>(this->childinfos[i].first);
-			size_t n0 = scratch.size(), m = 0;
-			for (size_t j = this->records[frs_child].inameinfo; ~j; j = this->nameinfos[j].second, ++m)
+			unsigned short ji = 0;
+			for (LinkInfos::value_type const *j = &this->records[i->first].first_name; j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
-				scratch.push_back(j);
+				scratch.push_back(reinterpret_cast<uintptr_t>(j));
 			}
-			for (unsigned short ji = 0; ji != m; ++ji)
+			scratch.push_back(ji);
+			scratch.push_back(reinterpret_cast<uintptr_t>(i));
+		}
+		while (ii && (--ii, true))
+		{
+			ChildInfos::value_type const *const i = reinterpret_cast<ChildInfos::value_type const *>(scratch.back()); scratch.pop_back();
+			unsigned short ji = static_cast<unsigned short>(scratch.back()); scratch.pop_back();
+			while (ji && (--ji, true))
 			{
-				LinkInfos::const_iterator const jj = this->nameinfos.begin() + static_cast<ptrdiff_t>(scratch[n0 + ji]);
-				std::tstring::const_iterator const
-					sb = this->names.begin() + static_cast<ptrdiff_t>(jj->first.name.offset),
-					se = sb + static_cast<ptrdiff_t>(jj->first.name.length);
-				path.append(!is_root, _T('\\'));
-				path.append(sb, se);
-				this->matches<F>(func, pattern, path, frs_child, scratch);
+				LinkInfos::value_type const *const j = reinterpret_cast<LinkInfos::value_type const *>(scratch.back()); scratch.pop_back();
+				bool const is_root = frs == 5;
+				if (!is_root) { path += _T('\\'); }
+				size_t const cch_cached = std::min(sizeof(j->first.buf) / sizeof(*j->first.buf), static_cast<size_t>(j->first.name.length));
+				path.append(j->first.buf, cch_cached);
+				if (cch_cached < j->first.name.length)
+				{ path.append(this->names.data() + static_cast<ptrdiff_t>(j->first.name.offset), j->first.name.length - cch_cached); }
+				this->matches<F>(func, pattern, path, i->first, scratch);
 				if (wildcard(pattern.begin(), pattern.end(), path.begin(), path.end(), std::char_traits<std::tstring::value_type>()))
 				{
-					func(key_type(static_cast<key_type::first_type>(frs_child), key_type::second_type(ji, key_type::second_type::second_type())));
+					func(key_type(static_cast<key_type::first_type>(i->first), key_type::second_type(ji, key_type::second_type::second_type())));
 				}
-				path.erase(path.end() - (se - sb), path.end());
-				path.erase(path.end() - !is_root, path.end());
+				path.erase(path.end() - static_cast<ptrdiff_t>(j->first.name.length), path.end());
+				if (!is_root) { path.erase(path.end() - 1, path.end()); }
 			}
 		}
 	}
 };
+
+namespace std
+{
+#ifdef _XMEMORY_
+#define X(...) template<> struct is_scalar<__VA_ARGS__> : is_pod<__VA_ARGS__>{}
+	X(NtfsIndex::StandardInfo);
+	X(NtfsIndex::NameInfo);
+	X(NtfsIndex::StreamInfo);
+	X(NtfsIndex::LinkInfo);
+	X(NtfsIndex::Record);
+#undef X
+#endif
+}
 
 class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize<CMainDlg>, public CInvokeImpl<CMainDlg>, private WTL::CMessageFilter
 {
@@ -933,7 +986,6 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		{
 			NtfsIndex volatile *const p = reinterpret_cast<NtfsIndex volatile *>(key);
 			p->load(this->virtual_offset, this->data(), size);
-			p->check_finished();
 		}
 	};
 	class OverlappedCompletion : public Overlapped
@@ -946,7 +998,6 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 			(void) size;
 			NtfsIndex volatile *const p = reinterpret_cast<NtfsIndex volatile *>(key);
 			p->set_total_loads(this->n);
-			p->check_finished();
 		}
 	};
 	static unsigned long get_num_threads()
@@ -982,7 +1033,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	LimitedIocp queue;
 	Threads threads;
 public:
-	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), queue(num_threads * 100), threads(num_threads)
+	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), queue(num_threads), threads(num_threads)
 	{
 		for (unsigned int i = 0; i != this->threads.size(); ++i)
 		{
@@ -1030,13 +1081,12 @@ public:
 			async([this, i, path_name]() mutable
 			/* TODO: Make this a separate struct */
 			{
-				_sleep(static_cast<unsigned long>(static_cast<size_t>(i - this->indices.begin()) + 1) * 25);
 				if (uintptr_t const volume_handle = i->open(path_name))
 				{
 					void *const volume = reinterpret_cast<void *>(volume_handle);
 					unsigned int cluster_size;
+					unsigned int num_records;
 					long long mft_start_lcn;
-					if (true)
 					{
 						unsigned long br;
 						NTFS_VOLUME_DATA_BUFFER volume_data;
@@ -1044,24 +1094,15 @@ public:
 						cluster_size = static_cast<unsigned int>(volume_data.BytesPerCluster);
 						mft_start_lcn = volume_data.MftStartLcn.QuadPart;
 						i->mft_record_size = volume_data.BytesPerFileRecordSegment;
-					}
-					else
-					{
-						ntfs::NTFS_BOOT_SECTOR boot_sector;
-						read(volume, 0, &boot_sector, sizeof(boot_sector));
-						cluster_size = boot_sector.cluster_size();
-						mft_start_lcn = boot_sector.MftStartLcn;
-						i->mft_record_size = boot_sector.file_record_size();
+						num_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / i->mft_record_size);
 					}
 					CheckAndThrow(!!CreateIoCompletionPort(volume, this->queue.iocp, reinterpret_cast<uintptr_t>(&*i), 0));
-					for (int pass = 0; pass < 2; ++pass)
 					{
 						unsigned int num_reads = 0;
 						long long size = 0;
 						typedef std::vector<std::pair<unsigned long long, long long> > RetPtrs;
-						RetPtrs const ret_ptrs = get_mft_retrieval_pointers(volume, pass ? _T("$MFT::$DATA") : _T("$MFT::$BITMAP"), &size, mft_start_lcn, cluster_size, i->mft_record_size);
-						std::vector<char> mft_bitmap_c;
-						if (!pass) { mft_bitmap_c.resize(static_cast<size_t>(size)); }
+						RetPtrs const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &size, mft_start_lcn, cluster_size, i->mft_record_size);
+						i->reserve(num_records);
 						for (RetPtrs::const_iterator j = ret_ptrs.begin(); j != ret_ptrs.end(); ++j)
 						{
 							unsigned long nb;
@@ -1076,44 +1117,22 @@ public:
 								overlapped->Offset = static_cast<unsigned long>(lbn);
 								overlapped->OffsetHigh = static_cast<unsigned long>(lbn >> (CHAR_BIT * sizeof(overlapped->Offset)));
 								overlapped->virtual_offset = vbn;
-								if (!pass) { overlapped->hEvent = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(CreateEvent(NULL, TRUE, FALSE, NULL)) | 1); }
 								++num_reads;
 								if (ReadFile(volume, overlapped->data(), nb, NULL, static_cast<Overlapped *>(overlapped.get())))
 								{
 									// Completed synchronously... call the method
-									if (pass)
-									{
-										CheckAndThrow(PostQueuedCompletionStatus(this->queue.iocp, static_cast<unsigned long>(overlapped->InternalHigh), reinterpret_cast<uintptr_t>(&*i), static_cast<Overlapped *>(overlapped.get())));
-										overlapped.release();
-									}
+									CheckAndThrow(PostQueuedCompletionStatus(this->queue.iocp, static_cast<unsigned long>(overlapped->InternalHigh), reinterpret_cast<uintptr_t>(&*i), static_cast<Overlapped *>(overlapped.get())));
+									overlapped.release();
 								}
 								else if (GetLastError() != ERROR_IO_PENDING)
 								{ CheckAndThrow(false); }
-								else if (pass)
-								{ overlapped.release(); }
 								else
-								{
-									unsigned long nr;
-									CheckAndThrow(GetOverlappedResult(volume, static_cast<Overlapped *>(overlapped.get()), &nr, TRUE));
-									// TODO: $MFT::$BITMAP has been read; use it to avoid reading invalid portions on the second pass
-									nr = std::min(nr, std::max(static_cast<unsigned long>(mft_bitmap_c.size()), static_cast<unsigned long>(overlapped->virtual_offset)) - static_cast<unsigned long>(overlapped->virtual_offset));
-									if (nr /* otherwise the iterator might go out of bounds */)
-									{
-										std::copy(
-											static_cast<char *>(overlapped->data()),
-											static_cast<char *>(overlapped->data()) + static_cast<ptrdiff_t>(nr),
-											mft_bitmap_c.begin() + static_cast<ptrdiff_t>(overlapped->virtual_offset));
-									}
-								}
+								{ overlapped.release(); }
 								lbn += nb;
 							}
 						}
-						if (pass)
-						{
-							typedef OverlappedCompletion T;
-							CheckAndThrow(PostQueuedCompletionStatus(this->queue.iocp, num_reads, reinterpret_cast<uintptr_t>(&*i), static_cast<Overlapped *>(new(0) T(sizeof(T), this->queue.semaphore, num_reads))));
-						}
-						if (!pass) { vector_bool(mft_bitmap_c).swap(i->mft_bitmap); }
+						typedef OverlappedCompletion T;
+						CheckAndThrow(PostQueuedCompletionStatus(this->queue.iocp, num_reads, reinterpret_cast<uintptr_t>(&*i), static_cast<Overlapped *>(new(0) T(sizeof(T), this->queue.semaphore, num_reads))));
 					}
 				}
 			});
@@ -1140,7 +1159,7 @@ public:
 				uintptr_t const finished_event = i->finished_event();
 				// if (WaitForSingleObject(reinterpret_cast<HANDLE>(finished_event), INFINITE) == WAIT_OBJECT_0)
 				{
-					std::tstring path;
+					std::tstring path = i->root_path();
 					i->matches([this, i](NtfsIndex::key_type const key)
 					{
 						this->results.push_back(Results::value_type(&*i, key));
@@ -1149,7 +1168,7 @@ public:
 				}
 			}
 			clock_t const end = clock();
-			_ftprintf(stderr, _T("%u ms\n"), (end - start) * 1000 / CLOCKS_PER_SEC);
+			_ftprintf(stderr, _T("%u ms, %u results\n"), (end - start) * 1000 / CLOCKS_PER_SEC, static_cast<unsigned int>(this->results.size()));
 		}
 	}
 
