@@ -27,5 +27,3 @@ extern WTL::CAppModule _Module;
 #include <atlctrls.h>
 #include <atlctrlx.h>
 #include <atltheme.h>
-
-#include "vector_bool.hpp"

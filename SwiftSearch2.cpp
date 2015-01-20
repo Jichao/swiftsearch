@@ -3,14 +3,27 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <time.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <boost/atomic/atomic.hpp>
+#include <boost/range/iterator_range.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/smart_ptr/shared_ptr.hpp>
+
 namespace WTL { using std::min; using std::max; }
 
 #include <Windows.h>
+#include <Dbt.h>
+#include <ProvExce.h>
+#include <ShlObj.h>
 
 #include <atlbase.h>
 #include <atlapp.h>
@@ -22,12 +35,22 @@ extern WTL::CAppModule _Module;
 #include <atlctrls.h>
 #include <atlctrlx.h>
 #include <atltheme.h>
+#include <comdef.h>
 
-#include "vector_bool.hpp"
+#include "nformat.hpp"
+#include "path.hpp"
 
+#include "BackgroundWorker.hpp"
+#include "ShellItemIDList.hpp"
 #include "CModifiedDialogImpl.hpp"
 
 #include "resource.h"
+
+// #include <boost/xpressive/xpressive_dynamic.hpp>
+
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
+#define BOOST_XPRESSIVE_DYNAMIC_HPP_EAN BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
+#endif
 
 namespace std { typedef basic_string<TCHAR> tstring; }
 namespace std
@@ -111,6 +134,7 @@ struct lock_guard
 	mutex_type *p;
 	~lock_guard() { if (p) { p->unlock(); } }
 	lock_guard() : p() { }
+	explicit lock_guard(mutex_type *const mutex, bool const already_locked = false) : p(mutex) { if (p && !already_locked) { p->lock(); } }
 	explicit lock_guard(mutex_type &mutex, bool const already_locked = false) : p(&mutex) { if (!already_locked) { p->lock(); } }
 	lock_guard(lock_guard const &other) : p(other.p) { if (p) { p->lock(); } }
 	lock_guard &operator =(lock_guard other) { return this->swap(other), *this; }
@@ -121,9 +145,12 @@ struct lock_guard
 template<class F>
 void async(F f)
 {
-	struct Runner { static void async(void *const f) { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); (*std::auto_ptr<F>(static_cast<F *>(f)))(); } };
+	struct Runner { static unsigned int __stdcall async(void *const f) { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); (*std::auto_ptr<F>(static_cast<F *>(f)))(); return 0; } };
 	std::auto_ptr<F> p(new F(f));
-	if (~_beginthread(static_cast<void(*)(void *)>(&Runner::async), 0, static_cast<void *>(p.get()))) { p.release(); }
+	unsigned int id;
+	HANDLE const handle =
+		reinterpret_cast<HANDLE>(_beginthreadex(NULL, 0, static_cast<unsigned int(__stdcall *)(void *)>(&Runner::async), static_cast<void *>(p.get()), 0, &id));
+	if (handle) { CloseHandle(handle); p.release(); }
 	else { throw std::runtime_error("error spawning thread"); }
 }
 
@@ -167,7 +194,7 @@ inline bool wildcard(It1 patBegin, It1 const patEnd, It2 strBegin, It2 const str
 	It1 p(patBegin);
 	bool star = false;
 
-loopStart:
+loop:
 	for (s = strBegin, p = patBegin; s != strEnd && p != patEnd; ++s, ++p)
 	{
 		if (tr.eq(*p, _T('*')))
@@ -176,32 +203,21 @@ loopStart:
 			strBegin = s, patBegin = p;
 			if (++patBegin == patEnd)
 			{ return true; }
-			goto loopStart;
+			goto loop;
 		}
-		else if (tr.eq(*p, _T('?')))
+		else if (!tr.eq(*p, _T('?')) && !tr.eq(*s, *p))
 		{
-			if (tr.eq(*s, _T('.')))
-			{ goto starCheck; }
-		}
-		else
-		{
-			if (!tr.eq(*s, *p))
-			{ goto starCheck; }
+			if (!star) { return false; }
+			strBegin++;
+			goto loop;
 		}
 	}
 	while (p != patEnd && tr.eq(*p, _T('*'))) { ++p; }
 	return p == patEnd && s == strEnd;
-
-starCheck:
-	if (!star) { return false; }
-	strBegin++;
-	goto loopStart;
 }
 
 namespace winnt
 {
-	template<class T> struct identity { typedef T type; };
-
 	struct IO_STATUS_BLOCK { union { NTSTATUS Status; PVOID Pointer; }; ULONG_PTR Information; };
 
 	struct UNICODE_STRING
@@ -225,13 +241,44 @@ namespace winnt
 	struct FILE_FS_SIZE_INFORMATION { long long TotalAllocationUnits, ActualAvailableAllocationUnits; unsigned long SectorsPerAllocationUnit, BytesPerSector; };
 	struct FILE_FS_ATTRIBUTE_INFORMATION { unsigned long FileSystemAttributes; unsigned long MaximumComponentNameLength; unsigned long FileSystemNameLength; wchar_t FileSystemName[1]; };
 
+	template<class T> struct identity { typedef T type; };
 #define X(F, T) identity<T>::type &F = *reinterpret_cast<identity<T>::type *>(GetProcAddress(GetModuleHandle(_T("NTDLL.dll")), #F))
 	X(NtOpenFile, NTSTATUS NTAPI(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN OBJECT_ATTRIBUTES *ObjectAttributes, OUT IO_STATUS_BLOCK *IoStatusBlock, IN ULONG ShareAccess, IN ULONG OpenOptions));
 	X(NtReadFile, NTSTATUS NTAPI(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN IO_APC_ROUTINE *ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID Buffer, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL));
 	X(NtQueryVolumeInformationFile, NTSTATUS NTAPI(HANDLE FileHandle, IO_STATUS_BLOCK *IoStatusBlock, PVOID FsInformation, unsigned long Length, unsigned long FsInformationClass));
 	X(RtlInitUnicodeString, VOID NTAPI(UNICODE_STRING * DestinationString, PCWSTR SourceString));
 	X(RtlNtStatusToDosError, unsigned long NTAPI(IN NTSTATUS NtStatus));
+	X(RtlSystemTimeToLocalTime, NTSTATUS NTAPI(IN LARGE_INTEGER const *SystemTime, OUT PLARGE_INTEGER LocalTime));
 #undef  X
+}
+
+LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime)
+{
+	LARGE_INTEGER time2, localTime;
+	time2.QuadPart = systemTime;
+	NTSTATUS status = winnt::RtlSystemTimeToLocalTime(&time2, &localTime);
+	if (status != 0) { RaiseException(status, 0, 0, NULL); }
+	return localTime.QuadPart;
+}
+
+LPCTSTR SystemTimeToString(LONGLONG systemTime, LPTSTR buffer, size_t cchBuffer, LPCTSTR dateFormat = NULL, LPCTSTR timeFormat = NULL, LCID lcid = GetThreadLocale())
+{
+	LONGLONG time = RtlSystemTimeToLocalTime(systemTime);
+	SYSTEMTIME sysTime = { 0 };
+	if (FileTimeToSystemTime(&reinterpret_cast<FILETIME &>(time), &sysTime))
+	{
+		size_t const cchDate = static_cast<size_t>(GetDateFormat(lcid, 0, &sysTime, dateFormat, &buffer[0], static_cast<int>(cchBuffer)));
+		if (cchDate > 0)
+		{
+			// cchDate INCLUDES null-terminator
+			buffer[cchDate - 1] = _T(' ');
+			size_t const cchTime = static_cast<size_t>(GetTimeFormat(lcid, 0, &sysTime, timeFormat, &buffer[cchDate], static_cast<int>(cchBuffer - cchDate)));
+			buffer[cchDate + cchTime - 1] = _T('\0');
+		}
+		else { memset(&buffer[0], 0, sizeof(buffer[0]) * cchBuffer); }
+	}
+	else { *buffer = _T('\0'); }
+	return buffer;
 }
 
 namespace ntfs
@@ -428,9 +475,80 @@ namespace ntfs
 		unsigned short AttributeNumber;
 		unsigned short AlignmentOrReserved[3];
 	};
+	static TCHAR const *attribute_names[] =
+	{
+		NULL,
+		_T("$STANDARD_INFORMATION"),
+		_T("$ATTRIBUTE_LIST"),
+		_T("$FILE_NAME"),
+		_T("$OBJECT_ID"),
+		_T("$SECURITY_DESCRIPTOR"),
+		_T("$VOLUME_NAME"),
+		_T("$VOLUME_INFORMATION"),
+		_T("$DATA"),
+		_T("$INDEX_ROOT"),
+		_T("$INDEX_ALLOCATION"),
+		_T("$BITMAP"),
+		_T("$REPARSE_POINT"),
+		_T("$EA_INFORMATION"),
+		_T("$EA"),
+		_T("$PROPERTY_SET"),
+		_T("$LOGGED_UTILITY_STREAM"),
+	};
+}
+
+std::tstring NormalizePath(std::tstring const &path)
+{
+	std::tstring result;
+	bool wasSep = false;
+	bool isCurrentlyOnPrefix = true;
+	for (size_t i = 0; i < path.size(); i++)
+	{
+		TCHAR const &c = path[i];
+		isCurrentlyOnPrefix &= isdirsep(c);
+		if (isCurrentlyOnPrefix || !wasSep || !isdirsep(c)) { result += c; }
+		wasSep = isdirsep(c);
+	}
+	if (!isrooted(result.begin(), result.end()))
+	{
+		std::tstring currentDir(32 * 1024, _T('\0'));
+		currentDir.resize(GetCurrentDirectory(static_cast<DWORD>(currentDir.size()), &currentDir[0]));
+		adddirsep(currentDir);
+		result = currentDir + result;
+	}
+	return result;
+}
+
+std::tstring GetDisplayName(HWND hWnd, const std::tstring &path, DWORD shgdn)
+{
+	ATL::CComPtr<IShellFolder> desktop;
+	STRRET ret;
+	LPITEMIDLIST shidl;
+	ATL::CComBSTR bstr;
+	ULONG attrs = SFGAO_ISSLOW | SFGAO_HIDDEN;
+	std::tstring result = (
+		SHGetDesktopFolder(&desktop) == S_OK
+		&& desktop->ParseDisplayName(hWnd, NULL, path.empty() ? NULL : const_cast<LPWSTR>(path.c_str()), NULL, &shidl, &attrs) == S_OK
+		&& (attrs & SFGAO_ISSLOW) == 0
+		&& desktop->GetDisplayNameOf(shidl, shgdn, &ret) == S_OK
+		&& StrRetToBSTR(&ret, shidl, &bstr) == S_OK
+		) ? static_cast<LPCTSTR>(bstr) : std::tstring(basename(path.begin(), path.end()), path.end());
+	return result;
 }
 
 void CheckAndThrow(int const success) { if (!success) { RaiseException(GetLastError(), 0, 0, NULL); } }
+
+LPTSTR GetAnyErrorText(DWORD errorCode, va_list* pArgList = NULL)
+{
+	static TCHAR buffer[1 << 15];
+	ZeroMemory(buffer, sizeof(buffer));
+	if (!FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | (pArgList == NULL ? FORMAT_MESSAGE_IGNORE_INSERTS : 0), NULL, errorCode, 0, buffer, sizeof(buffer) / sizeof(*buffer), pArgList))
+	{
+		if (!FormatMessage(FORMAT_MESSAGE_FROM_HMODULE | (pArgList == NULL ? FORMAT_MESSAGE_IGNORE_INSERTS : 0), GetModuleHandle(_T("NTDLL.dll")), errorCode, 0, buffer, sizeof(buffer) / sizeof(*buffer), pArgList))
+		{ _stprintf(buffer, _T("%#x"), errorCode); }
+	}
+	return buffer;
+}
 
 class Handle
 {
@@ -610,15 +728,38 @@ public:
 	Handle semaphore;
 	void *data() { return this->p; }
 	void const *data() const { return this->p; }
-	virtual void operator()(size_t const size, uintptr_t const key) = 0;
+	virtual bool operator()(size_t const size, uintptr_t const key) = 0;
 };
 
-class NtfsIndex
+static clock_t const begin_time = clock();
+
+static struct negative_one
+{
+	template<class T>
+	operator T() const { return static_cast<T>(~T()); }
+} const negative_one;
+
+template<class Derived>
+class RefCounted
+{
+	mutable boost::atomic<unsigned int> refs;
+	friend void intrusive_ptr_add_ref(RefCounted const volatile *p) { p->refs.fetch_add(1, boost::memory_order_acq_rel); }
+	friend void intrusive_ptr_release(RefCounted const volatile *p) { delete (p->refs.fetch_sub(1, boost::memory_order_acq_rel) - 1 == 0 ? static_cast<Derived const volatile *>(p) : NULL); }
+
+protected:
+	RefCounted() : refs(0) { }
+	RefCounted(RefCounted const &) : refs(0) { }
+	~RefCounted() { }
+	RefCounted &operator =(RefCounted const &) { }
+	void swap(RefCounted &) { }
+};
+
+class NtfsIndex : public RefCounted<NtfsIndex>
 {
 	typedef NtfsIndex this_type;
 	mutable mutex _mutex;
 	std::tstring _root_path;
-	Handle volume;
+	Handle _volume;
 	typedef std::codecvt<std::tstring::value_type, char, std::mbstate_t> CodeCvt;
 	NtfsIndex *unvolatile() volatile { return const_cast<NtfsIndex *>(this); }
 	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
@@ -641,13 +782,14 @@ class NtfsIndex
 	{
 		NameInfo name;
 		unsigned int parent;
-		TCHAR buf[8];
 	};
 	friend struct std::is_scalar<LinkInfo>;
 	struct StreamInfo
 	{
 		NameInfo name;
-		long long length, allocated;
+		TCHAR const *type_name;
+		unsigned long long length, allocated;
+		bool is_index;
 	};
 	friend struct std::is_scalar<StreamInfo>;
 #pragma pack(pop)
@@ -655,11 +797,12 @@ class NtfsIndex
 	typedef std::vector<std::pair<StreamInfo, size_t /* next */> > StreamInfos;
 	struct Record;
 	typedef std::vector<Record> Records;
-	typedef std::vector<std::pair<Records::size_type, size_t /* next */> > ChildInfos;
+	typedef std::vector<std::pair<std::pair<Records::size_type, LinkInfos::size_type>, size_t /* next */> > ChildInfos;
 	struct Record
 	{
 		StandardInfo stdinfo;
-		LinkInfos::value_type first_name;
+		unsigned short name_count;
+		LinkInfos::size_type first_name;
 		StreamInfos::value_type first_stream;
 		ChildInfos::value_type first_child;
 	};
@@ -669,13 +812,17 @@ class NtfsIndex
 	StreamInfos streaminfos;
 	ChildInfos childinfos;
 	Handle _finished_event;
+	bool _atomic_unfinished;
 	size_t loads_so_far;
 	size_t total_loads;
+	mutex *get_mutex() const
+	{
+		return static_cast<bool const /* WRONG USE OF VOLATILE! but it works on x86 */ volatile &>(this->_atomic_unfinished) ? &this->_mutex : NULL;
+	}
 public:
 	unsigned int mft_record_size;
-	NtfsIndex() : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), loads_so_far(), total_loads(), mft_record_size() { this->check_finished(); }
-	typedef std::pair<unsigned int, std::pair<unsigned short, unsigned short> > key_type;
-	uintptr_t open(std::tstring value)
+	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type;
+	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), mft_record_size()
 	{
 		bool success = false;
 		std::tstring dirsep;
@@ -693,31 +840,46 @@ public:
 			{
 				path_name.append(_T("$Volume"));
 			}
-			Handle(CreateFile(path_name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL)).swap(this->volume);
+			Handle(CreateFile(path_name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL)).swap(this->_volume);
 			success = true;
 		}
 		catch (std::invalid_argument &) {}
 		if (success) { using std::swap; swap(this->_root_path, value); }
-		return success ? reinterpret_cast<uintptr_t>(this->volume.value) : NULL;
+		if (!success) { SetEvent(this->_finished_event); }
 	}
+	~NtfsIndex()
+	{
+	}
+	void *volume() const { return this->_volume.value; }
+	static Records::iterator at(Records &records, size_t const frs, Records::iterator *const existing_to_revalidate = NULL)
+	{
+		if (frs >= records.size())
+		{
+			ptrdiff_t const j = (existing_to_revalidate ? *existing_to_revalidate : records.end()) - records.begin();
+			records.resize(frs + 1, empty_record());
+			if (existing_to_revalidate) { *existing_to_revalidate = records.begin() + j; }
+		}
+		return records.begin() + static_cast<ptrdiff_t>(frs);
+	}
+	LinkInfos::value_type const *nameinfo(size_t const i) const { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
 	std::tstring const &root_path() const { return this->_root_path; }
 	std::tstring const &root_path() const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
+		lock_guard<mutex> const lock(me->get_mutex());
 		return me->root_path();
 	}
 	bool is_finished() const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
+		lock_guard<mutex> const lock(me->get_mutex());
 		return me->is_finished();
 	}
 	bool is_finished() const { return this->loads_so_far == this->total_loads; }
 	uintptr_t finished_event() const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
+		lock_guard<mutex> const lock(me->get_mutex());
 		return me->finished_event();
 	}
 	uintptr_t finished_event() const
@@ -726,32 +888,89 @@ public:
 	}
 	static Record empty_record()
 	{
-		Record empty_record = Record(/* TODO: Should be -1 */);
-		empty_record.first_stream.second = empty_record.first_name.second = empty_record.first_child.second = ~size_t();
-		empty_record.first_child.first = ~size_t();
-		empty_record.first_stream.first.name.offset = empty_record.first_name.first.name.offset = ~unsigned int();
+		Record empty_record = Record();
+		empty_record.stdinfo.attributes = negative_one;
+		empty_record.first_stream.second = negative_one;
+		empty_record.first_name = negative_one;
+		empty_record.first_child.second = negative_one;
+		empty_record.first_child.first.first = negative_one;
+		empty_record.first_stream.first.name.offset = negative_one;
 		return empty_record;
 	}
-	void check_finished()
+	void sort(key_type::first_type::first_type const frs, Records &new_records, LinkInfos &new_nameinfos, StreamInfos &new_streaminfos, ChildInfos &new_childinfos)
 	{
-		this->is_finished() ? SetEvent(this->_finished_event) : ResetEvent(this->_finished_event);
-		if (this->is_finished() && !this->_root_path.empty()) { _ftprintf(stderr, _T("Finished: %s\n"), this->_root_path.c_str()); }
+		if (frs < this->records.size())
+		{
+			unsigned short ji = 0;
+			for (LinkInfos::value_type const *j = this->nameinfo(this->records[frs].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			{
+				this->sort(key_type::first_type(frs, ji), new_records, new_nameinfos, new_streaminfos, new_childinfos);
+			}
+		}
 	}
-	void set_total_loads(size_t const n) volatile
+	void sort(key_type::first_type const key_first, Records &new_records, LinkInfos &new_nameinfos, StreamInfos &new_streaminfos, ChildInfos &new_childinfos)
+	{
+		Records::const_iterator const fr = at(this->records, static_cast<ptrdiff_t>(key_first.first));
+		Records::iterator const new_fr = at(new_records, static_cast<ptrdiff_t>(key_first.first));
+		if (!~new_fr->stdinfo.attributes) { *new_fr = *fr; }
+		unsigned short ii = 0;
+		for (ChildInfos::value_type const *i = &fr->first_child; i && ~i->first.first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
+		{
+			ChildInfos::iterator const new_i = (new_childinfos.push_back(*i), new_childinfos.end() - 1);
+			unsigned short ji = 0;
+			for (LinkInfos::value_type const *j = this->nameinfo(this->records[i->first.first].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			{
+				key_type::first_type const subkey_first(static_cast<unsigned int>(i->first.first), ji);
+				if (subkey_first != key_first)
+				{
+					this->sort(subkey_first, new_records, new_nameinfos, new_streaminfos, new_childinfos);
+				}
+			}
+			unsigned short ki = 0;
+			for (StreamInfos::value_type const *k = &fr->first_stream; k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+			{
+				
+			}
+		}
+	}
+	bool check_finished()
+	{
+		bool const b = this->is_finished() && !this->_root_path.empty();
+		if (b)
+		{
+			if (false)
+			{
+				Records new_records; new_records.reserve(this->records.size());
+				LinkInfos new_nameinfos; new_nameinfos.reserve(this->nameinfos.size());
+				StreamInfos new_streaminfos; new_streaminfos.reserve(this->streaminfos.size());
+				ChildInfos new_childinfos; new_childinfos.reserve(this->childinfos.size());
+				this->sort(0x000000000005, new_records, new_nameinfos, new_streaminfos, new_childinfos);
+				// using std::swap; swap(this->records, new_records);
+				// using std::swap; swap(this->nameinfos, new_nameinfos);
+				// using std::swap; swap(this->streaminfos, new_streaminfos);
+				// using std::swap; swap(this->childinfos, new_childinfos);
+			}
+			this->_atomic_unfinished = false;
+			_ftprintf(stderr, _T("Finished: %s (%u ms)\n"), this->_root_path.c_str(), (clock() - begin_time) * 1000U / CLOCKS_PER_SEC);
+		}
+		this->is_finished() ? SetEvent(this->_finished_event) : ResetEvent(this->_finished_event);
+		return b;
+	}
+	bool set_total_loads(size_t const n) volatile
 	{
 		this_type *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
-		me->set_total_loads(n);
+		lock_guard<mutex> const lock(me->get_mutex());
+		return me->set_total_loads(n);
 	}
-	void set_total_loads(size_t const n)
+	bool set_total_loads(size_t const n)
 	{
 		this->total_loads = n;
-		this->check_finished();
+		return this->check_finished();
 	}
 	void load(unsigned long long const virtual_offset, void *const buffer, size_t const size) volatile
 	{
 		this_type *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
+		lock_guard<mutex> const lock(me->get_mutex());
 		me->load(virtual_offset, buffer, size);
 	}
 	void reserve(unsigned int const records)
@@ -776,8 +995,7 @@ public:
 			if (frsh->MultiSectorHeader.Magic == 'ELIF' && frsh->MultiSectorHeader.unfixup(this->mft_record_size) && !!(frsh->Flags & ntfs::FRH_IN_USE))
 			{
 				unsigned int const frs_base = frsh->BaseFileRecordSegment ? static_cast<unsigned int>(frsh->BaseFileRecordSegment) : frs;
-				if (frs_base >= this->records.size()) { this->records.resize(frs_base + 1, empty_record); }
-				Records::iterator record = this->records.begin() + static_cast<ptrdiff_t>(frs_base);
+				Records::iterator base_record = at(this->records, frs_base);
 				for (ntfs::ATTRIBUTE_RECORD_HEADER const
 					*ah = frsh->begin(); ah < frsh->end(this->mft_record_size) && ah->Type != ntfs::AttributeTypeCode() && ah->Type != ntfs::AttributeEnd; ah = ah->next())
 				{
@@ -786,101 +1004,123 @@ public:
 					case ntfs::AttributeStandardInformation:
 						if (ntfs::STANDARD_INFORMATION const *const fn = static_cast<ntfs::STANDARD_INFORMATION const *>(ah->Resident.GetValue()))
 						{
-							record->stdinfo.created = fn->CreationTime;
-							record->stdinfo.written = fn->LastModificationTime;
-							record->stdinfo.accessed = fn->LastAccessTime;
-							record->stdinfo.attributes = fn->FileAttributes;
+							base_record->stdinfo.created = fn->CreationTime;
+							base_record->stdinfo.written = fn->LastModificationTime;
+							base_record->stdinfo.accessed = fn->LastAccessTime;
+							base_record->stdinfo.attributes = fn->FileAttributes | ((frsh->Flags & ntfs::FRH_DIRECTORY) ? FILE_ATTRIBUTE_DIRECTORY : 0);
 						}
 						break;
 					case ntfs::AttributeFileName:
 						if (ntfs::FILENAME_INFORMATION const *const fn = static_cast<ntfs::FILENAME_INFORMATION const *>(ah->Resident.GetValue()))
 						{
 							unsigned int const frs_parent = static_cast<unsigned int>(fn->ParentDirectory);
-							if (frs_base != frs_parent && fn->Flags != 0x02 /* FILE_NAME_DOS */)
+							if (fn->Flags != 0x02 /* FILE_NAME_DOS */)
 							{
-								LinkInfo info = { { static_cast<unsigned int>(this->names.size()), fn->FileNameLength }, frs_parent };
-								size_t const cch_cached = std::min(sizeof(info.buf) / sizeof(*info.buf), static_cast<size_t>(fn->FileNameLength));
-								std::copy(fn->FileName, fn->FileName + static_cast<ptrdiff_t>(cch_cached), info.buf);
-								this->names.append(fn->FileName + static_cast<ptrdiff_t>(cch_cached), fn->FileNameLength - cch_cached);
-								if (~record->first_name.first.name.offset)
-								{
-									size_t const link_index = this->nameinfos.size();
-									this->nameinfos.push_back(record->first_name);
-									record->first_name.second = link_index;
-								}
-								record->first_name.first = info;
-								if (frs_parent >= this->records.size())
-								{
-									this->records.resize(frs_parent + 1, empty_record);
-									record = this->records.begin() + static_cast<ptrdiff_t>(frs_base);
-								}
-								if (~this->records[frs_parent].first_child.first)
+								LinkInfo info = LinkInfo();
+								info.name.offset = static_cast<unsigned int>(this->names.size());
+								info.name.length = fn->FileNameLength;
+								info.parent = frs_parent;
+								this->names.append(fn->FileName, fn->FileNameLength);
+								size_t const link_index = this->nameinfos.size();
+								this->nameinfos.push_back(LinkInfos::value_type(info, base_record->first_name));
+								base_record->first_name = link_index;
+								Records::iterator const parent = at(this->records, frs_parent, &base_record);
+								if (~parent->first_child.first.first)
 								{
 									size_t const ichild = this->childinfos.size();
-									this->childinfos.push_back(this->records[frs_parent].first_child);
-									this->records[frs_parent].first_child.second = ichild;
+									this->childinfos.push_back(parent->first_child);
+									parent->first_child.second = ichild;
 								}
-								this->records[frs_parent].first_child.first = frs_base;
+								parent->first_child.first.first = frs_base;
+								parent->first_child.first.second = base_record->name_count;
+								++base_record->name_count;
 							}
 						}
 						break;
+					case ntfs::AttributeIndexRoot:
 					case ntfs::AttributeData:
+						if (!ah->IsNonResident || !ah->NonResident.LowestVCN)
 						{
-							StreamInfo const info = { { static_cast<unsigned int>(this->names.size()), ah->NameLength }, ah->IsNonResident ? ah->Resident.ValueLength : ah->NonResident.DataSize, ah->IsNonResident ? ah->Length : ah->NonResident.CompressionUnit ? ah->NonResident.CompressedSize : ah->NonResident.AllocatedSize };
-							this->names.append(ah->name(), ah->name() + ah->NameLength);
-							if (~record->first_stream.first.name.offset)
+							StreamInfo info = StreamInfo();
+							bool const isI30 = ah->NameLength == 4 && memcmp(ah->name(), _T("$I30"), sizeof(*ah->name()) * 4) == 0;
+							if ((ah->Type == ntfs::AttributeIndexRoot || ah->Type == ntfs::AttributeIndexAllocation || ah->Type == ntfs::AttributeBitmap) && isI30)
+							{
+								// Suppress name
+							}
+							else
+							{
+								info.name.offset = static_cast<unsigned int>(this->names.size());
+								info.name.length = ah->NameLength;
+								this->names.append(ah->name(), ah->name() + ah->NameLength);
+							}
+							info.is_index = ah->Type == ntfs::AttributeIndexRoot && isI30;
+							info.type_name = ah->Type == ntfs::AttributeData || ah->Type == ntfs::AttributeIndexRoot && isI30 ? NULL : ntfs::attribute_names[ah->Type >> (CHAR_BIT / 2)];
+							info.length = ah->IsNonResident ? static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... */ : ah->NonResident.DataSize) : ah->Resident.ValueLength;
+							info.allocated = ah->IsNonResident ? ah->NonResident.CompressionUnit ? static_cast<unsigned long long>(ah->NonResident.CompressedSize) : static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... should be looking at VCNs */ : ah->NonResident.AllocatedSize) : 0;
+							if (~base_record->first_stream.first.name.offset)
 							{
 								size_t const stream_index = this->streaminfos.size();
-								this->streaminfos.push_back(record->first_stream);
-								record->first_stream.second = stream_index;
+								this->streaminfos.push_back(base_record->first_stream);
+								base_record->first_stream.second = stream_index;
 							}
-							record->first_stream.first = info;
+							base_record->first_stream.first = info;
 						}
-						break;
-					default:
 						break;
 					}
 				}
 				// fprintf(stderr, "%llx\n", frsh->BaseFileRecordSegment);
 			}
 		}
-		++this->loads_so_far;
+		{
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+			++this->loads_so_far;
+		}
 		this->check_finished();
 	}
 
-	size_t get_path(key_type key, std::tstring &result) const volatile
+	size_t get_path(key_type key, std::tstring &result, bool const name_only) const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
-		return me->get_path(key, result);
+		lock_guard<mutex> const lock(me->get_mutex());
+		return me->get_path(key, result, name_only);
 	}
 
-	size_t get_path(key_type key, std::tstring &result) const
+	size_t get_path(key_type key, std::tstring &result, bool const name_only) const
 	{
-		size_t actual_length = 0;
-		while (~key.first && key.first != 5)
+		size_t const old_size = result.size();
+		bool leaf = true;
+		while (~key.first.first)
 		{
-			if (actual_length)
-			{
-				result.append(1, _T('\\'));
-				++actual_length;
-			}
 			bool found = false;
 			unsigned short ji = 0;
-			for (LinkInfos::value_type const *j = &this->records[key.first].first_name; j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			for (LinkInfos::value_type const *j = this->nameinfo(this->records[key.first.first].first_name); !found && j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
-				if (ji == key.second.first)
+				if (key.first.second == (std::numeric_limits<unsigned short>::max)() || ji == key.first.second)
 				{
-					found = true;
-					size_t const cch_cached = std::min(sizeof(j->first.buf) / sizeof(*j->first.buf), static_cast<size_t>(j->first.name.length));
-					result.append(j->first.buf, cch_cached);
-					if (cch_cached < j->first.name.length)
-					{ result.append(this->names.data() + static_cast<ptrdiff_t>(j->first.name.offset), j->first.name.length - cch_cached); }
-					std::reverse(result.end() - static_cast<ptrdiff_t>(j->first.name.length), result.end());
-					actual_length += static_cast<size_t>(j->first.name.length);
-					key = key_type();
-					key.first = j->first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/;
-					break;
+					unsigned short ki = 0;
+					for (StreamInfos::value_type const *k = &this->records[key.first.first].first_stream; !found && k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+					{
+						if (key.second == (std::numeric_limits<unsigned short>::max)() ? k->first.is_index : ki == key.second)
+						{
+							found = true;
+							size_t const old_size = result.size();
+							if (key.first.first != 0x000000000005)
+							{
+								result.append(&this->names[j->first.name.offset], j->first.name.length);
+								if (leaf)
+								{
+									if (k->first.name.length || k->first.type_name) { result += _T(':'); }
+									result.append(&this->names[k->first.name.offset], k->first.name.length);
+									if (k->first.type_name) { result += _T(':'); result.append(k->first.type_name); }
+								}
+								if (k->first.is_index) { result += _T('\\'); }
+							}
+							std::reverse(result.begin() + static_cast<ptrdiff_t>(old_size), result.end());
+							key = key_type(key_type::first_type(j->first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/, ~key_type::first_type::second_type()), ~key_type::second_type());
+						}
+					}
 				}
 			}
 			if (!found)
@@ -888,56 +1128,136 @@ public:
 				throw std::logic_error("could not find a file attribute");
 				break;
 			}
+			leaf = false;
+			if (name_only || key.first.first == 0x000000000005) { break; }
 		}
-		std::reverse(result.end() - static_cast<ptrdiff_t>(actual_length), result.end());
-		return actual_length;
+		std::reverse(result.begin() + static_cast<ptrdiff_t>(old_size), result.end());
+		return result.size() - old_size;
 	}
 
-	template<class F>
-	void matches(F func, std::tstring const &pattern, std::tstring &path) const
+	std::pair<std::pair<unsigned long, unsigned long long>, std::pair<unsigned long long, unsigned long long> > get_stdinfo(unsigned int const frn) const volatile
 	{
-		std::vector<uintptr_t> scratch;
-		return lock_guard<mutex>(this->_mutex), this->matches<F>(func, pattern, path, 5, scratch);
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->get_mutex());
+		return me->get_stdinfo(frn);
 	}
 
-	template<class F>
-	void matches(F func, std::tstring const &pattern, std::tstring &path, size_t const frs, std::vector<uintptr_t> &scratch) const
+	std::pair<std::pair<unsigned long, unsigned long long>, std::pair<unsigned long long, unsigned long long> > get_stdinfo(unsigned int const frn) const
 	{
-		size_t ii = 0;
-		for (ChildInfos::value_type const *i = frs < this->records.size() ? &this->records[frs].first_child : NULL; i && ~i->first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
+		std::pair<std::pair<unsigned int, unsigned long long>, std::pair<unsigned long long, unsigned long long> > result;
+		if (frn < this->records.size())
 		{
+			result.first.first = this->records[frn].stdinfo.attributes;
+			result.first.second = this->records[frn].stdinfo.created;
+			result.second.first = this->records[frn].stdinfo.written;
+			result.second.second = this->records[frn].stdinfo.accessed;
+		}
+		return result;
+	}
+
+	template<class F>
+	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path) const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->get_mutex());
+		return me->matches<F>(func, path);
+	}
+
+	template<class F>
+	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path) const
+	{
+		return this->matches<F>(func, path, 0x000000000005);
+	}
+
+	template<class F>
+	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path, key_type::first_type::first_type const frs) const
+	{
+		std::pair<unsigned long long, unsigned long long> result = std::pair<unsigned long long, unsigned long long>();
+		if (frs < this->records.size())
+		{
+			unsigned short const jn = this->records[frs].name_count;
 			unsigned short ji = 0;
-			for (LinkInfos::value_type const *j = &this->records[i->first].first_name; j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			for (LinkInfos::value_type const *j = this->nameinfo(this->records[frs].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
-				scratch.push_back(reinterpret_cast<uintptr_t>(j));
+				std::pair<unsigned long long, unsigned long long> const subresult = this->matches(func, path, key_type::first_type(frs, ji), jn);
+				result.first += subresult.first;
+				result.second += subresult.second;
+				++ji;
 			}
-			scratch.push_back(ji);
-			scratch.push_back(reinterpret_cast<uintptr_t>(i));
 		}
-		while (ii && (--ii, true))
+		return result;
+	}
+
+	template<class F>
+	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path, key_type::first_type const key_first, unsigned short const total_names) const
+	{
+		std::pair<unsigned long long, unsigned long long> result;
+		if (key_first.first < this->records.size())
 		{
-			ChildInfos::value_type const *const i = reinterpret_cast<ChildInfos::value_type const *>(scratch.back()); scratch.pop_back();
-			unsigned short ji = static_cast<unsigned short>(scratch.back()); scratch.pop_back();
-			while (ji && (--ji, true))
+			Records::const_iterator const fr = this->records.begin() + static_cast<ptrdiff_t>(key_first.first);
+			std::pair<unsigned long long, unsigned long long> children_size = std::pair<unsigned long long, unsigned long long>();
+			unsigned short ii = 0;
+			for (ChildInfos::value_type const *i = &fr->first_child; i && ~i->first.first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
 			{
-				LinkInfos::value_type const *const j = reinterpret_cast<LinkInfos::value_type const *>(scratch.back()); scratch.pop_back();
-				bool const is_root = frs == 5;
-				if (!is_root) { path += _T('\\'); }
-				size_t const cch_cached = std::min(sizeof(j->first.buf) / sizeof(*j->first.buf), static_cast<size_t>(j->first.name.length));
-				path.append(j->first.buf, cch_cached);
-				if (cch_cached < j->first.name.length)
-				{ path.append(this->names.data() + static_cast<ptrdiff_t>(j->first.name.offset), j->first.name.length - cch_cached); }
-				this->matches<F>(func, pattern, path, i->first, scratch);
-				if (wildcard(pattern.begin(), pattern.end(), path.begin(), path.end(), std::char_traits<std::tstring::value_type>()))
+				unsigned short const jn = this->records[i->first.first].name_count;
+				unsigned short ji = 0;
+				for (LinkInfos::value_type const *j = this->nameinfo(this->records[i->first.first].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 				{
-					func(key_type(static_cast<key_type::first_type>(i->first), key_type::second_type(ji, key_type::second_type::second_type())));
+					if (j->first.parent == key_first.first && i->first.second == jn - 1 - ji)
+					{
+						size_t const old_size = path.size();
+						path += _T('\\');
+						path.append(&this->names[j->first.name.offset], j->first.name.length);
+						key_type::first_type const subkey_first(static_cast<unsigned int>(i->first.first), ji);
+						if (subkey_first != key_first)
+						{
+							std::pair<unsigned long long, unsigned long long> const subresult = this->matches<F>(func, path, subkey_first, jn);
+							children_size.first += subresult.first;
+							children_size.second += subresult.second;
+						}
+						path.resize(old_size);
+					}
 				}
-				path.erase(path.end() - static_cast<ptrdiff_t>(j->first.name.length), path.end());
-				if (!is_root) { path.erase(path.end() - 1, path.end()); }
+			}
+			result = children_size;
+			unsigned short ki = 0;
+			for (StreamInfos::value_type const *k = &fr->first_stream; k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+			{
+				size_t const old_size = path.size();
+				if (k->first.name.length)
+				{
+					path += _T(':');
+					path.append(&this->names[k->first.name.offset], k->first.name.length);
+				}
+				else if (fr->stdinfo.attributes & FILE_ATTRIBUTE_DIRECTORY)
+				{
+					path += _T('\\');
+				}
+				func(
+					std::pair<std::tstring::const_iterator, std::tstring::const_iterator>(path.begin(), path.end()),
+					std::pair<unsigned long long, unsigned long long>((k->first.is_index ? children_size.first : 0) + k->first.length, (k->first.is_index ? children_size.second : 0) + k->first.allocated),
+					key_type(key_first, ki));
+				result.first += k->first.length * (key_first.second + 1) / total_names - k->first.length * key_first.second / total_names;
+				result.second += k->first.allocated * (key_first.second + 1) / total_names - k->first.allocated * key_first.second / total_names;
+				path.resize(old_size);
 			}
 		}
+		return result;
 	}
 };
+
+template<typename Str, typename S1, typename S2>
+void replace_all(Str &str, S1 from, S2 to)
+{
+	size_t const nFrom = Str(from).size();  // SLOW but OK because this function is O(n^2) anyway
+	size_t const nTo = Str(to).size();  // SLOW but OK because this function is O(n^2) anyway
+	for (size_t i = 0; (i = str.find_first_of(from, i)) != Str::npos; i += nTo)
+	{
+		str.erase(i, nFrom);
+		str.insert(i, to);
+	}
+}
+
 
 namespace std
 {
@@ -952,10 +1272,146 @@ namespace std
 #endif
 }
 
+class CoInit
+{
+	CoInit(CoInit const &) : hr(S_FALSE) { }
+	CoInit &operator =(CoInit const &) { }
+public:
+	HRESULT hr;
+	CoInit(bool initialize = true) : hr(initialize ? CoInitialize(NULL) : S_FALSE) { }
+	~CoInit() { if (this->hr == S_OK) { CoUninitialize(); } }
+};
+
+template<class F>
+struct CancellableComparator
+{
+	F f;
+	CancellableComparator(F const &f) : f(f) { }
+	static void check_key()
+	{
+		if (GetAsyncKeyState(VK_ESCAPE) < 0)
+		{ throw CStructured_Exception(ERROR_CANCELLED, NULL); }
+	}
+	template<class T1, class T2> bool operator()(T1 const &a, T2 const &b) { check_key(); return f(a, b); }
+	template<class T1, class T2> bool operator()(T1 const &a, T2 const &b) const { check_key(); return f(a, b); }
+};
+
+template<class F>
+CancellableComparator<F> cancellable_comparator(F const &f) { return f; }
+
+template<class T>
+inline T const &use_facet(std::locale const &loc)
+{
+	return std::
+#if defined(_USEFAC)
+		_USE(loc, T)
+#else
+		use_facet<T>(loc)
+#endif
+		;
+}
+
+class iless
+{
+	mutable std::basic_string<TCHAR> s1, s2;
+	std::ctype<TCHAR> const &ctype;
+	bool logical;
+	struct iless_ch
+	{
+		iless const *p;
+		iless_ch(iless const &l) : p(&l) { }
+		bool operator()(TCHAR a, TCHAR b) const
+		{
+			return _totupper(a) < _totupper(b);
+			//return p->ctype.toupper(a) < p->ctype.toupper(b);
+		}
+	};
+
+	template<class T>
+	static T const &use_facet(std::locale const &loc)
+	{
+		return std::
+#if defined(_USEFAC)
+			_USE(loc, T)
+#else
+			use_facet<T>(loc)
+#endif
+			;
+	}
+
+public:
+	iless(std::locale const &loc, bool const logical) : ctype(static_cast<std::ctype<TCHAR> const &>(use_facet<std::ctype<TCHAR> >(loc))), logical(logical) {}
+	bool operator()(boost::iterator_range<TCHAR const *> const a, boost::iterator_range<TCHAR const *> const b) const
+	{
+		s1.assign(a.begin(), a.end());
+		s2.assign(b.begin(), b.end());
+		return logical ? StrCmpLogicalW(s1.c_str(), s2.c_str()) < 0 : std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), iless_ch(*this));
+	}
+};
+
+template<class It, class ItBuf, class Pred>
+bool mergesort(It const begin, It const end, ItBuf const buf, Pred comp)  // MUST check the return value!
+{
+	bool in_buf = false;
+	for (ptrdiff_t m = 1, n = end - begin; m < n; in_buf = !in_buf, m += m)
+	{
+		ptrdiff_t const k = n + n - m;
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+		for (ptrdiff_t j = 0; j < k; j += m + m)
+		{
+			using std::merge;
+			using std::min;
+			if (in_buf)
+			{
+				merge(
+					buf + min(n, j), buf + min(n, j + m),
+					buf + min(n, j + m), buf + min(n, j + m + m),
+					begin + min(n, j),
+					comp);
+			}
+			else
+			{
+				merge(
+					begin + min(n, j), begin + min(n, j + m),
+					begin + min(n, j + m), begin + min(n, j + m + m),
+					buf + min(n, j),
+					comp);
+			}
+		}
+	}
+	// if (in_buf) { using std::swap_ranges; swap_ranges(begin, end, buf), in_buf = !in_buf; }
+	return in_buf;
+}
+
+template<class It, class Pred>
+void inplace_mergesort(It const begin, It const end, Pred const &pred)
+{
+	typedef std::allocator<typename std::iterator_traits<It>::value_type> Alloc;
+	class Buffer : public Alloc
+	{
+		Buffer(Buffer const &) { }
+		void operator =(Buffer const &) { }
+		typename Alloc::pointer p;
+		typename Alloc::size_type n;
+	public:
+		typedef typename Alloc::pointer iterator;
+		~Buffer() { this->Alloc::deallocate(this->p, this->n); }
+		explicit Buffer(typename Alloc::size_type const n) : Alloc(), p(Alloc::allocate(n)), n(n) { }
+		iterator begin() { return this->p; }
+	} buf(static_cast<typename Alloc::size_type>(std::distance(begin, end)));
+	if (mergesort<It, typename Buffer::iterator, Pred>(begin, end, buf.begin(), pred))
+	{
+		using std::swap_ranges; swap_ranges(begin, end, buf.begin());
+	}
+}
+
 class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize<CMainDlg>, public CInvokeImpl<CMainDlg>, private WTL::CMessageFilter
 {
+	enum { IDC_STATUS_BAR = 1100 + 0 };
+	enum { COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_ACCESS_TIME };
 	struct CThemedListViewCtrl : public WTL::CListViewCtrl, public WTL::CThemeImpl<CThemedListViewCtrl> { using WTL::CListViewCtrl::Attach; };
-	typedef std::vector<NtfsIndex> Indices;
 	class Threads : public std::vector<uintptr_t>
 	{
 		Threads(Threads const &) { }
@@ -982,10 +1438,11 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	{
 	public:
 		explicit OverlappedNtfsMftRead(size_t const this_size, Handle const &semaphore) : Overlapped(this_size, semaphore) { }
-		void operator()(size_t const size, uintptr_t const key)
+		bool operator()(size_t const size, uintptr_t const key)
 		{
 			NtfsIndex volatile *const p = reinterpret_cast<NtfsIndex volatile *>(key);
 			p->load(this->virtual_offset, this->data(), size);
+			return false;
 		}
 	};
 	class OverlappedCompletion : public Overlapped
@@ -993,11 +1450,12 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		size_t n;
 	public:
 		explicit OverlappedCompletion(size_t const this_size, Handle const &semaphore, size_t const n) : Overlapped(this_size, semaphore), n(n) { }
-		void operator()(size_t const size, uintptr_t const key)
+		bool operator()(size_t const size, uintptr_t const key)
 		{
 			(void) size;
 			NtfsIndex volatile *const p = reinterpret_cast<NtfsIndex volatile *>(key);
 			p->set_total_loads(this->n);
+			return false;
 		}
 	};
 	static unsigned long get_num_threads()
@@ -1016,24 +1474,120 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		OVERLAPPED *overlapped_ptr;
 		for (unsigned long nr; GetQueuedCompletionStatus(iocp, &nr, &key, &overlapped_ptr, INFINITE);)
 		{
-			std::auto_ptr<Overlapped> const overlapped(static_cast<Overlapped *>(overlapped_ptr));
-			if (overlapped.get()) { (*overlapped)(static_cast<size_t>(nr), key); }
+			std::auto_ptr<Overlapped> overlapped(static_cast<Overlapped *>(overlapped_ptr));
+			if (overlapped.get())
+			{
+				if ((*overlapped)(static_cast<size_t>(nr), key))
+				{
+					if (PostQueuedCompletionStatus(iocp, nr, key, overlapped_ptr))
+					{
+						overlapped.release();
+					}
+				}
+			}
 			else if (!key) { break; }
 		}
 		return 0;
 	}
-	typedef std::vector<std::pair<NtfsIndex volatile *, NtfsIndex::key_type> > Results;
+
+	template<typename TWindow>
+	class CUpDownNotify : public ATL::CWindowImpl<CUpDownNotify<TWindow>, TWindow>
+	{
+		BEGIN_MSG_MAP_EX(CCustomDialogCode)
+			MESSAGE_RANGE_HANDLER_EX(WM_KEYDOWN, WM_KEYUP, OnKey)
+		END_MSG_MAP()
+
+	public:
+		struct KeyNotify { NMHDR hdr; WPARAM vkey; LPARAM lParam; };
+		enum { CUN_KEYDOWN, CUN_KEYUP };
+
+		LRESULT OnKey(UINT uMsg, WPARAM wParam, LPARAM lParam)
+		{
+			if ((wParam == VK_UP || wParam == VK_DOWN) || (wParam == VK_PRIOR || wParam == VK_NEXT))
+			{
+				int id = this->GetWindowLong(GWL_ID);
+				KeyNotify msg = { { *this, id, uMsg == WM_KEYUP ? CUN_KEYUP : CUN_KEYDOWN }, wParam, lParam };
+				HWND hWndParent = this->GetParent();
+				return hWndParent == NULL || this->SendMessage(hWndParent, WM_NOTIFY, id, (LPARAM)&msg) ? this->DefWindowProc(uMsg, wParam, lParam) : 0;
+			}
+			else { return this->DefWindowProc(uMsg, wParam, lParam); }
+		}
+	};
+	struct CacheInfo
+	{
+		CacheInfo() : valid(false), iIconSmall(-1), iIconLarge(-1), iIconExtraLarge(-1) { this->szTypeName[0] = _T('\0'); }
+		bool valid;
+		int iIconSmall, iIconLarge, iIconExtraLarge;
+		TCHAR szTypeName[80];
+		std::tstring description;
+	};
+	static unsigned int const WM_TASKBARCREATED;
+	enum { WM_NOTIFYICON = WM_USER + 100, WM_THREADMESSAGE = WM_USER + 101 };
+
+	typedef std::vector<std::pair<boost::intrusive_ptr<NtfsIndex volatile const>, std::pair<NtfsIndex::key_type, std::pair<unsigned long long, unsigned long long> > > > Results;
+	
+	template<class StrCmp>
+	class NameComparator
+	{
+		StrCmp less;
+	public:
+		NameComparator(StrCmp const &less) : less(less) { }
+		bool operator()(Results::value_type const &a, Results::value_type const &b)
+		{
+			bool less = this->less(a.file_name(), b.file_name());
+			if (!less && !this->less(b.file_name(), a.file_name()))
+			{ less = this->less(a.stream_name(), b.stream_name()); }
+			return less;
+		}
+		bool operator()(Results::value_type const &a, Results::value_type const &b) const
+		{
+			bool less = this->less(a.file_name(), b.file_name());
+			if (!less && !this->less(b.file_name(), a.file_name()))
+			{ less = this->less(a.stream_name(), b.stream_name()); }
+			return less;
+		}
+	};
+
+	template<class StrCmp>
+	static NameComparator<StrCmp> name_comparator(StrCmp const &cmp) { return NameComparator<StrCmp>(cmp); }
 
 	size_t num_threads;
-	WTL::CEdit txtPattern;
+	CUpDownNotify<WTL::CEdit> txtPattern;
+	WTL::CRichEditCtrl richEdit;
+	WTL::CStatusBarCtrl statusbar;
+	WTL::CAccelerator accel;
+	std::map<std::tstring, CacheInfo> cache;
+	HANDLE hRichEdit;
 	Results results;
+	WTL::CImageList imgListSmall, imgListLarge, imgListExtraLarge;
+	WTL::CComboBox cmbDrive;
 	CThemedListViewCtrl lvFiles;
-	Indices indices;
+	int lastSortColumn, lastSortIsDescending;
+	boost::shared_ptr<BackgroundWorker> iconLoader;
 	Handle closing_event;
 	LimitedIocp queue;
 	Threads threads;
+	static DWORD WINAPI SHOpenFolderAndSelectItemsThread(IN LPVOID lpParameter)
+	{
+		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
+			static_cast<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > *>(lpParameter));
+		// This is in a separate thread because of a BUG:
+		// Try this with RmMetadata:
+		// 1. Double-click it.
+		// 2. Press OK when the error comes up.
+		// 3. Now you can't access the main window, because SHOpenFolderAndSelectItems() hasn't returned!
+		// So we put this in a separate thread to solve that problem.
+
+		CoInit coInit;
+		std::vector<LPCITEMIDLIST> relative_item_ids(p->second.size());
+		for (size_t i = 0; i < p->second.size(); ++i)
+		{
+			relative_item_ids[i] = ILFindChild(p->first.first, p->second[i]);
+		}
+		return SHOpenFolderAndSelectItems(p->first.first, static_cast<UINT>(relative_item_ids.size()), relative_item_ids.empty() ? NULL : &relative_item_ids[0], 0);
+	}
 public:
-	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), queue(num_threads), threads(num_threads)
+	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), queue(num_threads), threads(num_threads), iconLoader(BackgroundWorker::create(true)), hRichEdit(LoadLibrary(_T("riched20.dll")))
 	{
 		for (unsigned int i = 0; i != this->threads.size(); ++i)
 		{
@@ -1043,22 +1597,216 @@ public:
 	}
 	void OnDestroy()
 	{
+		this->iconLoader->clear();
 		for (size_t i = 0; i != this->threads.size(); ++i)
 		{
 			PostQueuedCompletionStatus(this->queue.iocp, 0, 0, NULL);
 		}
 	}
 
+	struct IconLoaderCallback
+	{
+		CMainDlg *this_;
+		std::tstring path;
+		SIZE size;
+		unsigned long fileAttributes;
+		int iItem;
+
+		struct MainThreadCallback
+		{
+			CMainDlg *this_;
+			std::tstring description, path;
+			SHFILEINFO shfi;
+			int iItem;
+			bool operator()()
+			{
+				WTL::CWaitCursor wait(true, IDC_APPSTARTING);
+				CMainDlg::CacheInfo &cached = this_->cache[path];
+				WTL::CIcon iconSmall(shfi.hIcon);
+				_tcscpy(cached.szTypeName, shfi.szTypeName);
+				cached.description = description;
+
+				if (cached.iIconSmall < 0) { cached.iIconSmall = this_->imgListSmall.AddIcon(iconSmall); }
+				else { this_->imgListSmall.ReplaceIcon(cached.iIconSmall, iconSmall); }
+
+				if (cached.iIconLarge < 0) { cached.iIconLarge = this_->imgListLarge.AddIcon(iconSmall); }
+				else { this_->imgListLarge.ReplaceIcon(cached.iIconLarge, iconSmall); }
+
+				cached.valid = true;
+
+				this_->lvFiles.RedrawItems(iItem, iItem);
+				return true;
+			}
+		};
+
+		BOOL operator()()
+		{
+			RECT rcItem = { LVIR_BOUNDS };
+			RECT rcFiles, intersection;
+			this_->lvFiles.GetClientRect(&rcFiles);  // Blocks, but should be fast
+			this_->lvFiles.GetItemRect(iItem, &rcItem, LVIR_BOUNDS);  // Blocks, but I'm hoping it's fast...
+			if (IntersectRect(&intersection, &rcFiles, &rcItem))
+			{
+				std::tstring const normalizedPath = NormalizePath(path);
+				SHFILEINFO shfi = {0};
+				std::tstring description;
+#if 0
+				{
+					std::vector<BYTE> buffer;
+					DWORD temp;
+					buffer.resize(GetFileVersionInfoSize(normalizedPath.c_str(), &temp));
+					if (GetFileVersionInfo(normalizedPath.c_str(), NULL, static_cast<DWORD>(buffer.size()), buffer.empty() ? NULL : &buffer[0]))
+					{
+						LPVOID p;
+						UINT uLen;
+						if (VerQueryValue(buffer.empty() ? NULL : &buffer[0], _T("\\StringFileInfo\\040904E4\\FileDescription"), &p, &uLen))
+						{ description = std::tstring((LPCTSTR)p, uLen); }
+					}
+				}
+#endif
+				Handle fileTemp;  // To prevent icon retrieval from changing the file time
+				try
+				{
+					Handle(CreateFile(normalizedPath.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING | FILE_FLAG_OPEN_REPARSE_POINT, NULL)).swap(fileTemp);
+					if (!fileTemp) { Handle(CreateFile(normalizedPath.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL)).swap(fileTemp); }
+					if (fileTemp)
+					{
+						FILETIME preserve = { ULONG_MAX, ULONG_MAX };
+						SetFileTime(fileTemp, NULL, &preserve, NULL);
+					}
+				}
+				catch (std::invalid_argument &) { }
+				catch (CStructured_Exception &) { }
+				BOOL success = FALSE;
+				SetLastError(0);
+				if (shfi.hIcon == NULL)
+				{
+					ULONG const flags = SHGFI_ICON | SHGFI_SHELLICONSIZE | SHGFI_ADDOVERLAYS | //SHGFI_TYPENAME | SHGFI_SYSICONINDEX |
+						((std::max)(size.cx, size.cy) <= (std::max)(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) ? SHGFI_SMALLICON : SHGFI_LARGEICON);
+					// CoInit com;  // MANDATORY!  Some files, like '.sln' files, won't work without it!
+					success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags) != 0;
+					if (!success && (flags & SHGFI_USEFILEATTRIBUTES) == 0)
+					{ success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags | SHGFI_USEFILEATTRIBUTES) != 0; }
+				}
+
+				if (success)
+				{
+					std::tstring const path(path);
+					int const iItem(iItem);
+					MainThreadCallback callback = { this_, description, path, shfi, iItem };
+					this_->InvokeAsync(callback);
+				}
+				else
+				{
+					_ftprintf(stderr, _T("Could not get the icon for file: %s\n"), normalizedPath.c_str());
+				}
+			}
+			return true;
+		}
+	};
+
+	int CacheIcon(std::tstring const &path, int const iItem, ULONG fileAttributes, bool lifo)
+	{
+		if (this->cache.find(path) == this->cache.end())
+		{
+			this->cache[path] = CacheInfo();
+		}
+
+		CacheInfo const &entry = this->cache[path];
+
+		if (!entry.valid)
+		{
+			SIZE size; this->lvFiles.GetImageList(LVSIL_SMALL).GetIconSize(size);
+
+			IconLoaderCallback callback = { this, path, size, fileAttributes, iItem };
+			this->iconLoader->add(callback, lifo);
+		}
+		return entry.iIconSmall;
+	}
+	
+	LRESULT OnMouseWheel(UINT uMsg, WPARAM wParam, LPARAM lParam)
+	{
+		return this->lvFiles.SendMessage(uMsg, wParam, lParam);
+	}
+
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
 	{
 		_Module.GetMessageLoop()->AddMessageFilter(this);
-		this->DlgResize_Init(false, false);
-		this->txtPattern.Attach(this->GetDlgItem(IDC_EDITFILENAME));
+
+		this->txtPattern.SubclassWindow(this->GetDlgItem(IDC_EDITFILENAME));
 		this->lvFiles.Attach(this->GetDlgItem(IDC_LISTFILES));
-		this->txtPattern.SetWindowText(_T("*"));
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 800, _T("Name") }; this->lvFiles.InsertColumn(0, &column); }
+		this->cmbDrive.Attach(this->GetDlgItem(IDC_LISTVOLUMES));
+		this->richEdit.Create(this->lvFiles, NULL, 0, ES_MULTILINE, WS_EX_TRANSPARENT);
+		this->richEdit.SetFont(this->lvFiles.GetFont());
+		this->accel.LoadAccelerators(IDR_ACCELERATOR1);
+		this->txtPattern.SetCueBannerText(_T("File name or path"));
+		// this->txtPattern.SetWindowText(_T("*"));
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT,  200, _T("Name") }; this->lvFiles.InsertColumn(0, &column); }
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT,  340, _T("Directory") }; this->lvFiles.InsertColumn(1, &column); }
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size") }; this->lvFiles.InsertColumn(2, &column); }
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size on Disk") }; this->lvFiles.InsertColumn(3, &column); }
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Created") }; this->lvFiles.InsertColumn(4, &column); }
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Written") }; this->lvFiles.InsertColumn(5, &column); }
+		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Accessed") }; this->lvFiles.InsertColumn(6, &column); }
+
+		this->cmbDrive.SetCueBannerText(_T("Search where?"));
+		HINSTANCE hInstance = GetModuleHandle(NULL);
+		this->SetIcon((HICON) LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0), FALSE);
+		this->SetIcon((HICON) LoadImage(hInstance, MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0), TRUE);
+
+		{
+			const int IMAGE_LIST_INCREMENT = 0x100;
+			this->imgListSmall.Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CXSMICON), ILC_COLOR32, 0, IMAGE_LIST_INCREMENT);
+			this->imgListLarge.Create(GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CXICON), ILC_COLOR32, 0, IMAGE_LIST_INCREMENT);
+			this->imgListExtraLarge.Create(48, 48, ILC_COLOR32, 0, IMAGE_LIST_INCREMENT);
+		}
+
+		{
+			this->lvFiles.SetImageList(this->imgListLarge, LVSIL_SMALL);
+			this->lvFiles.SetImageList(this->imgListLarge, LVSIL_NORMAL);
+			this->lvFiles.SetImageList(this->imgListExtraLarge, LVSIL_NORMAL);
+		}
+
+		this->lvFiles.OpenThemeData(VSCLASS_LISTVIEW);
 		SetWindowTheme(this->lvFiles, _T("Explorer"), NULL);
-		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | 0x80000000 /*LVS_EX_COLUMNOVERFLOW*/ /*| 0x10000000 LVS_EX_AUTOSIZECOLUMNS*/);
+		{
+			WTL::CFontHandle font = this->txtPattern.GetFont();
+			LOGFONT logFont;
+			if (font.GetLogFont(logFont))
+			{
+				logFont.lfHeight = logFont.lfHeight * 100 / 85;
+				this->txtPattern.SetFont(WTL::CFontHandle().CreateFontIndirect(&logFont));
+			}
+		}
+		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | LVS_EX_GRIDLINES | LVS_EX_COLUMNOVERFLOW);
+		this->statusbar = CreateStatusWindow(WS_CHILD | SBT_TOOLTIPS, NULL, *this, IDC_STATUS_BAR);
+		int const rcStatusPaneWidths[] = { 360, -1 };
+		if ((this->statusbar.GetStyle() & WS_VISIBLE) != 0)
+		{
+			RECT rect; this->lvFiles.GetWindowRect(&rect);
+			this->ScreenToClient(&rect);
+			{
+				RECT sbRect; this->statusbar.GetWindowRect(&sbRect);
+				rect.bottom -= (sbRect.bottom - sbRect.top);
+			}
+			this->lvFiles.MoveWindow(&rect);
+		}
+		this->statusbar.SetParts(sizeof(rcStatusPaneWidths) / sizeof(*rcStatusPaneWidths), const_cast<int *>(rcStatusPaneWidths));
+		this->statusbar.SetText(0, _T("Type in a file name and press Enter."));
+		WTL::CRect rcStatusPane1; this->statusbar.GetRect(1, &rcStatusPane1);
+		//this->statusbarProgress.Create(this->statusbar, rcStatusPane1, NULL, WS_CHILD | WS_VISIBLE | PBS_SMOOTH, 0);
+		//this->statusbarProgress.SetRange(0, INT_MAX);
+		//this->statusbarProgress.SetPos(INT_MAX / 2);
+		this->statusbar.ShowWindow(SW_SHOW);
+		WTL::CRect clientRect;
+		if (this->lvFiles.GetWindowRect(&clientRect))
+		{
+			this->ScreenToClient(&clientRect);
+			this->lvFiles.SetWindowPos(NULL, 0, 0, clientRect.Width(), clientRect.Height() - rcStatusPane1.Height(), SWP_NOMOVE | SWP_NOZORDER);
+		}
+
+		this->DlgResize_Init(false, false);
+
 		std::vector<std::tstring> path_names;
 		{
 			std::tstring buf;
@@ -1073,17 +1821,22 @@ public:
 				path_names.push_back(std::tstring(&buf[i], n));
 			}
 		}
-		this->indices.reserve(path_names.size());
+		this->cmbDrive.SetCurSel(this->cmbDrive.AddString(_T("(All drives)")));
 		for (size_t j = 0; j != path_names.size(); ++j)
 		{
-			Indices::iterator const i = this->indices.insert(this->indices.end(), NtfsIndex());
 			std::tstring const path_name = path_names[j];
-			async([this, i, path_name]() mutable
-			/* TODO: Make this a separate struct */
+			// Do NOT capture 'this'!! It is volatile!!
+			LimitedIocp &queue = this->queue;
+			HWND const m_hWnd = this->m_hWnd;
+			HANDLE const closing_event = this->closing_event;
+			async([&queue, closing_event, m_hWnd, path_name]() mutable /* TODO: Make this a separate struct */
 			{
-				if (uintptr_t const volume_handle = i->open(path_name))
+				boost::intrusive_ptr<NtfsIndex> const p(new NtfsIndex(path_name));
+				if (void *const volume = p->volume())
 				{
-					void *const volume = reinterpret_cast<void *>(volume_handle);
+					if (::PostMessage(m_hWnd, WM_THREADMESSAGE, 1, reinterpret_cast<LPARAM>(p.get()))) { intrusive_ptr_add_ref(p.get()); }
+					DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, volume, reinterpret_cast<HDEVNOTIFY>(m_hWnd) };
+					dev.dbch_hdevnotify = RegisterDeviceNotification(m_hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
 					unsigned int cluster_size;
 					unsigned int num_records;
 					long long mft_start_lcn;
@@ -1093,83 +1846,585 @@ public:
 						CheckAndThrow(DeviceIoControl(volume, FSCTL_GET_NTFS_VOLUME_DATA, NULL, 0, &volume_data, sizeof(volume_data), &br, NULL));
 						cluster_size = static_cast<unsigned int>(volume_data.BytesPerCluster);
 						mft_start_lcn = volume_data.MftStartLcn.QuadPart;
-						i->mft_record_size = volume_data.BytesPerFileRecordSegment;
-						num_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / i->mft_record_size);
+						p->mft_record_size = volume_data.BytesPerFileRecordSegment;
+						num_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / p->mft_record_size);
 					}
-					CheckAndThrow(!!CreateIoCompletionPort(volume, this->queue.iocp, reinterpret_cast<uintptr_t>(&*i), 0));
+					CheckAndThrow(!!CreateIoCompletionPort(volume, queue.iocp, reinterpret_cast<uintptr_t>(&*p), 0));
+					unsigned int num_reads = 0;
+					long long size = 0;
+					typedef std::vector<std::pair<unsigned long long, long long> > RetPtrs;
+					RetPtrs const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &size, mft_start_lcn, cluster_size, p->mft_record_size);
+					p->reserve(num_records);
+					for (RetPtrs::const_iterator j = ret_ptrs.begin(); j != ret_ptrs.end(); ++j)
 					{
-						unsigned int num_reads = 0;
-						long long size = 0;
-						typedef std::vector<std::pair<unsigned long long, long long> > RetPtrs;
-						RetPtrs const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &size, mft_start_lcn, cluster_size, i->mft_record_size);
-						i->reserve(num_records);
-						for (RetPtrs::const_iterator j = ret_ptrs.begin(); j != ret_ptrs.end(); ++j)
+						unsigned long volatile nb;
+						long long lbn = j->second;
+						for (unsigned long long vbn = j != ret_ptrs.begin() ? (j - 1)->first : 0; vbn < j->first; vbn += nb)
 						{
-							unsigned long nb;
-							long long lbn = j->second;
-							for (unsigned long long vbn = j != ret_ptrs.begin() ? (j - 1)->first : 0; vbn < j->first; vbn += nb)
+							if (WaitForSingleObject(closing_event, 0) == WAIT_OBJECT_0) { break; }
+							nb = static_cast<unsigned long>(std::min(std::max(1ULL * cluster_size, 1ULL << 20), j->first - vbn));
+							typedef OverlappedNtfsMftRead T;
+							// TODO: There is an error here when the semaphore is closed by the main thread...
+							std::auto_ptr<T> overlapped(new(nb) T(sizeof(T), queue.semaphore));
+							overlapped->Offset = static_cast<unsigned long>(lbn);
+							overlapped->OffsetHigh = static_cast<unsigned long>(lbn >> (CHAR_BIT * sizeof(overlapped->Offset)));
+							overlapped->virtual_offset = vbn;
+							++num_reads;
+							if (ReadFile(volume, overlapped->data(), nb, NULL, static_cast<Overlapped *>(overlapped.get())))
 							{
-								if (WaitForSingleObject(this->closing_event, 0) == WAIT_OBJECT_0) { break; }
-								nb = static_cast<unsigned long>(std::min(std::max(1ULL * cluster_size, 0x100000ULL), j->first - vbn));
-								typedef OverlappedNtfsMftRead T;
-								// TODO: There is an error here when the semaphore is closed by the main thread...
-								std::auto_ptr<T> overlapped(new(nb) T(sizeof(T), this->queue.semaphore));
-								overlapped->Offset = static_cast<unsigned long>(lbn);
-								overlapped->OffsetHigh = static_cast<unsigned long>(lbn >> (CHAR_BIT * sizeof(overlapped->Offset)));
-								overlapped->virtual_offset = vbn;
-								++num_reads;
-								if (ReadFile(volume, overlapped->data(), nb, NULL, static_cast<Overlapped *>(overlapped.get())))
-								{
-									// Completed synchronously... call the method
-									CheckAndThrow(PostQueuedCompletionStatus(this->queue.iocp, static_cast<unsigned long>(overlapped->InternalHigh), reinterpret_cast<uintptr_t>(&*i), static_cast<Overlapped *>(overlapped.get())));
-									overlapped.release();
-								}
-								else if (GetLastError() != ERROR_IO_PENDING)
-								{ CheckAndThrow(false); }
-								else
-								{ overlapped.release(); }
-								lbn += nb;
+								// Completed synchronously... call the method
+								CheckAndThrow(PostQueuedCompletionStatus(queue.iocp, static_cast<unsigned long>(overlapped->InternalHigh), reinterpret_cast<uintptr_t>(&*p), static_cast<Overlapped *>(overlapped.get())));
+								overlapped.release();
 							}
+							else if (GetLastError() != ERROR_IO_PENDING)
+							{ CheckAndThrow(false); }
+							else
+							{ overlapped.release(); }
+							lbn += nb;
 						}
-						typedef OverlappedCompletion T;
-						CheckAndThrow(PostQueuedCompletionStatus(this->queue.iocp, num_reads, reinterpret_cast<uintptr_t>(&*i), static_cast<Overlapped *>(new(0) T(sizeof(T), this->queue.semaphore, num_reads))));
 					}
+					typedef OverlappedCompletion T;
+					CheckAndThrow(PostQueuedCompletionStatus(queue.iocp, num_reads, reinterpret_cast<uintptr_t>(&*p), static_cast<Overlapped *>(new(0) T(sizeof(T), queue.semaphore, num_reads))));
 				}
 			});
 		}
+
 		return TRUE;
+	}
+
+	LRESULT OnFilesListColumnClick(LPNMHDR pnmh)
+	{
+		WTL::CWaitCursor wait;
+		LPNM_LISTVIEW pLV = (LPNM_LISTVIEW)pnmh;
+		WTL::CHeaderCtrl header = this->lvFiles.GetHeader();
+		HDITEM hditem = {0};
+		hditem.mask = HDI_LPARAM;
+		header.GetItem(pLV->iSubItem, &hditem);
+		bool cancelled = false;
+		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0)
+		{
+			std::locale loc("");
+			try
+			{
+				std::vector<std::pair<std::tstring, std::tstring> > vnames(
+#ifdef _OPENMP
+					omp_get_max_threads()
+#else
+					1
+#endif
+					);
+				int const subitem = pLV->iSubItem;
+				inplace_mergesort(this->results.begin(), this->results.end(), [this, subitem, &vnames](Results::value_type const &a, Results::value_type const &b)
+				{
+					std::pair<std::tstring, std::tstring> &names = *(vnames.begin()
+#ifdef _OPENMP
+						+ omp_get_thread_num()
+#endif
+					);
+					Results::value_type::first_type const
+						&index1 = a.first,
+						&index2 = b.first;
+					bool less = false;
+					switch (subitem)
+					{
+					case COLUMN_INDEX_NAME:
+						names.first = index1->root_path(); index1->get_path(a.second.first, names.first, true);
+						names.second = index2->root_path(); index2->get_path(b.second.first, names.second, true);
+						less = std::less<std::tstring>()(names.first, names.second);
+						break;
+					case COLUMN_INDEX_PATH:
+						names.first = index1->root_path(); index1->get_path(a.second.first, names.first, false);
+						names.second = index2->root_path(); index2->get_path(b.second.first, names.second, false);
+						less = std::less<std::tstring>()(names.first, names.second);
+						break;
+					case COLUMN_INDEX_SIZE:
+						less = a.second.second.first < b.second.second.first;
+						break;
+					case COLUMN_INDEX_SIZE_ON_DISK:
+						less = a.second.second.second < b.second.second.second;
+						break;
+					case COLUMN_INDEX_CREATION_TIME:
+						less = index1->get_stdinfo(a.second.first.first.first).first.second < index2->get_stdinfo(b.second.first.first.first).first.second;
+						break;
+					case COLUMN_INDEX_MODIFICATION_TIME:
+						less = index1->get_stdinfo(a.second.first.first.first).second.first < index2->get_stdinfo(b.second.first.first.first).second.first;
+						break;
+					case COLUMN_INDEX_ACCESS_TIME:
+						less = index1->get_stdinfo(a.second.first.first.first).second.second < index2->get_stdinfo(b.second.first.first.first).second.second;
+						break;
+					default: break;
+					}
+					return less;
+				});
+				if (hditem.lParam)
+				{
+					std::reverse(this->results.begin(), this->results.end());
+				}
+			}
+			catch (CStructured_Exception &ex)
+			{
+				cancelled = true;
+				if (ex.GetSENumber() != ERROR_CANCELLED)
+				{
+					throw;
+				}
+			}
+			this->lvFiles.SetItemCount(this->lvFiles.GetItemCount());
+		}
+		else
+		{
+			pLV->iItem = this->lastSortColumn == pLV->iSubItem ? !this->lastSortIsDescending : 0;
+			struct Sorting
+			{
+				CMainDlg *me; LPARAM lParamSort;
+				static int CALLBACK compare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
+				{
+					Sorting *p = (Sorting *)lParamSort;
+					return p->me->OnFilesSort(lParam1, lParam2, p->lParamSort);
+				}
+			} lParam = { this, (LPARAM)pnmh };
+			this->lvFiles.SortItemsEx(Sorting::compare, (LPARAM)&lParam);
+			this->lastSortIsDescending = pLV->iItem;
+			this->lastSortColumn = pLV->iSubItem;
+		}
+		if (!cancelled)
+		{
+			hditem.lParam = !hditem.lParam;
+			header.SetItem(pLV->iSubItem, &hditem);
+		}
+		return TRUE;
+	}
+	
+	int CALLBACK OnFilesSort(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
+	{
+		(void)lParam1;
+		(void)lParam2;
+		(void)lParamSort;
+		throw std::logic_error("not implemented");
+	}
+
+	void Search()
+	{
+		WTL::CWaitCursor wait;
+		this->lvFiles.SetItemCount(0);
+		this->results.clear();
+		std::tstring pattern;
+		{
+			ATL::CComBSTR bstr;
+			if (this->txtPattern.GetWindowText(bstr.m_str))
+			{ pattern.assign(bstr, bstr.Length()); }
+		}
+		bool const is_path_pattern = !!~pattern.find(_T('\\'));
+		if (!is_path_pattern && !~pattern.find(_T('*')) && !~pattern.find(_T('?'))) { pattern.insert(pattern.begin(), _T('*')); pattern.insert(pattern.end(), _T('*')); }
+
+		clock_t const start = clock();
+		HANDLE wait_handles[MAXIMUM_WAIT_OBJECTS];
+		size_t wait_indices[MAXIMUM_WAIT_OBJECTS];
+		// TODO: What if they exceed maximum wait objects?
+		unsigned int wait_handles_size = 0;
+		std::vector<Results::value_type::first_type> indices;
+		if (NtfsIndex *p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(this->cmbDrive.GetCurSel())))
+		{
+			indices.push_back(p);
+		}
+		else
+		{
+			for (int ii = this->cmbDrive.GetCount() - 1; ii >= 0; --ii)
+			{
+				p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
+				if (p) { indices.push_back(p); }
+			}
+		}
+		WTL::CString cursel; if (int index = this->cmbDrive.GetCurSel()) { this->cmbDrive.GetLBText(index, cursel); }
+		for (size_t ii = 0; ii != indices.size(); ++ii)
+		{
+			Results::value_type::first_type const i = indices[ii];
+			if (cursel.IsEmpty() || cursel == i->root_path().c_str())
+			{
+				wait_handles[wait_handles_size] = reinterpret_cast<HANDLE>(i->finished_event());
+				wait_indices[wait_handles_size] = ii;
+				++wait_handles_size;
+			}
+		}
+		while (wait_handles_size)
+		{
+			unsigned long const wait_handles_index = WaitForMultipleObjects(wait_handles_size, wait_handles, FALSE, INFINITE);
+			if (wait_handles_index < wait_handles_size)
+			{
+				size_t const ii = wait_indices[wait_handles_index];
+
+				Results::value_type::first_type const i = indices[ii];
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+				typedef boost::xpressive::basic_regex<std::tstring::const_iterator> RE;
+				try
+#endif
+				{
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+					RE re = RE::compile(pattern.begin(), pattern.end(), boost::xpressive::regex_constants::nosubs | boost::xpressive::regex_constants::optimize | boost::xpressive::regex_constants::single_line | boost::xpressive::regex_constants::icase | boost::xpressive::regex_constants::collate);
+#endif
+					uintptr_t const finished_event = i->finished_event();
+					if (WaitForSingleObject(reinterpret_cast<HANDLE>(finished_event), INFINITE) == WAIT_OBJECT_0)
+					{
+						size_t const old_size = this->results.size();
+						std::tstring path = i->root_path();
+						while (!path.empty() && *(path.end() - 1) == _T('\\')) { path.erase(path.end() - 1); }
+						i->matches([&, this, i](std::pair<std::tstring::const_iterator, std::tstring::const_iterator> const path, std::pair<unsigned long long, unsigned long long> const sizes, NtfsIndex::key_type const key)
+						{
+							std::pair<std::tstring::const_iterator, std::tstring::const_iterator> needle = path;
+							if (!is_path_pattern)
+							{
+								while (needle.first != needle.second && *(needle.second - 1) == _T('\\')) { --needle.second; }
+								needle.first = basename(needle.first, needle.second);
+							}
+							bool const match =
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+								boost::xpressive::regex_match(needle.first, needle.second, re)
+#else
+								wildcard(pattern.begin(), pattern.end(), needle.first, needle.second, tchar_ci_traits())
+#endif
+								;
+							if (match)
+							{
+								this->results.push_back(Results::value_type(i, Results::value_type::second_type(key, sizes)));
+							}
+						}, path);
+						std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
+						this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), LVSICF_NOINVALIDATEALL);
+					}
+				}
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+				catch (boost::xpressive::regex_error const &ex) { this->MessageBox(ATL::CA2T(ex.what()), _T("Regex Error"), MB_ICONERROR); }
+#endif
+			}
+			--wait_handles_size;
+			using std::swap;
+			swap(wait_indices[wait_handles_index], wait_indices[wait_handles_size]);
+			swap(wait_handles[wait_handles_index], wait_handles[wait_handles_size]);
+		}
+		clock_t const end = clock();
+		TCHAR buf[0x100];
+		_stprintf(buf, _T("%s results in %.2lf seconds"), nformat(this->results.size()).c_str(), (end - start) * 1.0 / CLOCKS_PER_SEC);
+		this->statusbar.SetText(0, buf);
 	}
 
 	void OnOK(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
-		if (GetFocus() == this->txtPattern)
+		if (GetFocus() == this->lvFiles)
 		{
-			WTL::CWaitCursor wait;
-			this->lvFiles.SetItemCount(0);
-			this->results.clear();
-			std::tstring pattern;
+			int const index = this->lvFiles.GetNextItem(-1, LVNI_FOCUSED);
+			if (index >= 0 && (this->lvFiles.GetItemState(index, LVNI_SELECTED) & LVNI_SELECTED))
 			{
-				ATL::CComBSTR bstr;
-				if (this->txtPattern.GetWindowText(bstr.m_str))
-				{ pattern.assign(bstr, bstr.Length()); }
+				this->DoubleClick(index);
 			}
-			clock_t const start = clock();
-			for (Indices::iterator i = this->indices.begin(); i != this->indices.end(); ++i)
+			else
 			{
-				uintptr_t const finished_event = i->finished_event();
-				// if (WaitForSingleObject(reinterpret_cast<HANDLE>(finished_event), INFINITE) == WAIT_OBJECT_0)
+				this->Search();
+				if (index >= 0)
 				{
-					std::tstring path = i->root_path();
-					i->matches([this, i](NtfsIndex::key_type const key)
-					{
-						this->results.push_back(Results::value_type(&*i, key));
-					}, pattern, path);
-					this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), LVSICF_NOINVALIDATEALL);
+					this->lvFiles.EnsureVisible(index, FALSE);
+					this->lvFiles.SetItemState(index, LVNI_FOCUSED, LVNI_FOCUSED);
 				}
 			}
-			clock_t const end = clock();
-			_ftprintf(stderr, _T("%u ms, %u results\n"), (end - start) * 1000 / CLOCKS_PER_SEC, static_cast<unsigned int>(this->results.size()));
 		}
+		else if (GetFocus() == this->txtPattern)
+		{
+			this->Search();
+		}
+	}
+
+	LRESULT OnContextMenu(UINT uMsg, WPARAM wParam, LPARAM lParam)
+	{
+		(void)uMsg;
+		LRESULT result = 0;
+		POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if ((HWND)wParam == this->lvFiles)
+		{
+			std::vector<int> indices;
+			int index;
+			if (point.x == -1 && point.y == -1)
+			{
+				index = this->lvFiles.GetSelectedIndex();
+				RECT bounds = { };
+				this->lvFiles.GetItemRect(index, &bounds, LVIR_SELECTBOUNDS);
+				this->lvFiles.ClientToScreen(&bounds);
+				point.x = bounds.left;
+				point.y = bounds.top;
+				indices.push_back(index);
+			}
+			else
+			{
+				POINT clientPoint = point;
+				this->lvFiles.ScreenToClient(&clientPoint);
+				index = this->lvFiles.HitTest(clientPoint, 0);
+				if (index >= 0)
+				{
+					int i = -1;
+					for (;;)
+					{
+						i = this->lvFiles.GetNextItem(i, LVNI_ALL | LVNI_SELECTED);
+						if (i < 0) { break; }
+						indices.push_back(i);
+					}
+				}
+			}
+			if (!indices.empty())
+			{
+				this->RightClick(indices, point);
+			}
+		}
+		return result;
+	}
+
+	void RightClick(std::vector<int> const &indices, POINT const &point)
+	{
+		std::vector<Results::const_iterator> results;
+		for (size_t i = 0; i < indices.size(); ++i)
+		{
+			if (indices[i] < 0) { continue; }
+			results.push_back(this->results.begin() + indices[i]);
+		}
+		HRESULT volatile hr = S_OK;
+		UINT const minID = 1000;
+		WTL::CMenu menu;
+		menu.CreatePopupMenu();
+		ATL::CComPtr<IContextMenu> contextMenu;
+		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
+			new std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> >());
+		p->second.reserve(results.size());  // REQUIRED, to avoid copying CShellItemIDList objects (they're not copyable!)
+		SFGAOF sfgao = 0;
+		std::tstring common_ancestor_path;
+		for (size_t i = 0; i < results.size(); ++i)
+		{
+			Results::const_iterator const row = results[i];
+			Results::value_type::first_type const &index = row->first;
+			std::tstring path;
+			path = index->root_path();
+			if (index->get_path(row->second.first, path, false))
+			{
+				while (!path.empty() && *(path.end() - 1) == _T('\\'))
+				{ path.erase(path.end() - 1); }
+			}
+			if (i == 0)
+			{
+				common_ancestor_path = path;
+			}
+			CShellItemIDList itemIdList;
+			if (SHParseDisplayName(path.c_str(), NULL, &itemIdList, sfgao, &sfgao) == S_OK)
+			{
+				p->second.push_back(CShellItemIDList());
+				p->second.back().Attach(itemIdList.Detach());
+				if (i != 0)
+				{
+					common_ancestor_path = path;
+					size_t j;
+					for (j = 0; j < (path.size() < common_ancestor_path.size() ? path.size() : common_ancestor_path.size()); j++)
+					{
+						if (path[j] != common_ancestor_path[j])
+						{
+							break;
+						}
+					}
+					common_ancestor_path.erase(common_ancestor_path.begin() + static_cast<ptrdiff_t>(j), common_ancestor_path.end());
+				}
+			}
+		}
+		common_ancestor_path.erase(dirname(common_ancestor_path.begin(), common_ancestor_path.end()), common_ancestor_path.end());
+		if (hr == S_OK)
+		{
+			hr = SHParseDisplayName(common_ancestor_path.c_str(), NULL, &p->first.first, sfgao, &sfgao);
+		}
+		if (hr == S_OK)
+		{
+			ATL::CComPtr<IShellFolder> desktop;
+			hr = SHGetDesktopFolder(&desktop);
+			if (hr == S_OK)
+			{
+				if (p->first.first.m_pidl->mkid.cb)
+				{
+					hr = desktop->BindToObject(p->first.first, NULL, IID_IShellFolder, reinterpret_cast<void **>(&p->first.second));
+				}
+				else
+				{
+					hr = desktop.QueryInterface(&p->first.second);
+				}
+			}
+		}
+
+		if (hr == S_OK)
+		{
+			std::vector<LPCITEMIDLIST> relative_item_ids(p->second.size());
+			for (size_t i = 0; i < p->second.size(); ++i)
+			{
+				relative_item_ids[i] = ILFindChild(p->first.first, p->second[i]);
+			}
+			hr = p->first.second->GetUIObjectOf(
+				*this,
+				static_cast<UINT>(relative_item_ids.size()),
+				relative_item_ids.empty() ? NULL : &relative_item_ids[0],
+				IID_IContextMenu,
+				NULL,
+				&reinterpret_cast<void *&>(contextMenu.p));
+		}
+		if (hr == S_OK)
+		{
+			hr = contextMenu->QueryContextMenu(menu, 0, minID, UINT_MAX, 0x80 /*CMF_ITEMMENU*/);
+		}
+
+		UINT const openContainingFolderId = minID - 1;
+		if (results.size() == 1)
+		{
+			if (contextMenu)
+			{
+				MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
+				menu.InsertMenuItem(0, TRUE, &mii);
+			}
+
+			std::basic_stringstream<TCHAR> ssName;
+			ssName.imbue(std::locale(""));
+			// ssName << _T("File #") << static_cast<unsigned long>(results.back()->record().segment_number);
+			std::tstring name = ssName.str();
+			if (!name.empty())
+			{
+				MENUITEMINFO mii1 = { sizeof(mii1), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
+				menu.InsertMenuItem(0, TRUE, &mii1);
+			}
+
+			MENUITEMINFO mii2 = { sizeof(mii2), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
+			menu.InsertMenuItem(0, TRUE, &mii2);
+
+			menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
+		}
+		UINT id = menu.TrackPopupMenu(
+			TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
+			(GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN | TPM_HORNEGANIMATION : TPM_LEFTALIGN | TPM_HORPOSANIMATION),
+			point.x, point.y, *this);
+		if (!id)
+		{
+			// User cancelled
+		}
+		else if (id == openContainingFolderId)
+		{
+			if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, p.get(), WT_EXECUTEINUITHREAD))
+			{
+				p.release();
+			}
+		}
+		else if (id >= minID)
+		{
+			CMINVOKECOMMANDINFO cmd = { sizeof(cmd), CMIC_MASK_ASYNCOK, *this, reinterpret_cast<LPCSTR>(id - minID), NULL, NULL, SW_SHOW };
+			hr = contextMenu ? contextMenu->InvokeCommand(&cmd) : S_FALSE;
+			if (hr == S_OK)
+			{
+			}
+			else
+			{
+				this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR);
+			}
+		}
+	}
+
+	void DoubleClick(int index)
+	{
+		Results::const_iterator const result = this->results.begin() + static_cast<ptrdiff_t>(index);
+		Results::value_type::first_type const &i = result->first;
+		std::tstring path;
+		path = i->root_path(), i->get_path(result->second.first, path, false);
+		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
+			new std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> >());
+		SFGAOF sfgao = 0;
+		HRESULT hr = SHParseDisplayName(std::tstring(path.begin(), dirname(path.begin(), path.end())).c_str(), NULL, &p->first.first, 0, &sfgao);
+		if (hr == S_OK)
+		{
+			ATL::CComPtr<IShellFolder> desktop;
+			hr = SHGetDesktopFolder(&desktop);
+			if (hr == S_OK)
+			{
+				if (p->first.first.m_pidl->mkid.cb)
+				{
+					hr = desktop->BindToObject(p->first.first, NULL, IID_IShellFolder, reinterpret_cast<void **>(&p->first.second));
+				}
+				else
+				{
+					hr = desktop.QueryInterface(&p->first.second);
+				}
+			}
+		}
+		if (hr == S_OK && basename(path.begin(), path.end()) != path.end())
+		{
+			p->second.resize(1);
+			hr = SHParseDisplayName((path.c_str(), path.empty() ? NULL : &path[0]), NULL, &p->second.back().m_pidl, sfgao, &sfgao);
+		}
+		if (hr == S_OK)
+		{
+			if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, p.get(), WT_EXECUTEINUITHREAD))
+			{
+				p.release();
+			}
+		}
+		else { this->MessageBox(GetAnyErrorText(hr), _T("Error"), MB_ICONERROR); }
+	}
+
+	LRESULT OnFilesDoubleClick(LPNMHDR pnmh)
+	{
+		int index;
+		// Wow64Disable wow64Disabled;
+		WTL::CWaitCursor wait;
+		LPNMITEMACTIVATE pnmItem = (LPNMITEMACTIVATE) pnmh;
+		index = this->lvFiles.HitTest(pnmItem->ptAction, 0);
+		if (index >= 0)
+		{
+			this->DoubleClick(index);
+		}
+		return 0;
+	}
+	
+	LRESULT OnFileNameArrowKey(LPNMHDR pnmh)
+	{
+		CUpDownNotify<WTL::CEdit>::KeyNotify *const p = (CUpDownNotify<WTL::CEdit>::KeyNotify *)pnmh;
+		if (p->vkey == VK_UP || p->vkey == VK_DOWN)
+		{
+			this->cmbDrive.SendMessage(p->hdr.code == CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN ? WM_KEYDOWN : WM_KEYUP, p->vkey, p->lParam);
+		}
+		else
+		{
+			if (p->hdr.code == CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN && p->vkey == VK_DOWN && this->lvFiles.GetItemCount() > 0)
+			{
+				this->lvFiles.SetFocus();
+			}
+			this->lvFiles.SendMessage(p->hdr.code == CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN ? WM_KEYDOWN : WM_KEYUP, p->vkey, p->lParam);
+		}
+		return 0;
+	}
+
+	LRESULT OnFilesKeyDown(LPNMHDR pnmh)
+	{
+		NMLVKEYDOWN *const p = (NMLVKEYDOWN *) pnmh;
+		if (p->wVKey == VK_UP && this->lvFiles.GetNextItem(-1, LVNI_FOCUSED) == 0)
+		{
+			this->txtPattern.SetFocus();
+		}
+		return 0;
+	}
+
+	std::tstring GetSubItemText(Results::const_iterator const result, int const subitem, std::tstring &path) const
+	{
+		Results::value_type::first_type const &i = result->first;
+		path = i->root_path();
+		size_t const cch_root_path = path.size();
+		i->get_path(result->second.first, path, false);
+		std::tstring text(0x100, _T('\0'));
+		switch (subitem)
+		{
+		case COLUMN_INDEX_NAME: if (path.size() == cch_root_path) { text = _T("."); } else { text = path; deldirsep(text); } text.erase(text.begin(), basename(text.begin(), text.end())); break;
+		case COLUMN_INDEX_PATH: text = path; break;
+		case COLUMN_INDEX_SIZE: text = nformat(result->second.second.first); break;
+		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(result->second.second.second); break;
+		case COLUMN_INDEX_CREATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).first.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
+		case COLUMN_INDEX_MODIFICATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.first, &text[0], text.size()); text = std::tstring(text.c_str()); break;
+		case COLUMN_INDEX_ACCESS_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
+		default: break;
+		}
+		return text;
 	}
 
 	LRESULT OnFilesGetDispInfo(LPNMHDR pnmh)
@@ -1178,18 +2433,13 @@ public:
 
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0 && (pLV->item.mask & LVIF_TEXT) != 0)
 		{
-			Results::value_type const &result = this->results.at(static_cast<ptrdiff_t>(pLV->item.iItem));
-			std::tstring path = result.first->root_path();
-			switch (pLV->item.iSubItem)
-			{
-			case 0:
-				// _ultot(result.second, pLV->item.pszText, 10);
-				result.first->get_path(result.second, path);
-				_tcsncpy(pLV->item.pszText, path.c_str(), pLV->item.cchTextMax);
-				break;
-			default:
-				break;
-			}
+			Results::const_iterator const result = this->results.begin() + static_cast<ptrdiff_t>(pLV->item.iItem);
+			Results::value_type::first_type const &i = result->first;
+			std::tstring path;
+			std::tstring const text = this->GetSubItemText(result, pLV->item.iSubItem, path);
+			if (!text.empty()) { _tcsncpy(pLV->item.pszText, text.c_str(), pLV->item.cchTextMax); }
+			int iImage = this->CacheIcon(path, static_cast<int>(pLV->item.iItem), i->get_stdinfo(result->second.first.first.first).first.first, true);
+			if (iImage >= 0) { pLV->item.iImage = iImage; }
 		}
 		return 0;
 	}
@@ -1205,24 +2455,251 @@ public:
 	{
 		return this->CWindow::IsDialogMessage(pMsg);
 	}
+	
+	LRESULT OnFilesListCustomDraw(LPNMHDR pnmh)
+	{
+		LRESULT result;
+		COLORREF const deletedColor = RGB(0xFF, 0, 0);
+		COLORREF encryptedColor = RGB(0, 0xFF, 0);
+		COLORREF compressedColor = RGB(0, 0, 0xFF);
+		WTL::CRegKeyEx key;
+		if (key.Open(HKEY_CURRENT_USER, _T("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer")) == ERROR_SUCCESS)
+		{
+			key.QueryDWORDValue(_T("AltColor"), compressedColor);
+			key.QueryDWORDValue(_T("AltEncryptedColor"), encryptedColor);
+			key.Close();
+		}
+		COLORREF sparseColor = RGB(GetRValue(compressedColor), (GetGValue(compressedColor) + GetBValue(compressedColor)) / 2, (GetGValue(compressedColor) + GetBValue(compressedColor)) / 2);
+		LPNMLVCUSTOMDRAW const pLV = (LPNMLVCUSTOMDRAW)pnmh;
+		if (pLV->nmcd.dwItemSpec < this->results.size())
+		{
+			Results::const_iterator const item = this->results.begin() + static_cast<ptrdiff_t>(pLV->nmcd.dwItemSpec);
+			Results::value_type::first_type const &i = item->first;
+			unsigned long const attrs = i->get_stdinfo(item->second.first.first.first).first.first;
+			switch (pLV->nmcd.dwDrawStage)
+			{
+			case CDDS_PREPAINT:
+				result = CDRF_NOTIFYITEMDRAW;
+				break;
+			case CDDS_ITEMPREPAINT:
+				result = CDRF_NOTIFYSUBITEMDRAW;
+				break;
+			case CDDS_ITEMPREPAINT | CDDS_SUBITEM:
+				if (pLV->iSubItem == 1) { result = 0x8 /*CDRF_DOERASE*/ | CDRF_NOTIFYPOSTPAINT; }
+				else
+				{
+					if ((attrs & 0x40000000) != 0)
+					{
+						pLV->clrText = deletedColor;
+					}
+					else if ((attrs & FILE_ATTRIBUTE_ENCRYPTED) != 0)
+					{
+						pLV->clrText = encryptedColor;
+					}
+					else if ((attrs & FILE_ATTRIBUTE_COMPRESSED) != 0)
+					{
+						pLV->clrText = compressedColor;
+					}
+					else if ((attrs & FILE_ATTRIBUTE_SPARSE_FILE) != 0)
+					{
+						pLV->clrText = sparseColor;
+					}
+					result = CDRF_DODEFAULT;
+				}
+				break;
+			case CDDS_ITEMPOSTPAINT | CDDS_SUBITEM:
+				result = CDRF_SKIPDEFAULT;
+				{
+					Results::const_iterator const row = this->results.begin() + static_cast<ptrdiff_t>(pLV->nmcd.dwItemSpec);
+					std::tstring path;
+					std::tstring itemText = this->GetSubItemText(row, pLV->iSubItem, path);
+					WTL::CDCHandle dc(pLV->nmcd.hdc);
+					RECT rcTwips = pLV->nmcd.rc;
+					rcTwips.left = (int) ((rcTwips.left + 6) * 1440 / dc.GetDeviceCaps(LOGPIXELSX));
+					rcTwips.right = (int) (rcTwips.right * 1440 / dc.GetDeviceCaps(LOGPIXELSX));
+					rcTwips.top = (int) (rcTwips.top * 1440 / dc.GetDeviceCaps(LOGPIXELSY));
+					rcTwips.bottom = (int) (rcTwips.bottom * 1440 / dc.GetDeviceCaps(LOGPIXELSY));
+					int const savedDC = dc.SaveDC();
+					{
+						std::replace(itemText.begin(), itemText.end(), _T(' '), _T('\u00A0'));
+						replace_all(itemText, _T("\\"), _T("\\\u200B"));
+#ifdef _UNICODE
+						this->richEdit.SetTextEx(itemText.c_str(), ST_DEFAULT, 1200);
+#else
+						this->richEdit.SetTextEx(itemText.c_str(), ST_DEFAULT, CP_ACP);
+#endif
+						CHARFORMAT format = { sizeof(format), CFM_COLOR, 0, 0, 0, 0 };
+						if ((attrs & 0x40000000) != 0)
+						{
+							format.crTextColor = deletedColor;
+						}
+						else if ((attrs & FILE_ATTRIBUTE_ENCRYPTED) != 0)
+						{
+							format.crTextColor = encryptedColor;
+						}
+						else if ((attrs & FILE_ATTRIBUTE_COMPRESSED) != 0)
+						{
+							format.crTextColor = compressedColor;
+						}
+						else if ((attrs & FILE_ATTRIBUTE_SPARSE_FILE) != 0)
+						{
+							format.crTextColor = sparseColor;
+						}
+						else
+						{
+							bool const selected = (this->lvFiles.GetItemState(static_cast<int>(pLV->nmcd.dwItemSpec), LVIS_SELECTED) & LVIS_SELECTED) != 0;
+							format.crTextColor = GetSysColor(selected && this->lvFiles.IsThemeNull() ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT);
+						}
+						this->richEdit.SetSel(0, -1);
+						this->richEdit.SetSelectionCharFormat(format);
+						if (false)
+						{
+							size_t last_sep = itemText.find_last_of(_T('\\'));
+							if (~last_sep)
+							{
+								this->richEdit.SetSel(static_cast<long>(last_sep + 1), this->richEdit.GetTextLength());
+								CHARFORMAT bold = { sizeof(bold), CFM_BOLD, CFE_BOLD, 0, 0, 0 };
+								this->richEdit.SetSelectionCharFormat(bold);
+							}
+						}
+						FORMATRANGE formatRange = { dc, dc, rcTwips, rcTwips, { 0, -1 } };
+						this->richEdit.FormatRange(formatRange, FALSE);
+						LONG height = formatRange.rc.bottom - formatRange.rc.top;
+						formatRange.rc = formatRange.rcPage;
+						formatRange.rc.top += (formatRange.rc.bottom - formatRange.rc.top - height) / 2;
+						this->richEdit.FormatRange(formatRange, TRUE);
+
+						this->richEdit.FormatRange(NULL);
+					}
+					dc.RestoreDC(savedDC);
+				}
+				break;
+			default:
+				result = CDRF_DODEFAULT;
+				break;
+			}
+		}
+		else { result = CDRF_DODEFAULT; }
+		return result;
+	}
+
+	void OnClose(UINT /*uNotifyCode*/ = 0, int nID = IDCANCEL, HWND /*hWnd*/ = NULL)
+	{
+		this->DestroyWindow();
+		PostQuitMessage(nID);
+		// this->EndDialog(nID);
+	}
+	
+	LRESULT OnDeviceChange(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	{
+		switch (wParam)
+		{
+		case DBT_DEVICEQUERYREMOVEFAILED:
+			{
+				this->RefreshVolumes();
+			}
+			break;
+		case DBT_DEVICEQUERYREMOVE:
+			{
+				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
+				if (header.dbch_devicetype == DBT_DEVTYP_HANDLE)
+				{ this->RemoveDevice(reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header).dbch_handle); }
+			}
+			break;
+		case DBT_DEVICEREMOVECOMPLETE:
+			{
+				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
+				if (header.dbch_devicetype == DBT_DEVTYP_HANDLE)
+				{ this->RemoveDevice(reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header).dbch_handle); }
+			}
+			break;
+		case DBT_DEVICEARRIVAL:
+			{
+				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
+				if (header.dbch_devicetype == DBT_DEVTYP_VOLUME)
+				{
+					this->RefreshVolumes();
+				}
+			}
+			break;
+		default: break;
+		}
+		return TRUE;
+	}
+
+	void RefreshVolumes()
+	{
+
+	}
+
+	void RemoveDevice(HANDLE handle)
+	{
+		for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
+		{
+		}
+	}
+
+	LRESULT OnTaskbarCreated(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/)
+	{
+		// this->CheckAndCreateIcon(true);
+		return 0;
+	}
+
+	LRESULT OnThreadMessage(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	{
+		switch (wParam)
+		{
+		case 1:
+			if (NtfsIndex *const p = reinterpret_cast<NtfsIndex *>(lParam))
+			{
+				this->cmbDrive.SetItemDataPtr(this->cmbDrive.AddString(p->root_path().c_str()), p);
+			}
+			break;
+		default: break;
+		}
+		return 0;
+	}
+
+	LRESULT OnNotifyIcon(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam)
+	{
+		if (lParam == WM_LBUTTONUP || lParam == WM_KEYUP)
+		{
+			this->ShowWindow(SW_SHOW);
+		}
+		return 0;
+	}
 
 	BEGIN_MSG_MAP_EX(CMainDlg)
 		CHAIN_MSG_MAP(CInvokeImpl<CMainDlg>)
 		CHAIN_MSG_MAP(CDialogResize<CMainDlg>)
 		MSG_WM_DESTROY(OnDestroy)
 		MSG_WM_INITDIALOG(OnInitDialog)
+		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
+		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
+		MESSAGE_HANDLER_EX(WM_THREADMESSAGE, OnThreadMessage)
+		MESSAGE_HANDLER_EX(WM_TASKBARCREATED, OnTaskbarCreated)
+		MESSAGE_HANDLER_EX(WM_MOUSEWHEEL, OnMouseWheel)
+		MESSAGE_HANDLER_EX(WM_CONTEXTMENU, OnContextMenu)
+		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
 		COMMAND_HANDLER_EX(IDOK, BN_CLICKED, OnOK)
+		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_CUSTOMDRAW, OnFilesListCustomDraw)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_GETDISPINFO, OnFilesGetDispInfo)
-	END_MSG_MAP()
+		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_COLUMNCLICK, OnFilesListColumnClick)
+		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_DBLCLK, OnFilesDoubleClick)
+		NOTIFY_HANDLER_EX(IDC_EDITFILENAME, CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN, OnFileNameArrowKey)
+		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_KEYDOWN, OnFilesKeyDown)
+		END_MSG_MAP()
 
 	BEGIN_DLGRESIZE_MAP(CMainDlg)
 		DLGRESIZE_CONTROL(IDC_LISTFILES, DLSZ_SIZE_X | DLSZ_SIZE_Y)
 		DLGRESIZE_CONTROL(IDC_EDITFILENAME, DLSZ_SIZE_X)
+		DLGRESIZE_CONTROL(IDC_STATUS_BAR, DLSZ_SIZE_X | DLSZ_MOVE_Y)
 		// DLGRESIZE_CONTROL(IDOK, DLSZ_MOVE_X)
 	END_DLGRESIZE_MAP()
 	enum { IDD = IDD_DIALOG1 };
 };
+unsigned int const CMainDlg::WM_TASKBARCREATED = RegisterWindowMessage(_T("TaskbarCreated"));
 
 WTL::CAppModule _Module;
 
@@ -1250,6 +2727,13 @@ int _tmain(int argc, TCHAR* argv[])
 	__if_exists(_Module) { _Module.Term(); }
 
 	return 0;
+}
+
+int __stdcall _tWinMain(HINSTANCE const hInstance, HINSTANCE /*hPrevInstance*/, LPTSTR /*lpCmdLine*/, int nShowCmd)
+{
+	(void) hInstance;
+	(void) nShowCmd;
+	return _tmain(__argc, __targv);
 }
 
 void pi()

@@ -24,6 +24,9 @@
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="nformat.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -40,5 +43,10 @@
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="..\..\..\Programs\XP VisualStyles.xml.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="Search Drive.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>
