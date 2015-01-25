@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2013
 VisualStudioVersion = 12.0.30723.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SwiftSearch2", "SwiftSearch2.vcxproj", "{3F046A88-FF9F-491A-BA43-36DB07EFF73C}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SwiftSearch", "SwiftSearch.vcxproj", "{3F046A88-FF9F-491A-BA43-36DB07EFF73C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
