@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <map>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1189,7 +1190,7 @@ public:
 				unsigned short ji = 0;
 				for (LinkInfos::value_type const *j = this->nameinfo(this->records[i->first.first].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 				{
-					if (j->first.parent == key_first.first && i->first.second == jn - 1 - ji)
+					if (j->first.parent == key_first.first && i->first.second == jn - static_cast<size_t>(1) - ji)
 					{
 						size_t const old_size = path.size();
 						path += _T('\\');
@@ -2696,27 +2697,91 @@ WTL::CAppModule _Module;
 
 int _tmain(int argc, TCHAR* argv[])
 {
-	typedef NTSTATUS(WINAPI *PNtSetTimerResolution)(unsigned long DesiredResolution, bool SetResolution, unsigned long *CurrentResolution);
-	if (PNtSetTimerResolution const NtSetTimerResolution = reinterpret_cast<PNtSetTimerResolution>(GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "NtSetTimerResolution")))
+#if !defined(_WIN64) //&& defined(NDEBUG) && NDEBUG
+	if (!IsDebuggerPresent())
 	{
-		unsigned long prev; NtSetTimerResolution(1, true, &prev);
+		HMODULE hKernel32 = NULL;
+		GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCTSTR>(&GetSystemInfo), &hKernel32);
+		typedef BOOL (WINAPI *PIsWow64Process)(IN HANDLE hProcess, OUT PBOOL Wow64Process);
+		PIsWow64Process IsWow64Process = NULL;
+		BOOL isWOW64 = FALSE;
+		if (hKernel32 != NULL && (IsWow64Process = reinterpret_cast<PIsWow64Process>(GetProcAddress(hKernel32, "IsWow64Process"))) != NULL && IsWow64Process(GetCurrentProcess(), &isWOW64) && isWOW64)
+		{
+			HRSRC hRsrs = FindResource(NULL, _T("X64"), _T("BINARY"));
+			LPVOID pBinary = LockResource(LoadResource(NULL, hRsrs));
+			if (pBinary)
+			{
+				std::basic_string<TCHAR> tempDir(32 * 1024, _T('\0'));
+				tempDir.resize(GetTempPath(static_cast<DWORD>(tempDir.size()), &tempDir[0]));
+				if (!tempDir.empty())
+				{
+					std::basic_string<TCHAR> fileName = tempDir + _T("SwiftSearch64_{3CACE9B1-EF40-4a3b-B5E5-3447F6A1E703}.exe");
+					struct Deleter
+					{
+						std::basic_string<TCHAR> file;
+						~Deleter() { if (!this->file.empty()) { _tunlink(this->file.c_str()); } }
+					} deleter;
+					std::string fileNameChars;
+					std::copy(fileName.begin(), fileName.end(), std::inserter(fileNameChars, fileNameChars.end()));
+					std::ofstream file(fileNameChars.c_str(), std::ios::out | std::ios::trunc | std::ios::binary);
+					if (!file.bad() && !file.fail())
+					{
+						deleter.file = fileName;
+						file.write(static_cast<char const *>(pBinary), SizeofResource(NULL, hRsrs));
+						file.flush();
+						file.close();
+						STARTUPINFO si = { sizeof(si) };
+						GetStartupInfo(&si);
+						PROCESS_INFORMATION pi;
+						HANDLE hJob = CreateJobObject(NULL, NULL);
+						JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits = { { { 0 }, { 0 }, JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE } };
+						if (hJob != NULL
+							&& SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jobLimits, sizeof(jobLimits))
+							&& AssignProcessToJobObject(hJob, GetCurrentProcess()))
+						{
+							if (CreateProcess(fileName.c_str(), GetCommandLine(), NULL, NULL, FALSE, CREATE_PRESERVE_CODE_AUTHZ_LEVEL | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi))
+							{
+								if (ResumeThread(pi.hThread) != -1)
+								{
+									WaitForSingleObject(pi.hProcess, INFINITE);
+									DWORD exitCode = 0;
+									GetExitCodeProcess(pi.hProcess, &exitCode);
+									return exitCode;
+								}
+								else { TerminateProcess(pi.hProcess, GetLastError()); }
+							}
+						}
+					}
+				}
+			}
+			/* continue running in x86 mode... */
+		}
 	}
-	(void) argc;
-	(void) argv;
-	// pi();
-	HINSTANCE const hInstance = GetModuleHandle(NULL);
-	__if_exists(_Module) { _Module.Init(NULL, hInstance); }
+#endif
+	HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, _T("Local\\SwiftSearch.{CB77990E-A78F-44dc-B382-089B01207F02}"));
+	if (hEvent != NULL && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
-		WTL::CMessageLoop msgLoop;
-		_Module.AddMessageLoop(&msgLoop);
-		CMainDlg wnd;
-		wnd.Create(reinterpret_cast<HWND>(NULL), NULL);
-		wnd.ShowWindow(SW_SHOWDEFAULT);
-		msgLoop.Run();
-		_Module.RemoveMessageLoop();
+		typedef NTSTATUS(WINAPI *PNtSetTimerResolution)(unsigned long DesiredResolution, bool SetResolution, unsigned long *CurrentResolution);
+		if (PNtSetTimerResolution const NtSetTimerResolution = reinterpret_cast<PNtSetTimerResolution>(GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "NtSetTimerResolution")))
+		{
+			unsigned long prev; NtSetTimerResolution(1, true, &prev);
+		}
+		(void) argc;
+		(void) argv;
+		// pi();
+		HINSTANCE const hInstance = GetModuleHandle(NULL);
+		__if_exists(_Module) { _Module.Init(NULL, hInstance); }
+		{
+			WTL::CMessageLoop msgLoop;
+			_Module.AddMessageLoop(&msgLoop);
+			CMainDlg wnd;
+			wnd.Create(reinterpret_cast<HWND>(NULL), NULL);
+			wnd.ShowWindow(SW_SHOWDEFAULT);
+			msgLoop.Run();
+			_Module.RemoveMessageLoop();
+		}
+		__if_exists(_Module) { _Module.Term(); }
 	}
-	__if_exists(_Module) { _Module.Term(); }
-
 	return 0;
 }
 

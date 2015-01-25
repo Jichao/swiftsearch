@@ -119,6 +119,10 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
+    <PostBuildEvent>
+      <Command>EditBin.exe /NoLogo "$(TargetPath)" /Subsystem:Windows,5.01 /OSVersion:4
+Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource Hacker;%ProgramFiles(x86)%\Resource Hacker&amp;&amp; ResHacker -addoverwrite "$(TargetPath)", "$(TargetPath)", "$(SolutionDir)x64\$(Configuration)\$(TargetFileName)", BINARY, x64, 1</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -135,6 +139,9 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
+    <PostBuildEvent>
+      <Command>EditBin.exe /NoLogo "$(TargetPath)" /Subsystem:Windows,5.02 /OSVersion:5.1</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="nformat.hpp" />
