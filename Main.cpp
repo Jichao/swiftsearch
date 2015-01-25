@@ -308,15 +308,15 @@ int _tmain(int argc, LPTSTR argv[])
 				for (size_t i = 0; i < n; i++)
 				{
 					NtfsIndex::CombinedRecord const &record = index->at(i);
-					bool match = (record.second.first.attributes & 0x40000000) == 0;
+					bool match = (record.standard_info.attributes & 0x40000000) == 0;
 					for (size_t j = 0; j < date_filters.size(); j++)
 					{
 						long long d;
 						switch (date_filters[j].first)
 						{
-						case 1: d = record.second.first.creationTime; break;
-						case 2: d = record.second.first.modificationTime; break;
-						case 3: d = record.second.first.accessTime; break;
+						case 1: d = record.standard_info.creationTime; break;
+						case 2: d = record.standard_info.modificationTime; break;
+						case 3: d = record.standard_info.accessTime; break;
 						default: continue;
 						}
 						long long const boundary = date_filters[j].second;
@@ -333,7 +333,7 @@ int _tmain(int argc, LPTSTR argv[])
 					if (name != _T("."))
 					{
 						path += name;
-						if ((record.second.first.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+						if ((record.standard_info.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
 						{ adddirsep(path); }
 					}
 					str.resize(1024 + path.size());
@@ -345,12 +345,12 @@ int _tmain(int argc, LPTSTR argv[])
 						_stprintf(
 						&*str.begin(),
 						_T("%0*I64llu|%0*I64llu|%s|%s|%s|0x%08X|%.*s"),
-						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.second.first),
-						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.second.second.second.second.second.second),
-						SystemTimeToString(record.second.first.creationTime , &*buf1.begin(), buf1.size(), dateFormat, timeFormat, lcid),
-						SystemTimeToString(record.second.first.modificationTime, &*buf2.begin(), buf2.size(), dateFormat, timeFormat, lcid),
-						SystemTimeToString(record.second.first.accessTime, &*buf3.begin(), buf3.size(), dateFormat, timeFormat, lcid),
-						static_cast<unsigned int>(record.second.first.attributes),
+						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.data.end_of_file),
+						static_cast<int>(max_size_chars), static_cast<unsigned long long>(record.data.size_on_disk),
+						SystemTimeToString(record.standard_info.creationTime , &*buf1.begin(), buf1.size(), dateFormat, timeFormat, lcid),
+						SystemTimeToString(record.standard_info.modificationTime, &*buf2.begin(), buf2.size(), dateFormat, timeFormat, lcid),
+						SystemTimeToString(record.standard_info.accessTime, &*buf3.begin(), buf3.size(), dateFormat, timeFormat, lcid),
+						static_cast<unsigned int>(record.standard_info.attributes),
 						static_cast<int>(path.size()), path.c_str())));
 					str.append(1, _T('\n'));
 					unsigned long nw;

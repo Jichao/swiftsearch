@@ -6,9 +6,8 @@ public:  \
 	template<size_t> struct element_type;  \
 	template<> struct element_type<1 - 1> { typedef T1 type; };  \
 	T1 t1;  \
-	explicit This() : t1() { }  \
-	explicit This(T1 const &t1)  \
-		: t1(t1) { }  \
+	/* explicit This() : t1() { } */ \
+	/* explicit This(T1 const &t1) : t1(t1) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; return r; }  \
@@ -33,8 +32,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1> const &t)  \
-		: t1(std::get<1 - 1>(t)) { }  \
+	explicit This(std::tuple<T1> const &t) : t1(std::get<1 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1> >::type const &get() const;  \
 	operator std::tuple<T1>() const { return std::tuple<T1>(t1); }  \
@@ -58,9 +56,8 @@ public:  \
 	template<> struct element_type<1 - 1> { typedef T1 type; };  \
 	template<> struct element_type<2 - 1> { typedef T2 type; };  \
 	T1 t1; T2 t2;  \
-	explicit This() : t1(), t2() { }  \
-	explicit This(T1 const &t1, T2 const &t2)  \
-		: t1(t1), t2(t2) { }  \
+	/* explicit This() : t1(), t2() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2) : t1(t1), t2(t2) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; return r; }  \
@@ -87,8 +84,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2> >::type const &get() const;  \
 	operator std::tuple<T1, T2>() const { return std::tuple<T1, T2>(t1, t2); }  \
@@ -116,9 +112,8 @@ public:  \
 	template<> struct element_type<2 - 1> { typedef T2 type; };  \
 	template<> struct element_type<3 - 1> { typedef T3 type; };  \
 	T1 t1; T2 t2; T3 t3;  \
-	explicit This() : t1(), t2(), t3() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3)  \
-		: t1(t1), t2(t2), t3(t3) { }  \
+	/* explicit This() : t1(), t2(), t3() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3) : t1(t1), t2(t2), t3(t3) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; return r; }  \
@@ -147,8 +142,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3>() const { return std::tuple<T1, T2, T3>(t1, t2, t3); }  \
@@ -180,9 +174,8 @@ public:  \
 	template<> struct element_type<3 - 1> { typedef T3 type; };  \
 	template<> struct element_type<4 - 1> { typedef T4 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4;  \
-	explicit This() : t1(), t2(), t3(), t4() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4) : t1(t1), t2(t2), t3(t3), t4(t4) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; return r; }  \
@@ -213,8 +206,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4>() const { return std::tuple<T1, T2, T3, T4>(t1, t2, t3, t4); }  \
@@ -250,9 +242,8 @@ public:  \
 	template<> struct element_type<4 - 1> { typedef T4 type; };  \
 	template<> struct element_type<5 - 1> { typedef T5 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; return r; }  \
@@ -285,8 +276,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5>() const { return std::tuple<T1, T2, T3, T4, T5>(t1, t2, t3, t4, t5); }  \
@@ -326,9 +316,8 @@ public:  \
 	template<> struct element_type<5 - 1> { typedef T5 type; };  \
 	template<> struct element_type<6 - 1> { typedef T6 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; return r; }  \
@@ -363,8 +352,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6>() const { return std::tuple<T1, T2, T3, T4, T5, T6>(t1, t2, t3, t4, t5, t6); }  \
@@ -408,9 +396,8 @@ public:  \
 	template<> struct element_type<6 - 1> { typedef T6 type; };  \
 	template<> struct element_type<7 - 1> { typedef T7 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; return r; }  \
@@ -447,8 +434,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7>(t1, t2, t3, t4, t5, t6, t7); }  \
@@ -496,9 +482,8 @@ public:  \
 	template<> struct element_type<7 - 1> { typedef T7 type; };  \
 	template<> struct element_type<8 - 1> { typedef T8 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; return r; }  \
@@ -537,8 +522,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8>(t1, t2, t3, t4, t5, t6, t7, t8); }  \
@@ -590,9 +574,8 @@ public:  \
 	template<> struct element_type<8 - 1> { typedef T8 type; };  \
 	template<> struct element_type<9 - 1> { typedef T9 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; return r; }  \
@@ -633,8 +616,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9>(t1, t2, t3, t4, t5, t6, t7, t8, t9); }  \
@@ -690,9 +672,8 @@ public:  \
 	template<> struct element_type<9 - 1> { typedef T9 type; };  \
 	template<> struct element_type<10 - 1> { typedef T10 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; return r; }  \
@@ -735,8 +716,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10); }  \
@@ -796,9 +776,8 @@ public:  \
 	template<> struct element_type<10 - 1> { typedef T10 type; };  \
 	template<> struct element_type<11 - 1> { typedef T11 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; return r; }  \
@@ -843,8 +822,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11); }  \
@@ -908,9 +886,8 @@ public:  \
 	template<> struct element_type<11 - 1> { typedef T11 type; };  \
 	template<> struct element_type<12 - 1> { typedef T12 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; return r; }  \
@@ -957,8 +934,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12); }  \
@@ -1026,9 +1002,8 @@ public:  \
 	template<> struct element_type<12 - 1> { typedef T12 type; };  \
 	template<> struct element_type<13 - 1> { typedef T13 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; return r; }  \
@@ -1077,8 +1052,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13); }  \
@@ -1150,9 +1124,8 @@ public:  \
 	template<> struct element_type<13 - 1> { typedef T13 type; };  \
 	template<> struct element_type<14 - 1> { typedef T14 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; return r; }  \
@@ -1203,8 +1176,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14); }  \
@@ -1280,9 +1252,8 @@ public:  \
 	template<> struct element_type<14 - 1> { typedef T14 type; };  \
 	template<> struct element_type<15 - 1> { typedef T15 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14; T15 t15;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; r = r && this->t15 == other.t15; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; r = r || this->t15 != other.t15; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; r = r && this->t15 <= other.t15; return r; }  \
@@ -1335,8 +1306,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15); }  \
@@ -1416,9 +1386,8 @@ public:  \
 	template<> struct element_type<15 - 1> { typedef T15 type; };  \
 	template<> struct element_type<16 - 1> { typedef T16 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14; T15 t15; T16 t16;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; r = r && this->t15 == other.t15; r = r && this->t16 == other.t16; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; r = r || this->t15 != other.t15; r = r || this->t16 != other.t16; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; r = r && this->t15 <= other.t15; r = r && this->t16 <= other.t16; return r; }  \
@@ -1473,8 +1442,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16); }  \
@@ -1558,9 +1526,8 @@ public:  \
 	template<> struct element_type<16 - 1> { typedef T16 type; };  \
 	template<> struct element_type<17 - 1> { typedef T17 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14; T15 t15; T16 t16; T17 t17;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; r = r && this->t15 == other.t15; r = r && this->t16 == other.t16; r = r && this->t17 == other.t17; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; r = r || this->t15 != other.t15; r = r || this->t16 != other.t16; r = r || this->t17 != other.t17; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; r = r && this->t15 <= other.t15; r = r && this->t16 <= other.t16; r = r && this->t17 <= other.t17; return r; }  \
@@ -1617,8 +1584,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17); }  \
@@ -1706,9 +1672,8 @@ public:  \
 	template<> struct element_type<17 - 1> { typedef T17 type; };  \
 	template<> struct element_type<18 - 1> { typedef T18 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14; T15 t15; T16 t16; T17 t17; T18 t18;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17(), t18() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17, T18 const &t18)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17), t18(t18) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17(), t18() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17, T18 const &t18) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17), t18(t18) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; r = r && this->t15 == other.t15; r = r && this->t16 == other.t16; r = r && this->t17 == other.t17; r = r && this->t18 == other.t18; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; r = r || this->t15 != other.t15; r = r || this->t16 != other.t16; r = r || this->t17 != other.t17; r = r || this->t18 != other.t18; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; r = r && this->t15 <= other.t15; r = r && this->t16 <= other.t16; r = r && this->t17 <= other.t17; r = r && this->t18 <= other.t18; return r; }  \
@@ -1767,8 +1732,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)), t18(std::get<18 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)), t18(std::get<18 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18); }  \
@@ -1860,9 +1824,8 @@ public:  \
 	template<> struct element_type<18 - 1> { typedef T18 type; };  \
 	template<> struct element_type<19 - 1> { typedef T19 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14; T15 t15; T16 t16; T17 t17; T18 t18; T19 t19;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17(), t18(), t19() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17, T18 const &t18, T19 const &t19)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17), t18(t18), t19(t19) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17(), t18(), t19() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17, T18 const &t18, T19 const &t19) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17), t18(t18), t19(t19) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; r = r && this->t15 == other.t15; r = r && this->t16 == other.t16; r = r && this->t17 == other.t17; r = r && this->t18 == other.t18; r = r && this->t19 == other.t19; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; r = r || this->t15 != other.t15; r = r || this->t16 != other.t16; r = r || this->t17 != other.t17; r = r || this->t18 != other.t18; r = r || this->t19 != other.t19; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; r = r && this->t15 <= other.t15; r = r && this->t16 <= other.t16; r = r && this->t17 <= other.t17; r = r && this->t18 <= other.t18; r = r && this->t19 <= other.t19; return r; }  \
@@ -1923,8 +1886,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)), t18(std::get<18 - 1>(t)), t19(std::get<19 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)), t18(std::get<18 - 1>(t)), t19(std::get<19 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19); }  \
@@ -2020,9 +1982,8 @@ public:  \
 	template<> struct element_type<19 - 1> { typedef T19 type; };  \
 	template<> struct element_type<20 - 1> { typedef T20 type; };  \
 	T1 t1; T2 t2; T3 t3; T4 t4; T5 t5; T6 t6; T7 t7; T8 t8; T9 t9; T10 t10; T11 t11; T12 t12; T13 t13; T14 t14; T15 t15; T16 t16; T17 t17; T18 t18; T19 t19; T20 t20;  \
-	explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17(), t18(), t19(), t20() { }  \
-	explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17, T18 const &t18, T19 const &t19, T20 const &t20)  \
-		: t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17), t18(t18), t19(t19), t20(t20) { }  \
+	/* explicit This() : t1(), t2(), t3(), t4(), t5(), t6(), t7(), t8(), t9(), t10(), t11(), t12(), t13(), t14(), t15(), t16(), t17(), t18(), t19(), t20() { } */ \
+	/* explicit This(T1 const &t1, T2 const &t2, T3 const &t3, T4 const &t4, T5 const &t5, T6 const &t6, T7 const &t7, T8 const &t8, T9 const &t9, T10 const &t10, T11 const &t11, T12 const &t12, T13 const &t13, T14 const &t14, T15 const &t15, T16 const &t16, T17 const &t17, T18 const &t18, T19 const &t19, T20 const &t20) : t1(t1), t2(t2), t3(t3), t4(t4), t5(t5), t6(t6), t7(t7), t8(t8), t9(t9), t10(t10), t11(t11), t12(t12), t13(t13), t14(t14), t15(t15), t16(t16), t17(t17), t18(t18), t19(t19), t20(t20) { } */ \
 	bool operator==(This const &other) const { bool r = true;  r = r && this->t1 == other.t1; r = r && this->t2 == other.t2; r = r && this->t3 == other.t3; r = r && this->t4 == other.t4; r = r && this->t5 == other.t5; r = r && this->t6 == other.t6; r = r && this->t7 == other.t7; r = r && this->t8 == other.t8; r = r && this->t9 == other.t9; r = r && this->t10 == other.t10; r = r && this->t11 == other.t11; r = r && this->t12 == other.t12; r = r && this->t13 == other.t13; r = r && this->t14 == other.t14; r = r && this->t15 == other.t15; r = r && this->t16 == other.t16; r = r && this->t17 == other.t17; r = r && this->t18 == other.t18; r = r && this->t19 == other.t19; r = r && this->t20 == other.t20; return r; }  \
 	bool operator!=(This const &other) const { bool r = false; r = r || this->t1 != other.t1; r = r || this->t2 != other.t2; r = r || this->t3 != other.t3; r = r || this->t4 != other.t4; r = r || this->t5 != other.t5; r = r || this->t6 != other.t6; r = r || this->t7 != other.t7; r = r || this->t8 != other.t8; r = r || this->t9 != other.t9; r = r || this->t10 != other.t10; r = r || this->t11 != other.t11; r = r || this->t12 != other.t12; r = r || this->t13 != other.t13; r = r || this->t14 != other.t14; r = r || this->t15 != other.t15; r = r || this->t16 != other.t16; r = r || this->t17 != other.t17; r = r || this->t18 != other.t18; r = r || this->t19 != other.t19; r = r || this->t20 != other.t20; return r; }  \
 	bool operator<=(This const &other) const { bool r = true;  r = r && this->t1 <= other.t1; r = r && this->t2 <= other.t2; r = r && this->t3 <= other.t3; r = r && this->t4 <= other.t4; r = r && this->t5 <= other.t5; r = r && this->t6 <= other.t6; r = r && this->t7 <= other.t7; r = r && this->t8 <= other.t8; r = r && this->t9 <= other.t9; r = r && this->t10 <= other.t10; r = r && this->t11 <= other.t11; r = r && this->t12 <= other.t12; r = r && this->t13 <= other.t13; r = r && this->t14 <= other.t14; r = r && this->t15 <= other.t15; r = r && this->t16 <= other.t16; r = r && this->t17 <= other.t17; r = r && this->t18 <= other.t18; r = r && this->t19 <= other.t19; r = r && this->t20 <= other.t20; return r; }  \
@@ -2085,8 +2046,7 @@ public:  \
 	friend void swap(This &a, This &b) { return a.swap(b); }  \
 	\
 	/*  \
-	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20> const &t)  \
-		: t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)), t18(std::get<18 - 1>(t)), t19(std::get<19 - 1>(t)), t20(std::get<20 - 1>(t)) { }  \
+	explicit This(std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20> const &t) : t1(std::get<1 - 1>(t)), t2(std::get<2 - 1>(t)), t3(std::get<3 - 1>(t)), t4(std::get<4 - 1>(t)), t5(std::get<5 - 1>(t)), t6(std::get<6 - 1>(t)), t7(std::get<7 - 1>(t)), t8(std::get<8 - 1>(t)), t9(std::get<9 - 1>(t)), t10(std::get<10 - 1>(t)), t11(std::get<11 - 1>(t)), t12(std::get<12 - 1>(t)), t13(std::get<13 - 1>(t)), t14(std::get<14 - 1>(t)), t15(std::get<15 - 1>(t)), t16(std::get<16 - 1>(t)), t17(std::get<17 - 1>(t)), t18(std::get<18 - 1>(t)), t19(std::get<19 - 1>(t)), t20(std::get<20 - 1>(t)) { }  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20> >::type       &get()      ;  \
 	template<size_t I> typename std::tuple_element<I, std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20> >::type const &get() const;  \
 	operator std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20>() const { return std::tuple<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20>(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20); }  \

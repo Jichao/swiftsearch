@@ -302,12 +302,26 @@ namespace NTFS
 		}
 	}
 
+	static struct AttributeNames
+	{
+		LPCTSTR names[0x200];
+		AttributeNames()
+		{
+			for (unsigned int i = 0; i < sizeof(this->names) / sizeof(*this->names); ++i)
+			{ this->names[i] = GetAttributeName(static_cast<AttributeTypeCode>(i)); }
+		}
+		LPCTSTR operator[](AttributeTypeCode const i) const
+		{
+			return i < sizeof(this->names) / sizeof(*this->names) ? this->names[i] : NULL;
+		}
+	} const attribute_names;
+
 	static AttributeTypeCode ParseAttributeName(LPCTSTR const begin, size_t const cch)
 	{
 		for (size_t i = 1;; ++i)
 		{
 			AttributeTypeCode const type = static_cast<AttributeTypeCode>(i << (CHAR_BIT / 2));
-			LPCTSTR const test = GetAttributeName(type);
+			LPCTSTR const test = attribute_names[type];
 			if (!test) { break; }
 			if (_tcsnicmp(test, begin, cch) == 0 && test[cch] == _T('\0'))
 			{

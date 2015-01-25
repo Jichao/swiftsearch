@@ -47,6 +47,7 @@ public:
 	size_t size() const { return this->cb; }
 };
 
+struct segment_number_less { template<class P1, class P2> bool operator()(P1 const &a, P2 const &b) const { return a.segment_number < b.segment_number; } };
 struct first_less { template<class P1, class P2> bool operator()(P1 const &a, P2 const &b) const { return a.first < b.first; } };
 
 struct NtfsIndex::ProgressReporter
@@ -102,20 +103,20 @@ public:
 	bool operator()(DataAttrs::value_type::second_type &attr)
 	{
 		bool found = false;
-		if (attr.first.first == ah.Type &&
+		if (attr.type == ah.Type &&
 			boost::equal(
 				SubTString(ah.GetName(), ah.GetName() + ah.NameLength),
 				SubTString(
-					names.data() + attr.second.first.first,
-					names.data() + attr.second.first.first + attr.second.first.second)))
+					names.data() + attr.stream_name.offset,
+					names.data() + attr.stream_name.offset + attr.stream_name.length)))
 		{
 			if (ah.NonResident.LowestVCN == 0)
 			{
-				long long const oldSizeOnDisk = attr.second.second.second;
+				long long const oldSizeOnDisk = attr.size_on_disk;
 				attr = v.second;
-				attr.second.second.second += oldSizeOnDisk;
+				attr.size_on_disk += oldSizeOnDisk;
 			}
-			else { attr.second.second.second += v.second.second.second.second; }
+			else { attr.size_on_disk += v.second.size_on_disk; }
 			found = true;
 		}
 		return found;
@@ -174,8 +175,6 @@ struct NtfsIndex::Callback
 			{{
 				static TCHAR const I30[] = { _T('$'), _T('I'), _T('3'), _T('0') };
 				static TCHAR const BAD[] = { _T('$'), _T('B'), _T('a'), _T('d') };
-				bool const isI30 = ah->NameLength == sizeof(I30) / sizeof(*I30) && memcmp(I30, ah->GetName(), ah->NameLength) == 0;
-				bool const isBad = ah->NameLength == sizeof(BAD) / sizeof(*BAD) && memcmp(BAD, ah->GetName(), ah->NameLength) == 0;
 				long long sizeOnDisk = 0;
 				if (ah->IsNonResident)
 				{
@@ -188,7 +187,7 @@ struct NtfsIndex::Callback
 						nextVcn += runCount;
 						LONGLONG const deltaLCN = NTFS::RunDeltaLCN(pRun);
 						if (!(deltaLCN == 0 &&
-							(ah->Flags || segmentNumber == 0x000000000008 /* $BadClus */ && isBad && ah->Type == NTFS::AttributeData)))
+							(ah->Flags || segmentNumber == 0x000000000008 /* $BadClus */ && (ah->NameLength == sizeof(BAD) / sizeof(*BAD) && memcmp(BAD, ah->GetName(), ah->NameLength) == 0) && ah->Type == NTFS::AttributeData)))
 						{ sizeOnDisk += runCount * clusterSize; }
 						currentLcn += deltaLCN;
 						currentVcn = nextVcn;
@@ -199,15 +198,19 @@ struct NtfsIndex::Callback
 					NTFS::STANDARD_INFORMATION const &a = *static_cast<NTFS::STANDARD_INFORMATION const *>(ah->Resident.GetValue());
 					if (isBase)
 					{
-						standardInfoAttrs->push_back(StandardInfoAttrs::value_type(
+						StandardInfoAttrs::value_type v =
+						{
 							baseSegment,
-							StandardInfoAttrs::value_type::second_type(
+							{
 								a.CreationTime,
 								a.LastModificationTime,
 								a.LastAccessTime,
 								(a.FileAttributes & ~0x40000000) |
 								((record.Flags & FRH_IN_USE) == 0 ? 0x40000000 : 0) |
-								((record.Flags & FRH_DIRECTORY) != 0 ? FILE_ATTRIBUTE_DIRECTORY : 0))));
+								((record.Flags & FRH_DIRECTORY) != 0 ? FILE_ATTRIBUTE_DIRECTORY : 0)
+							}
+						};
+						standardInfoAttrs->push_back(v);
 					}
 					else { /* should never happen */ }
 				}
@@ -222,13 +225,17 @@ struct NtfsIndex::Callback
 							me->names.reserve(me->names.size() * 2);
 						}
 						SegmentNumber const parentSegmentNumber = static_cast<SegmentNumber>(a.ParentDirectory & 0x0000FFFFFFFFFFFF);
-						FileNameAttrs::value_type const v(
+						FileNameAttrs::value_type const v =
+						{
 							baseSegment,
-							FileNameAttrs::value_type::second_type(
-								FileNameAttrs::value_type::second_type::first_type(
+							{
+								{
 									static_cast<NameOffset>(me->names.size()),
-									static_cast<NameLength>(a.FileNameLength)),
-								parentSegmentNumber));
+									static_cast<NameLength>(a.FileNameLength)
+								},
+								parentSegmentNumber
+							}
+						};
 						if (isBase) { fileNameAttrs->push_back(v); }
 						else
 						{
@@ -248,7 +255,8 @@ struct NtfsIndex::Callback
 				{
 					size_t const cchNameOld = me->names.size();
 					if (!(ah->NameLength == 0 && ah->Type == NTFS::AttributeData ||
-						isI30 && (ah->Type == NTFS::AttributeIndexRoot || ah->Type == NTFS::AttributeIndexAllocation)))
+						(ah->NameLength == sizeof(I30) / sizeof(*I30) && memcmp(I30, ah->GetName(), ah->NameLength) == 0) &&
+						(ah->Type == NTFS::AttributeIndexRoot || ah->Type == NTFS::AttributeIndexAllocation)))
 					{
 						if (me->names.size() + 1 /* ':' */ + ah->NameLength + 64 /* max attribute name length */ > me->names.capacity())
 						{
@@ -257,22 +265,25 @@ struct NtfsIndex::Callback
 						}
 						me->names.append(ah->GetName(), ah->NameLength);
 					}
-					DataAttrs::value_type const v(
+					DataAttrs::value_type const v =
+					{
 						baseSegment,
-						DataAttrs::value_type::second_type(
-							DataAttrs::value_type::second_type::first_type(ah->Type, (pRecord->Flags & FRH_IN_USE) != 0),
-							DataAttrs::value_type::second_type::second_type(
-								DataAttrs::value_type::second_type::second_type::first_type(
-									static_cast<NameOffset>(cchNameOld),
-									static_cast<NameLength>(me->names.size() - cchNameOld)),
-								DataAttrs::value_type::second_type::second_type::second_type(
-									ah->IsNonResident
-									? (
-										(baseSegment == 0x000000000008 /* $BadClus */)
-										? sizeOnDisk
-										: ah->NonResident.DataSize)
-									: ah->Resident.ValueLength,
-									sizeOnDisk))));
+						{
+							ah->Type,
+							(pRecord->Flags & FRH_IN_USE) != 0,
+							{
+								static_cast<NameOffset>(cchNameOld),
+								static_cast<NameLength>(me->names.size() - cchNameOld)
+							},
+							ah->IsNonResident
+								? (
+									(baseSegment == 0x000000000008 /* $BadClus */)
+									? sizeOnDisk
+									: ah->NonResident.DataSize)
+								: ah->Resident.ValueLength,
+								sizeOnDisk
+						}
+					};
 							
 					DupeChecker dupeChecker(me->names, *ah, v);
 					bool include = !ah->IsNonResident;
@@ -438,13 +449,13 @@ struct NtfsIndex::DirectorySizeCalculator
 			++j)
 		{
 			DataAttrs::value_type::second_type &p = j->second;
-			if (!p.first.second) { continue; }
-			result.first += p.second.second.first;
-			result.second += p.second.second.second;
-			if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
+			if (!p.valid) { continue; }
+			result.first += p.end_of_file;
+			result.second += p.size_on_disk;
+			if (p.type == NTFS::AttributeIndexRoot || p.type == NTFS::AttributeIndexAllocation)
 			{
-				p.second.second.first += childrenSizes.first;
-				p.second.second.second += childrenSizes.second;
+				p.end_of_file += childrenSizes.first;
+				p.size_on_disk += childrenSizes.second;
 			}
 		}
 		if (segmentNumber < pDataAttrsDerived->size())
@@ -452,13 +463,13 @@ struct NtfsIndex::DirectorySizeCalculator
 			for (boost::iterator_range<DataAttrsDerived::value_type::iterator> r = (*pDataAttrsDerived)[segmentNumber]; !r.empty(); r.pop_front())
 			{
 				DataAttrsDerived::value_type::value_type &p = r.front();
-				if (!p.first.second) { continue; }
-				result.first += p.second.second.first;
-				result.second += p.second.second.second;
-				if (p.first.first == NTFS::AttributeIndexRoot || p.first.first == NTFS::AttributeIndexAllocation)
+				if (!p.valid) { continue; }
+				result.first += p.end_of_file;
+				result.second += p.size_on_disk;
+				if (p.type == NTFS::AttributeIndexRoot || p.type == NTFS::AttributeIndexAllocation)
 				{
-					p.second.second.first += childrenSizes.first;
-					p.second.second.second += childrenSizes.second;
+					p.end_of_file += childrenSizes.first;
+					p.size_on_disk += childrenSizes.second;
 				}
 			}
 		}
@@ -547,8 +558,10 @@ NtfsIndex::NtfsIndex(
 	DataAttrsDerived dataAttrsDerived; dataAttrsDerived.reserve(nFileRecords * 4);
 	Children children; children.reserve(nFileRecords * 4);
 	{
+		using std::max;
 		clock_t const start = clock(); (void)start;
-		size_t iteration = 0;
+		size_t iteration = static_cast<size_t>(-1);
+		if (false)
 		{
 			typedef enum _STORAGE_QUERY_TYPE {
 				PropertyStandardQuery = 0,          // Retrieves the descriptor
@@ -581,13 +594,13 @@ NtfsIndex::NtfsIndex(
 			STORAGE_PROPERTY_QUERY query = { StorageDeviceSeekPenaltyProperty, PropertyStandardQuery };
 			DEVICE_SEEK_PENALTY_DESCRIPTOR seek;
 			unsigned long nr;
-			if (!DeviceIoControl(volume.get(), CTL_CODE(IOCTL_STORAGE_BASE, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS) /*IOCTL_STORAGE_QUERY_PROPERTY*/, &query, sizeof(query), &seek, sizeof(seek), &nr, NULL) ||
-				seek.IncursSeekPenalty)
+			if (DeviceIoControl(volume.get(), CTL_CODE(IOCTL_STORAGE_BASE, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS) /*IOCTL_STORAGE_QUERY_PROPERTY*/, &query, sizeof(query), &seek, sizeof(seek), &nr, NULL) &&
+				!seek.IncursSeekPenalty)
 			{
-				iteration = static_cast<size_t>(-1);
+				iteration = 0;
 			}
 		}
-		for (Buffer buffer(1 << 18); iteration != static_cast<size_t>(-1); ++iteration)
+		for (Buffer buffer(1 << 20); iteration != static_cast<size_t>(-1); ++iteration)
 		{
 			QUERY_FILE_LAYOUT_INPUT qfl_input =
 			{
@@ -597,14 +610,14 @@ NtfsIndex::NtfsIndex(
 			unsigned long nr;
 			BOOL success;
 			while (!(success = DeviceIoControl(
-				volume.get(), FSCTL_QUERY_FILE_LAYOUT,
-				&qfl_input, sizeof(qfl_input), buffer.get(),
+				volume.get(), FSCTL_QUERY_FILE_LAYOUT, &qfl_input, sizeof(qfl_input), buffer.get(),
 				static_cast<unsigned long>(buffer.size()), &nr, NULL)) &&
 				(GetLastError() == ERROR_INSUFFICIENT_BUFFER || GetLastError() == ERROR_BUFFER_OVERFLOW || GetLastError() == ERROR_MORE_DATA))
 			{
 				Buffer(buffer.size() * 2).swap(buffer);
 			}
 			if (!success) { break; }
+			SegmentNumber max_segment = 0;
 			QUERY_FILE_LAYOUT_OUTPUT const &output = *static_cast<QUERY_FILE_LAYOUT_OUTPUT *>(buffer.get());
 			for (FILE_LAYOUT_ENTRY const *file = output.FirstFileOffset ? reinterpret_cast<FILE_LAYOUT_ENTRY const *>(buffer.begin() + static_cast<ptrdiff_t>(output.FirstFileOffset)) : NULL;
 				file;
@@ -616,18 +629,23 @@ NtfsIndex::NtfsIndex(
 					names.reserve(names.size() * 2);
 				}
 				SegmentNumber const baseSegment = static_cast<SegmentNumber>(file->FileReferenceNumber & 0x0000FFFFFFFFFFFF);
+				max_segment = max(max_segment, baseSegment);
 				progressReporter(nFileRecords * 0 + baseSegment * 2, nFileRecords * 4);
 				if (FILE_LAYOUT_INFO_ENTRY const *const info = file->ExtraInfoOffset ? reinterpret_cast<FILE_LAYOUT_INFO_ENTRY const *>(reinterpret_cast<unsigned char const *>(file) +file->ExtraInfoOffset) : NULL)
 				{
-					standardInfoAttrs.push_back(StandardInfoAttrs::value_type(
+					StandardInfoAttrs::value_type const v =
+					{
 						baseSegment,
-						StandardInfoAttrs::value_type::second_type(
+						{
 							info->BasicInformation.CreationTime.QuadPart,
 							info->BasicInformation.LastWriteTime.QuadPart,
 							info->BasicInformation.LastAccessTime.QuadPart,
 							(info->BasicInformation.FileAttributes & ~0x40000000) |
 							(false ? 0x40000000 : 0) |
-							((file->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? FILE_ATTRIBUTE_DIRECTORY : 0))));
+							((file->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? FILE_ATTRIBUTE_DIRECTORY : 0)
+						}
+					};
+					standardInfoAttrs.push_back(v);
 				}
 				bool any_non_dos_name = false;
 				for (FILE_LAYOUT_NAME_ENTRY const *info = file->FirstNameOffset ? reinterpret_cast<FILE_LAYOUT_NAME_ENTRY const *>(reinterpret_cast<unsigned char const *>(file) +file->FirstNameOffset) : NULL;
@@ -640,13 +658,18 @@ NtfsIndex::NtfsIndex(
 					}
 					any_non_dos_name = true;
 					SegmentNumber const parentSegmentNumber = static_cast<SegmentNumber>(info->ParentFileReferenceNumber & 0x0000FFFFFFFFFFFF);
-					fileNameAttrs.push_back(FileNameAttrs::value_type(
+					FileNameAttrs::value_type const v =
+					{
 						baseSegment,
-						FileNameAttrs::value_type::second_type(
-							FileNameAttrs::value_type::second_type::first_type(
+						{
+							{
 								static_cast<NameOffset>(names.size()),
-								static_cast<NameLength>(info->FileNameLength / sizeof(*info->FileName))),
-							parentSegmentNumber)));
+								static_cast<NameLength>(info->FileNameLength / sizeof(*info->FileName))
+							},
+							parentSegmentNumber
+						}
+					};
+					fileNameAttrs.push_back(v);
 					names.append(info->FileName, info->FileNameLength / sizeof(*info->FileName));
 					
 					if (parentSegmentNumber >= children.size())
@@ -687,20 +710,25 @@ NtfsIndex::NtfsIndex(
 							}
 						}
 					}
-					dataAttrs.push_back(DataAttrs::value_type(
+					DataAttrs::value_type const v =
+					{
 						baseSegment,
-						DataAttrs::value_type::second_type(
-							DataAttrs::value_type::second_type::first_type(type, true),
-							DataAttrs::value_type::second_type::second_type(
-								DataAttrs::value_type::second_type::second_type::first_type(
-									static_cast<NameOffset>(names.size()),
-									static_cast<NameLength>(attr_name.second - attr_name.first)),
-								DataAttrs::value_type::second_type::second_type::second_type(
-								baseSegment == 0x000000000008 && boost::range::equal(BAD_FILE, attr_name) ? info->AllocationSize.QuadPart : info->EndOfFile.QuadPart,
-									info->AllocationSize.QuadPart)))));
+						{
+							type,
+							true,
+							{
+								static_cast<NameOffset>(names.size()),
+								static_cast<NameLength>(attr_name.second - attr_name.first)
+							},
+							baseSegment == 0x000000000008 && boost::range::equal(BAD_FILE, attr_name) ? info->AllocationSize.QuadPart : info->EndOfFile.QuadPart,
+							info->AllocationSize.QuadPart
+						}
+					};
+					dataAttrs.push_back(v);
 					names.append(attr_name.first, attr_name.second);
 				}
 			}
+			_ftprintf(stderr, _T("%s: %8u\n"), win32Path.c_str(), max_segment + 1);
 		}
 		if (iteration == static_cast<size_t>(-1)) { iteration = 0; }
 		Callback callback(
@@ -832,23 +860,18 @@ void NtfsIndex::process_file_name(
 
 void NtfsIndex::process_file_data(SegmentNumber const segmentNumber, StandardInformationAttribute const &standardInfoAttr, FileNameAttribute const &fileNameAttr, DataAttribute const &dataAttr)
 {
-	this->index.push_back(CombinedRecords::value_type(
-		segmentNumber,
-		CombinedRecords::value_type::second_type(
-			standardInfoAttr,
-			CombinedRecords::value_type::second_type::second_type(fileNameAttr, dataAttr))));
+	CombinedRecords::value_type const v = { segmentNumber, standardInfoAttr, fileNameAttr, dataAttr };
+	this->index.push_back(v);
 }
 
 NtfsIndex::SegmentNumber NtfsIndex::get_name(SegmentNumber segmentNumber, std::basic_string<TCHAR> &s) const
 {
-	CombinedRecords::const_iterator const lb =
-		std::lower_bound(
-			this->index.begin(),
-			this->index.end(),
-			CombinedRecords::value_type(segmentNumber, CombinedRecord::second_type()), first_less());
-	for (CombinedRecords::const_iterator i = lb; i != this->index.end() && i->first == segmentNumber; ++i)
+	CombinedRecords::value_type cr;
+	cr.segment_number = segmentNumber;
+	CombinedRecords::const_iterator const lb = std::lower_bound(this->index.begin(), this->index.end(), cr, segment_number_less());
+	for (CombinedRecords::const_iterator i = lb; i != this->index.end() && i->segment_number == segmentNumber; ++i)
 	{
-		if (i->second.second.second.second.first.second == 0)
+		if (!i->data.stream_name.length)
 		{
 			return this->get_name_by_record(*i, s, false);
 		}
@@ -866,17 +889,16 @@ void NtfsIndex::swap(This &other)
 std::pair<NtfsIndex::SubTString, std::pair<NtfsIndex::SubTString, NtfsIndex::SubTString> > NtfsIndex::get_name_by_record(CombinedRecord const &record) const
 {
 	TCHAR const *const data = this->names.data();
-	NTFS::AttributeTypeCode const type = record.second.second.second.first.first;
-	record.second.second.second.second.first;
+	NTFS::AttributeTypeCode const type = record.data.type;
 	LPCTSTR const attribute_name = type == NTFS::AttributeData ||
-		((type == NTFS::AttributeIndexRoot || type == NTFS::AttributeIndexAllocation) && !record.second.second.second.second.first.second)
-		? _T("")
+		((type == NTFS::AttributeIndexRoot || type == NTFS::AttributeIndexAllocation) && !record.data.stream_name.length)
+		? NULL
 		: NTFS::GetAttributeName(type);
 	return std::pair<SubTString, std::pair<SubTString, SubTString> >(
-		SubTString(data + record.second.second.first.first.first, data + record.second.second.first.first.first + record.second.second.first.first.second),
+		SubTString(data + record.file_name.file_name.offset, data + record.file_name.file_name.offset + record.file_name.file_name.length),
 		std::pair<SubTString, SubTString>(
-			SubTString(data + record.second.second.second.second.first.first, data + record.second.second.second.second.first.first + record.second.second.second.second.first.second),
-			SubTString(attribute_name, attribute_name + std::char_traits<TCHAR>::length(attribute_name))));
+			SubTString(data + record.data.stream_name.offset, data + record.data.stream_name.offset + record.data.stream_name.length),
+			SubTString(attribute_name, attribute_name + (attribute_name ? std::char_traits<TCHAR>::length(attribute_name) : 0))));
 }
 
 NtfsIndex::SegmentNumber NtfsIndex::get_name_by_record(CombinedRecord const &record, std::basic_string<TCHAR> &s, bool const include_attribute_name) const
@@ -896,7 +918,7 @@ NtfsIndex::SegmentNumber NtfsIndex::get_name_by_record(CombinedRecord const &rec
 		s.append(1, _T(':'));
 		s.append(p.second.second.begin(), p.second.second.end());
 	}
-	return record.second.second.first.second;
+	return record.file_name.parent;
 }
 
 NtfsIndex::CombinedRecord const &NtfsIndex::at(size_t const i) const { return this->index.at(i); }

@@ -103,13 +103,13 @@ struct DataRow
 		}
 		return s;
 	}
-	unsigned long parent() const { return this->record().second.second.first.second; }
-	long long creationTime() const { return this->record().second.first.creationTime; }
-	long long modificationTime() const { return this->record().second.first.modificationTime; }
-	long long accessTime() const { return this->record().second.first.accessTime; }
-	unsigned long attributes() const { return this->record().second.first.attributes; }
-	long long size() const { return this->record().second.second.second.second.second.first; }
-	long long sizeOnDisk() const { return this->record().second.second.second.second.second.second; }
+	unsigned long parent() const { return this->record().file_name.parent; }
+	long long creationTime() const { return this->record().standard_info.creationTime; }
+	long long modificationTime() const { return this->record().standard_info.modificationTime; }
+	long long accessTime() const { return this->record().standard_info.accessTime; }
+	unsigned long attributes() const { return this->record().standard_info.attributes; }
+	long long size() const { return this->record().data.end_of_file; }
+	long long sizeOnDisk() const { return this->record().data.size_on_disk; }
 };
 
 struct Wow64Disable
@@ -1216,7 +1216,7 @@ private:
 			if (indices[i] < 0) { continue; }
 			rows.push_back(this->rows.begin() + indices[i]);
 		}
-		HRESULT hr = S_OK;
+		HRESULT volatile hr = S_OK;
 		UINT const minID = 1000;
 		WTL::CMenu menu;
 		menu.CreatePopupMenu();
@@ -1224,7 +1224,7 @@ private:
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
 			new std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> >());
 		p->second.reserve(rows.size());  // REQUIRED, to avoid copying CShellItemIDList objects (they're not copyable!)
-		SFGAOF sfgao;
+		SFGAOF sfgao = 0;
 		std::basic_string<TCHAR> common_ancestor_path;
 		for (size_t i = 0; i < rows.size(); ++i)
 		{
@@ -1267,18 +1267,18 @@ private:
 		}
 		if (hr == S_OK)
 		{
-			if (!common_ancestor_path.empty())
+			ATL::CComPtr<IShellFolder> desktop;
+			hr = SHGetDesktopFolder(&desktop);
+			if (hr == S_OK)
 			{
-				ATL::CComPtr<IShellFolder> desktop;
-				hr = SHGetDesktopFolder(&desktop);
-				if (hr == S_OK)
+				if (p->first.first.m_pidl->mkid.cb)
 				{
 					hr = desktop->BindToObject(p->first.first, NULL, IID_IShellFolder, reinterpret_cast<void **>(&p->first.second));
 				}
-			}
-			else
-			{
-				hr = SHGetDesktopFolder(&p->first.second);
+				else
+				{
+					hr = desktop.QueryInterface(&p->first.second);
+				}
 			}
 		}
 
@@ -1313,7 +1313,7 @@ private:
 
 			std::basic_stringstream<TCHAR> ssName;
 			ssName.imbue(std::locale(""));
-			ssName << _T("File #") << static_cast<unsigned long>(rows.back()->record().first);
+			ssName << _T("File #") << static_cast<unsigned long>(rows.back()->record().segment_number);
 			std::basic_string<TCHAR> name = ssName.str();
 
 			MENUITEMINFO mii1 = { sizeof(mii1), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };

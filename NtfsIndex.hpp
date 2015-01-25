@@ -27,18 +27,29 @@ public:
 		long long, modificationTime,
 		long long, accessTime,
 		unsigned long, attributes);
-	typedef std::pair<std::pair<NameOffset /*file name*/, NameLength>, SegmentNumber /* parent */> FileNameAttribute;
+	DECLARE_NAMED_2TUPLE(NameRef,
+		NameOffset, offset,
+		NameLength, length);
+	DECLARE_NAMED_2TUPLE(FileNameAttribute,
+		NameRef, file_name,
+		SegmentNumber, parent);
+	DECLARE_NAMED_5TUPLE(DataAttribute,
+		NTFS::AttributeTypeCode, type,
+		bool, valid,
+		NameRef, stream_name,
+		long long, end_of_file,
+		long long, size_on_disk);
+#if 0
 	typedef std::pair<
 		std::pair<NTFS::AttributeTypeCode, bool /* file valid? (not deleted) */>,
 		std::pair<std::pair<NameOffset /*stream name*/, NameLength>, std::pair<long long /*logical size*/, long long /*size on disk*/> >
 	> DataAttribute;
-	typedef std::pair<
-		SegmentNumber,
-		std::pair<
-			StandardInformationAttribute,
-			std::pair<FileNameAttribute, DataAttribute>
-		>
-	> CombinedRecord;
+#endif
+	DECLARE_NAMED_4TUPLE(CombinedRecord,
+		SegmentNumber, segment_number,
+		StandardInformationAttribute, standard_info,
+		FileNameAttribute, file_name,
+		DataAttribute, data);
 
 	friend void swap(This &a, This &b) { a.swap(b); }
 	void swap(This &other);

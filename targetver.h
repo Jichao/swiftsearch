@@ -26,6 +26,7 @@
 #define LIMIT_FUNCTION_ARITY 8
 #define INCL_WINSOCK_API_PROTOTYPES 0  // bind() conflicts with boost
 #define NTOBJECT_NTFS 1
+#define BUILD_WINDOWS 1
 #if defined(_DEBUG)
 #define _ITERATOR_DEBUG_LEVEL 1
 #else
