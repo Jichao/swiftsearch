@@ -806,14 +806,16 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	size_t loads_so_far;
 	size_t total_loads;
 	size_t _total_items;
+	boost::atomic<unsigned int> _records_so_far;
 	mutex *get_mutex() const
 	{
 		return static_cast<bool const /* WRONG USE OF VOLATILE! but it works on x86 */ volatile &>(this->_atomic_unfinished) ? &this->_mutex : NULL;
 	}
 public:
 	unsigned int mft_record_size;
+	unsigned int total_records;
 	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type;
-	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), _total_items(), mft_record_size()
+	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), _total_items(), _records_so_far(0), mft_record_size(), total_records()
 	{
 		bool success = false;
 		std::tstring dirsep;
@@ -851,12 +853,8 @@ public:
 		return me->total_items();
 	}
 	size_t total_items() const { return this->_total_items; }
-	size_t records_so_far() const volatile
-	{
-		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
-		return me->records_so_far();
-	}
+	size_t records_so_far() const volatile { return this->_records_so_far.load(boost::memory_order_acquire); }
+	size_t records_so_far() const { return this->_records_so_far.load(boost::memory_order_relaxed); }
 	void *volume() const volatile { return this->_volume.value; }
 	static Records::iterator at(Records &records, size_t const frs, Records::iterator *const existing_to_revalidate = NULL)
 	{
@@ -999,7 +997,7 @@ public:
 		Record const empty_record = NtfsIndex::empty_record();
 		if (size % this->mft_record_size)
 		{ throw std::runtime_error("cluster size is smaller than MFT record size; split MFT records not supported"); }
-		for (size_t i = virtual_offset % this->mft_record_size ? this->mft_record_size - virtual_offset % this->mft_record_size : 0; i + this->mft_record_size <= size; i += this->mft_record_size)
+		for (size_t i = virtual_offset % this->mft_record_size ? this->mft_record_size - virtual_offset % this->mft_record_size : 0; i + this->mft_record_size <= size; i += this->mft_record_size, this->_records_so_far.fetch_add(1, boost::memory_order_acq_rel))
 		{
 			unsigned int const frs = static_cast<unsigned int>((virtual_offset + i) / this->mft_record_size);
 			ntfs::FILE_RECORD_SEGMENT_HEADER *const frsh = reinterpret_cast<ntfs::FILE_RECORD_SEGMENT_HEADER *>(&static_cast<unsigned char *>(buffer)[i]);
@@ -1510,23 +1508,21 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 		}
 	}
 
-	static unsigned long WaitMessageLoop(HANDLE const handles[], size_t const nhandles)
+	unsigned long WaitMessageLoop(HANDLE const handles[], size_t const nhandles)
 	{
 		for (;;)
 		{
-			MSG msg;
 			unsigned long result = MsgWaitForMultipleObjectsEx(static_cast<unsigned int>(nhandles), handles, UPDATE_INTERVAL, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-			if (result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT)
+			if (WAIT_OBJECT_0 <= result && result < WAIT_OBJECT_0 + nhandles || result == WAIT_TIMEOUT)
 			{ return result; }
 			else if (result == WAIT_OBJECT_0 + static_cast<unsigned int>(nhandles))
 			{
-				while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-				{
-					TranslateMessage(&msg);
-					DispatchMessage(&msg);
-				}
+				this->ProcessMessages();
 			}
-			else { RaiseException(GetLastError(), 0, 0, NULL); }
+			else
+			{
+				RaiseException(GetLastError(), 0, 0, NULL);
+			}
 		}
 	}
 
@@ -1536,7 +1532,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 	}
 
 public:
-	enum { UPDATE_INTERVAL = 30 };
+	enum { UPDATE_INTERVAL = 20 };
 	CProgressDialog(ATL::CWindow parent)
 		: Base(true), parent(parent), lastUpdateTime(0), creationTime(GetTickCount()), lastProgress(0), lastProgressTotal(1), invalidated(false), canceled(false), windowCreated(false)
 	{
@@ -1558,6 +1554,23 @@ public:
 		return this->Elapsed() >= UPDATE_INTERVAL;
 	}
 
+	void ProcessMessages()
+	{
+		MSG msg;
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			if (!this->IsDialogMessage(&msg))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+			if (msg.message == WM_QUIT)
+			{
+				this->canceled = true;
+			}
+		}
+	}
+
 	bool HasUserCancelled()
 	{
 		bool justCreated = false;
@@ -1570,17 +1583,7 @@ public:
 		}
 		if (this->windowCreated && (justCreated || this->ShouldUpdate()))
 		{
-			MSG msg;
-			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-			{
-				if (!this->IsDialogMessage(&msg))
-				{
-					TranslateMessage(&msg);
-					DispatchMessage(&msg);
-				}
-				if (msg.message == WM_QUIT)
-				{ this->canceled = true; }
-			}
+			this->ProcessMessages();
 		}
 		return this->canceled;
 	}
@@ -1674,7 +1677,6 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		unsigned int cluster_size;
 		unsigned int num_reads;
 		boost::atomic<unsigned int> records_so_far;
-		unsigned int num_records;
 		unsigned long long virtual_offset, next_virtual_offset;
 		OVERLAPPED next_overlapped;
 		RetPtrs ret_ptrs;
@@ -1683,7 +1685,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		Buffer buf;
 	public:
 		explicit OverlappedNtfsMftRead(Handle const &iocp, std::tstring const &path_name, HWND const m_hWnd, Handle const &closing_event)
-			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), records_so_far(0), num_records(), virtual_offset(), next_virtual_offset(), next_overlapped(), ret_ptrs(), j(ret_ptrs.begin()) { }
+			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), records_so_far(0), virtual_offset(), next_virtual_offset(), next_overlapped(), ret_ptrs(), j(ret_ptrs.begin()) { }
 		int operator()(size_t const size, uintptr_t const /*key*/)
 		{
 			int result = -1;
@@ -1703,13 +1705,13 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 						this->cluster_size = static_cast<unsigned int>(volume_data.BytesPerCluster);
 						mft_start_lcn = volume_data.MftStartLcn.QuadPart;
 						this->p->mft_record_size = volume_data.BytesPerFileRecordSegment;
-						this->num_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / this->p->mft_record_size);
+						this->p->total_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / this->p->mft_record_size);
 					}
 					CheckAndThrow(!!CreateIoCompletionPort(this->p->volume(), iocp, reinterpret_cast<uintptr_t>(&*this->p), 0));
 					long long llsize = 0;
 					get_mft_retrieval_pointers(this->p->volume(), _T("$MFT::$DATA"), &llsize, mft_start_lcn, this->cluster_size, this->p->mft_record_size).swap(this->ret_ptrs);
 					this->j = this->ret_ptrs.begin();
-					this->p->reserve(this->num_records);
+					this->p->reserve(this->p->total_records);
 					result = +1;
 				}
 			}
@@ -1836,6 +1838,35 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 			if (!less && !this->less(b.file_name(), a.file_name()))
 			{ less = this->less(a.stream_name(), b.stream_name()); }
 			return less;
+		}
+	};
+
+	class RaiseIoPriority
+	{
+		HANDLE const *wait_volumes;
+		size_t wait_handles_size;
+		std::vector<winnt::FILE_IO_PRIORITY_HINT_INFORMATION> old_io_priorities;
+		RaiseIoPriority(RaiseIoPriority const &);
+		RaiseIoPriority &operator =(RaiseIoPriority const &);
+	public:
+		explicit RaiseIoPriority(HANDLE const wait_volumes[], size_t const wait_handles_size)
+			: wait_volumes(wait_volumes), wait_handles_size(wait_handles_size), old_io_priorities(wait_handles_size)
+		{
+			for (size_t i = 0; i != this->wait_handles_size; ++i)
+			{
+				winnt::IO_STATUS_BLOCK iosb;
+				winnt::NtQueryInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
+				winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityNormal };
+				winnt::NtSetInformationFile(wait_volumes[i], &iosb, &io_priority, sizeof(io_priority), 43);
+			}
+		}
+		~RaiseIoPriority()
+		{
+			for (size_t i = 0; i != this->wait_handles_size; ++i)
+			{
+				winnt::IO_STATUS_BLOCK iosb;
+				winnt::NtSetInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
+			}
 		}
 	};
 
@@ -2292,106 +2323,99 @@ public:
 		bool const is_path_pattern = is_regex || ~pattern.find(_T('\\'));
 		if (!is_path_pattern && !~pattern.find(_T('*')) && !~pattern.find(_T('?'))) { pattern.insert(pattern.begin(), _T('*')); pattern.insert(pattern.end(), _T('*')); }
 		clock_t const start = clock();
-		HANDLE wait_handles[MAXIMUM_WAIT_OBJECTS];
-		size_t wait_indices[MAXIMUM_WAIT_OBJECTS];
-		HANDLE wait_volumes[MAXIMUM_WAIT_OBJECTS];
+		std::vector<HANDLE> wait_handles;
+		std::vector<HANDLE> wait_volumes;
+		std::vector<Results::value_type::first_type> wait_indices;
 		// TODO: What if they exceed maximum wait objects?
-		unsigned int wait_handles_size = 0;
-		std::vector<Results::value_type::first_type> indices;
-		if (NtfsIndex *p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(this->cmbDrive.GetCurSel())))
-		{
-			indices.push_back(p);
-		}
-		else
-		{
-			for (int ii = this->cmbDrive.GetCount() - 1; ii >= 0; --ii)
-			{
-				p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
-				if (p) { indices.push_back(p); }
-			}
-		}
+		bool any_io_pending = true;
 		WTL::CString cursel; if (int index = this->cmbDrive.GetCurSel()) { this->cmbDrive.GetLBText(index, cursel); }
-		for (size_t ii = 0; ii != indices.size(); ++ii)
+		size_t overall_progress_numerator = 0, overall_progress_denominator = 0;
+		for (int ii = 0; ii < this->cmbDrive.GetCount(); ++ii)
 		{
-			Results::value_type::first_type const i = indices[ii];
-			if (cursel.IsEmpty() || cursel == i->root_path().c_str())
+			NtfsIndex *const p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
+			if (p && (cursel.IsEmpty() || cursel == p->root_path().c_str()))
 			{
-				wait_handles[wait_handles_size] = reinterpret_cast<HANDLE>(i->finished_event());
-				wait_indices[wait_handles_size] = ii;
-				wait_volumes[wait_handles_size] = i->volume();
-				++wait_handles_size;
+				wait_handles.push_back(reinterpret_cast<HANDLE>(p->finished_event()));
+				wait_indices.push_back(p);
+				wait_volumes.push_back(p->volume());
+				size_t const records_so_far = p->records_so_far();
+				any_io_pending |= records_so_far < p->total_records;
+				overall_progress_denominator += p->total_records * 2;
 			}
 		}
-		class RaiseIoPriority
+		if (!any_io_pending) { overall_progress_denominator /= 2; }
+		RaiseIoPriority const raise_io_priorities(wait_volumes.empty() ? NULL : &*wait_volumes.begin(), wait_volumes.size());
+		while (!dlg.HasUserCancelled() && !wait_handles.empty())
 		{
-			HANDLE wait_volumes[MAXIMUM_WAIT_OBJECTS];
-			size_t wait_handles_size;
-			winnt::FILE_IO_PRIORITY_HINT_INFORMATION old_io_priorities[MAXIMUM_WAIT_OBJECTS];
-		public:
-			explicit RaiseIoPriority(HANDLE const (&wait_volumes)[MAXIMUM_WAIT_OBJECTS], size_t const wait_handles_size)
-				: wait_handles_size(wait_handles_size)
-			{
-				std::copy(wait_volumes, wait_volumes + static_cast<ptrdiff_t>(this->wait_handles_size), this->wait_volumes);
-				for (size_t i = 0; i != this->wait_handles_size; ++i)
-				{
-					winnt::IO_STATUS_BLOCK iosb;
-					winnt::NtQueryInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
-					winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityNormal };
-					winnt::NtSetInformationFile(wait_volumes[i], &iosb, &io_priority, sizeof(io_priority), 43);
-				}
-			}
-			~RaiseIoPriority()
-			{
-				for (size_t i = 0; i != this->wait_handles_size; ++i)
-				{
-					winnt::IO_STATUS_BLOCK iosb;
-					winnt::NtSetInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
-				}
-			}
-		};
-		RaiseIoPriority const raise_io_priorities(wait_volumes, wait_handles_size);
-		while (!dlg.HasUserCancelled() && wait_handles_size)
-		{
-			unsigned long const wait_result = CProgressDialog::WaitMessageLoop(wait_handles, wait_handles_size);
+			unsigned long const wait_result = dlg.WaitMessageLoop(wait_handles.empty() ? NULL : &*wait_handles.begin(), wait_handles.size());
 			if (wait_result == WAIT_TIMEOUT)
 			{
-				for (unsigned int i = 0; i != wait_handles_size; ++i)
+				if (dlg.ShouldUpdate())
 				{
-					size_t const ii = wait_indices[i];
+					std::tstring text = _T("Reading file tables...");
+					bool any = false;
+					size_t temp_overall_progress_numerator = overall_progress_numerator;
+					for (size_t i = 0; i != wait_indices.size(); ++i)
+					{
+						Results::value_type::first_type const j = wait_indices[i];
+						size_t const records_so_far = j->records_so_far();
+						temp_overall_progress_numerator += records_so_far;
+						if (records_so_far != j->total_records)
+						{
+							if (any) { text += _T(","); }
+							text += _T(" ");
+							text += j->root_path();
+							any = true;
+						}
+					}
+					dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(), text.data() + text.size()));
+					dlg.SetProgress(static_cast<long long>(temp_overall_progress_numerator), static_cast<long long>(overall_progress_denominator));
+					dlg.Flush();
 				}
 			}
 			else
 			{
-				if (wait_result < wait_handles_size)
+				if (wait_result < wait_handles.size())
 				{
-					size_t const ii = wait_indices[wait_result];
-
-					Results::value_type::first_type const i = indices[ii];
+					Results::value_type::first_type const i = wait_indices[wait_result];
 					size_t const old_size = this->results.size();
+					size_t current_progress_numerator = 0;
+					size_t const current_progress_denominator = i->total_items();
 					std::tstring const root_path = i->root_path();
 					std::tstring current_path = root_path;
 					while (!current_path.empty() && *(current_path.end() - 1) == _T('\\')) { current_path.erase(current_path.end() - 1); }
 					try
 					{
-						size_t progress_numerator = 0;
-						size_t const progress_denominator = i->total_items();
-						i->matches([&dlg, is_path_pattern, &root_path, &pattern, is_regex, this, i, &progress_numerator, progress_denominator
-	#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+						i->matches([&dlg, is_path_pattern, &root_path, &pattern, is_regex, this, i, &wait_indices,
+							&current_progress_numerator, current_progress_denominator,
+							overall_progress_numerator, overall_progress_denominator
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
 							, &re
 							, &mr
-	#endif
+#endif
 						](std::pair<std::tstring::const_iterator, std::tstring::const_iterator> const path, std::pair<unsigned long long, unsigned long long> const sizes, NtfsIndex::key_type const key)
 						{
-							if (dlg.ShouldUpdate() || progress_denominator - progress_numerator <= 1)
+							if (dlg.ShouldUpdate() || current_progress_denominator - current_progress_numerator <= 1)
 							{
 								if (dlg.HasUserCancelled()) { throw CStructured_Exception(ERROR_CANCELLED, NULL); }
+								size_t temp_overall_progress_numerator = overall_progress_numerator;
+								for (size_t k = 0; k != wait_indices.size(); ++k)
+								{
+									Results::value_type::first_type const j = wait_indices[k];
+									size_t const records_so_far = j->records_so_far();
+									temp_overall_progress_numerator += records_so_far;
+								}
 								std::tstring text(0x100 + root_path.size() + static_cast<ptrdiff_t>(path.second - path.first), _T('\0'));
-								text.resize(static_cast<size_t>(_stprintf(&*text.begin(), _T("Searching %.*s (%s of %s)...\r\n%.*s"), static_cast<int>(root_path.size()), root_path.c_str(), nformat(progress_numerator, this->loc).c_str(), nformat(progress_denominator, this->loc).c_str(), static_cast<int>(path.second - path.first), path.first == path.second ? NULL : &*path.first)));
+								text.resize(static_cast<size_t>(_stprintf(&*text.begin(), _T("Searching %.*s (%s of %s)...\r\n%.*s"),
+									static_cast<int>(root_path.size()), root_path.c_str(),
+									nformat(current_progress_numerator, this->loc).c_str(),
+									nformat(current_progress_denominator, this->loc).c_str(),
+									static_cast<int>(path.second - path.first), path.first == path.second ? NULL : &*path.first)));
 								dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(), text.data() + text.size()));
-								dlg.SetProgress(static_cast<long long>(progress_numerator), static_cast<long long>(progress_denominator));
+								dlg.SetProgress(temp_overall_progress_numerator + static_cast<unsigned long long>(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) / static_cast<unsigned long long>(current_progress_denominator), static_cast<long long>(overall_progress_denominator));
 								dlg.Flush();
 							}
-							++progress_numerator;
+							++current_progress_numerator;
 							std::pair<std::tstring::const_iterator, std::tstring::const_iterator> needle = path;
 							if (!is_path_pattern)
 							{
@@ -2405,23 +2429,21 @@ public:
 								wildcard(pattern.begin(), pattern.end(), needle.first, needle.second, tchar_ci_traits())
 								;
 							if (match)
-							{
-								this->results.push_back(Results::value_type(i, Results::value_type::second_type(key, sizes)));
-							}
+							{ this->results.push_back(Results::value_type(i, Results::value_type::second_type(key, sizes))); }
 						}, current_path);
-
 					}
 					catch (CStructured_Exception &ex)
 					{
 						if (ex.GetSENumber() != ERROR_CANCELLED) { throw; }
 					}
+					if (any_io_pending) { overall_progress_numerator += i->total_records; }
+					overall_progress_numerator += static_cast<size_t>(static_cast<unsigned long long>(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) / static_cast<unsigned long long>(current_progress_denominator));
 					std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
 					this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), LVSICF_NOINVALIDATEALL);
 				}
-				--wait_handles_size;
 				using std::swap;
-				swap(wait_indices[wait_result], wait_indices[wait_handles_size]);
-				swap(wait_handles[wait_result], wait_handles[wait_handles_size]);
+				swap(wait_indices[wait_result], wait_indices.back()), wait_indices.pop_back();
+				swap(wait_handles[wait_result], wait_handles.back()), wait_handles.pop_back();
 			}
 		}
 		clock_t const end = clock();
@@ -2654,6 +2676,7 @@ public:
 		Results::value_type::first_type const &i = result->first;
 		std::tstring path;
 		path = i->root_path(), i->get_path(result->second.first, path, false);
+		remove_path_stream_and_trailing_sep(path);
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
 			new std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> >());
 		SFGAOF sfgao = 0;
