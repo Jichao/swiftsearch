@@ -17,10 +17,12 @@
 #define BUILD_WINDOWS 1
 #define BOOST_ALL_NO_LIB 1
 
+#ifndef _DEBUG
 #define _SECURE_SCL 0
 #define _ITERATOR_DEBUG_LEVEL 0
 #define __STDC_WANT_SECURE_LIB__ 0
 #define _STRALIGN_USE_SECURE_CRT 0
+#endif
 
 #if defined(__STDC_WANT_SECURE_LIB__) && !__STDC_WANT_SECURE_LIB__
 #if !(defined(_MSC_VER) && _MSC_VER <= 1400)

@@ -47,7 +47,9 @@ extern WTL::CAppModule _Module;
 
 #include "resource.h"
 
-// #include <boost/xpressive/xpressive_dynamic.hpp>
+#ifndef _DEBUG
+#include <boost/xpressive/xpressive_dynamic.hpp>
+#endif
 
 #ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
 #define BOOST_XPRESSIVE_DYNAMIC_HPP_EAN BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
@@ -237,6 +239,7 @@ namespace winnt
 	X(NtOpenFile, NTSTATUS NTAPI(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN OBJECT_ATTRIBUTES *ObjectAttributes, OUT IO_STATUS_BLOCK *IoStatusBlock, IN ULONG ShareAccess, IN ULONG OpenOptions));
 	X(NtReadFile, NTSTATUS NTAPI(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN IO_APC_ROUTINE *ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID Buffer, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL));
 	X(NtQueryVolumeInformationFile, NTSTATUS NTAPI(HANDLE FileHandle, IO_STATUS_BLOCK *IoStatusBlock, PVOID FsInformation, unsigned long Length, unsigned long FsInformationClass));
+	X(NtQueryInformationFile, NTSTATUS NTAPI(IN HANDLE FileHandle, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN unsigned long FileInformationClass));
 	X(NtSetInformationFile, NTSTATUS NTAPI(IN HANDLE FileHandle, OUT IO_STATUS_BLOCK *IoStatusBlock, IN PVOID FileInformation, IN ULONG Length, IN unsigned long FileInformationClass));
 	X(RtlInitUnicodeString, VOID NTAPI(UNICODE_STRING * DestinationString, PCWSTR SourceString));
 	X(RtlNtStatusToDosError, unsigned long NTAPI(IN NTSTATUS NtStatus));
@@ -548,7 +551,11 @@ class Handle
 public:
 	void *value;
 	Handle() : value() { }
-	explicit Handle(void *const value) : value(value) { if (!valid(value)) { throw std::invalid_argument("invalid handle"); } }
+	explicit Handle(void *const value) : value(value)
+	{
+		if (!valid(value))
+		{ throw std::invalid_argument("invalid handle"); }
+	}
 	Handle(Handle const &other) : value(other.value)
 	{
 		if (valid(this->value))
@@ -784,7 +791,7 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	struct Record
 	{
 		StandardInfo stdinfo;
-		unsigned short name_count;
+		unsigned short name_count, stream_count;
 		LinkInfos::size_type first_name;
 		StreamInfos::value_type first_stream;
 		ChildInfos::value_type first_child;
@@ -798,6 +805,7 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	bool _atomic_unfinished;
 	size_t loads_so_far;
 	size_t total_loads;
+	size_t _total_items;
 	mutex *get_mutex() const
 	{
 		return static_cast<bool const /* WRONG USE OF VOLATILE! but it works on x86 */ volatile &>(this->_atomic_unfinished) ? &this->_mutex : NULL;
@@ -805,7 +813,7 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 public:
 	unsigned int mft_record_size;
 	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type;
-	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), mft_record_size()
+	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), _total_items(), mft_record_size()
 	{
 		bool success = false;
 		std::tstring dirsep;
@@ -835,6 +843,19 @@ public:
 	}
 	~NtfsIndex()
 	{
+	}
+	size_t total_items() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->get_mutex());
+		return me->total_items();
+	}
+	size_t total_items() const { return this->_total_items; }
+	size_t records_so_far() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->get_mutex());
+		return me->records_so_far();
 	}
 	void *volume() const volatile { return this->_volume.value; }
 	static Records::iterator at(Records &records, size_t const frs, Records::iterator *const existing_to_revalidate = NULL)
@@ -875,11 +896,14 @@ public:
 	static Record empty_record()
 	{
 		Record empty_record = Record();
+		empty_record.name_count = 0;
+		empty_record.stream_count = 0;
 		empty_record.stdinfo.attributes = negative_one;
 		empty_record.first_stream.second = negative_one;
 		empty_record.first_name = negative_one;
 		empty_record.first_child.second = negative_one;
 		empty_record.first_child.first.first = negative_one;
+		empty_record.first_stream.first.length = negative_one;
 		empty_record.first_stream.first.name.offset = negative_one;
 		return empty_record;
 	}
@@ -1020,6 +1044,7 @@ public:
 								}
 								parent->first_child.first.first = frs_base;
 								parent->first_child.first.second = base_record->name_count;
+								this->_total_items += base_record->stream_count;
 								++base_record->name_count;
 							}
 						}
@@ -1051,6 +1076,8 @@ public:
 								base_record->first_stream.second = stream_index;
 							}
 							base_record->first_stream.first = info;
+							this->_total_items += base_record->name_count;
+							++base_record->stream_count;
 						}
 						break;
 					}
@@ -1390,6 +1417,218 @@ void inplace_mergesort(It const begin, It const end, Pred const &pred, bool cons
 	}
 }
 
+class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WTL::CDialogResize<CProgressDialog>
+{
+	typedef CProgressDialog This;
+	typedef CModifiedDialogImpl<CProgressDialog> Base;
+	friend CDialogResize<This>;
+	friend CDialogImpl<This>;
+	friend CModifiedDialogImpl<This>;
+	enum { IDD = IDD_DIALOGPROGRESS };
+	class CUnselectableWindow : public ATL::CWindowImpl<CUnselectableWindow>
+	{
+		BEGIN_MSG_MAP(CUnselectableWindow)
+			MESSAGE_HANDLER(WM_NCHITTEST, OnNcHitTest)
+		END_MSG_MAP()
+		LRESULT OnNcHitTest(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL&)
+		{
+			LRESULT result = this->DefWindowProc(uMsg, wParam, lParam);
+			return result == HTCLIENT ? HTTRANSPARENT : result;
+		}
+	};
+
+	CUnselectableWindow progressText;
+	WTL::CProgressBarCtrl progressBar;
+	bool canceled;
+	bool invalidated;
+	DWORD creationTime;
+	DWORD lastUpdateTime;
+	HWND parent;
+	std::basic_string<TCHAR> lastProgressText, lastProgressTitle;
+	bool windowCreated;
+	int lastProgress, lastProgressTotal;
+
+	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
+	{
+		(this->progressText.SubclassWindow)(this->GetDlgItem(IDC_RICHEDITPROGRESS));
+		this->progressText.SendMessage(EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
+
+		this->progressBar.Attach(this->GetDlgItem(IDC_PROGRESS1));
+		this->DlgResize_Init(false, false, 0);
+		ATL::CComBSTR bstr;
+		this->progressText.GetWindowText(&bstr);
+		this->lastProgressText = bstr;
+
+		return TRUE;
+	}
+
+	void OnPause(UINT uNotifyCode, int nID, CWindow wndCtl)
+	{
+		UNREFERENCED_PARAMETER((uNotifyCode, nID, wndCtl));
+		__debugbreak();
+	}
+
+	void OnCancel(UINT uNotifyCode, int nID, CWindow wndCtl)
+	{
+		UNREFERENCED_PARAMETER((uNotifyCode, nID, wndCtl));
+		PostQuitMessage(ERROR_CANCELLED);
+	}
+
+	BEGIN_MSG_MAP_EX(This)
+		CHAIN_MSG_MAP(CDialogResize<This>)
+		MSG_WM_INITDIALOG(OnInitDialog)
+		COMMAND_HANDLER_EX(IDRETRY, BN_CLICKED, OnPause)
+		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
+	END_MSG_MAP()
+
+	BEGIN_DLGRESIZE_MAP(This)
+		DLGRESIZE_CONTROL(IDC_PROGRESS1, DLSZ_MOVE_Y | DLSZ_SIZE_X)
+		DLGRESIZE_CONTROL(IDC_RICHEDITPROGRESS, DLSZ_SIZE_Y | DLSZ_SIZE_X)
+		DLGRESIZE_CONTROL(IDCANCEL, DLSZ_MOVE_X | DLSZ_MOVE_Y)
+	END_DLGRESIZE_MAP()
+
+	static BOOL EnableWindowRecursive(HWND hWnd, BOOL enable, BOOL includeSelf = true)
+	{
+		struct Callback
+		{
+			static BOOL CALLBACK EnableWindowRecursiveEnumProc(HWND hWnd, LPARAM lParam)
+			{
+				EnableWindowRecursive(hWnd, static_cast<BOOL>(lParam), TRUE);
+				return TRUE;
+			}
+		};
+		if (enable)
+		{
+			EnumChildWindows(hWnd, &Callback::EnableWindowRecursiveEnumProc, enable);
+			return includeSelf && ::EnableWindow(hWnd, enable);
+		}
+		else
+		{
+			BOOL result = includeSelf && ::EnableWindow(hWnd, enable);
+			EnumChildWindows(hWnd, &Callback::EnableWindowRecursiveEnumProc, enable);
+			return result;
+		}
+	}
+
+	static unsigned long WaitMessageLoop(HANDLE const handles[], size_t const nhandles)
+	{
+		for (;;)
+		{
+			MSG msg;
+			unsigned long result = MsgWaitForMultipleObjectsEx(static_cast<unsigned int>(nhandles), handles, UPDATE_INTERVAL, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			if (result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT)
+			{ return result; }
+			else if (result == WAIT_OBJECT_0 + static_cast<unsigned int>(nhandles))
+			{
+				while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+				{
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+			}
+			else { RaiseException(GetLastError(), 0, 0, NULL); }
+		}
+	}
+
+	DWORD GetMinDelay() const
+	{
+		return IsDebuggerPresent() ? 0 : 400;
+	}
+
+public:
+	enum { UPDATE_INTERVAL = 30 };
+	CProgressDialog(ATL::CWindow parent)
+		: Base(true), parent(parent), lastUpdateTime(0), creationTime(GetTickCount()), lastProgress(0), lastProgressTotal(1), invalidated(false), canceled(false), windowCreated(false)
+	{
+	}
+
+	~CProgressDialog()
+	{
+		if (this->windowCreated)
+		{
+			EnableWindowRecursive(parent, TRUE);
+			this->DestroyWindow();
+		}
+	}
+
+	unsigned long Elapsed() const { return GetTickCount() - this->lastUpdateTime; }
+
+	bool ShouldUpdate() const
+	{
+		return this->Elapsed() >= UPDATE_INTERVAL;
+	}
+
+	bool HasUserCancelled()
+	{
+		bool justCreated = false;
+		unsigned long const now = GetTickCount();
+		if (!this->windowCreated && abs(static_cast<int>(now - this->creationTime)) >= static_cast<int>(this->GetMinDelay()))
+		{
+			this->windowCreated = !!this->Create(parent);
+			EnableWindowRecursive(parent, FALSE);
+			this->Flush();
+		}
+		if (this->windowCreated && (justCreated || this->ShouldUpdate()))
+		{
+			MSG msg;
+			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+			{
+				if (!this->IsDialogMessage(&msg))
+				{
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+				if (msg.message == WM_QUIT)
+				{ this->canceled = true; }
+			}
+		}
+		return this->canceled;
+	}
+
+	void Flush()
+	{
+		if (this->invalidated)
+		{
+			if (this->windowCreated)
+			{
+				this->invalidated = false;
+				this->SetWindowText(this->lastProgressTitle.c_str());
+				this->progressBar.SetRange32(0, this->lastProgressTotal);
+				this->progressBar.SetPos(this->lastProgress);
+				this->progressText.SetWindowText(this->lastProgressText.c_str());
+				this->progressBar.UpdateWindow();
+				this->progressText.UpdateWindow();
+				this->UpdateWindow();
+			}
+			this->lastUpdateTime = GetTickCount();
+		}
+	}
+
+	void SetProgress(long long current, long long total)
+	{
+		if (total > INT_MAX)
+		{
+			current = static_cast<long long>((static_cast<double>(current) / total) * INT_MAX);
+			total = INT_MAX;
+		}
+		this->invalidated |= this->lastProgress != current || this->lastProgressTotal != total;
+		this->lastProgressTotal = static_cast<int>(total);
+		this->lastProgress = static_cast<int>(current);
+	}
+
+	void SetProgressTitle(LPCTSTR title)
+	{
+		this->invalidated |= this->lastProgressTitle != title;
+		this->lastProgressTitle = title;
+	}
+
+	void SetProgressText(boost::iterator_range<TCHAR const *> const text)
+	{
+		this->invalidated |= !boost::equal(this->lastProgressText, text);
+		this->lastProgressText.assign(text.begin(), text.end());
+	}
+};
+
 class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize<CMainDlg>, public CInvokeImpl<CMainDlg>, private WTL::CMessageFilter
 {
 	typedef std::vector<std::pair<unsigned long long, long long> > RetPtrs;
@@ -1434,15 +1673,17 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		Handle closing_event;
 		unsigned int cluster_size;
 		unsigned int num_reads;
+		boost::atomic<unsigned int> records_so_far;
+		unsigned int num_records;
 		unsigned long long virtual_offset, next_virtual_offset;
 		OVERLAPPED next_overlapped;
-		boost::intrusive_ptr<NtfsIndex> p;
-		Buffer buf;
 		RetPtrs ret_ptrs;
 		RetPtrs::const_iterator j;
+		boost::intrusive_ptr<NtfsIndex> p;
+		Buffer buf;
 	public:
 		explicit OverlappedNtfsMftRead(Handle const &iocp, std::tstring const &path_name, HWND const m_hWnd, Handle const &closing_event)
-			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), virtual_offset(), next_virtual_offset(), next_overlapped() { }
+			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), records_so_far(0), num_records(), virtual_offset(), next_virtual_offset(), next_overlapped(), ret_ptrs(), j(ret_ptrs.begin()) { }
 		int operator()(size_t const size, uintptr_t const /*key*/)
 		{
 			int result = -1;
@@ -1454,7 +1695,6 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 					if (::PostMessage(m_hWnd, WM_THREADMESSAGE, 1, reinterpret_cast<LPARAM>(&*this->p))) { intrusive_ptr_add_ref(this->p.get()); }
 					DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, this->p->volume(), reinterpret_cast<HDEVNOTIFY>(m_hWnd) };
 					dev.dbch_hdevnotify = RegisterDeviceNotification(m_hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
-					unsigned int num_records;
 					long long mft_start_lcn;
 					{
 						unsigned long br;
@@ -1463,34 +1703,38 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 						this->cluster_size = static_cast<unsigned int>(volume_data.BytesPerCluster);
 						mft_start_lcn = volume_data.MftStartLcn.QuadPart;
 						this->p->mft_record_size = volume_data.BytesPerFileRecordSegment;
-						num_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / this->p->mft_record_size);
+						this->num_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / this->p->mft_record_size);
 					}
 					CheckAndThrow(!!CreateIoCompletionPort(this->p->volume(), iocp, reinterpret_cast<uintptr_t>(&*this->p), 0));
 					long long llsize = 0;
 					get_mft_retrieval_pointers(this->p->volume(), _T("$MFT::$DATA"), &llsize, mft_start_lcn, this->cluster_size, this->p->mft_record_size).swap(this->ret_ptrs);
 					this->j = this->ret_ptrs.begin();
-					this->p->reserve(num_records);
+					this->p->reserve(this->num_records);
 					result = +1;
 				}
 			}
 			if (this->p)
 			{
+				Buffer old_buffer; old_buffer.swap(this->buf);
+				unsigned long long const old_virtual_offset = this->virtual_offset;
 				if (size)
 				{
-					this->p->load(this->virtual_offset, this->buf.data(), size);
+					static_cast<NtfsIndex volatile *>(this->p.get())->load(old_virtual_offset, old_buffer.data(), size);
+					this->records_so_far.fetch_add(static_cast<unsigned int>(size / this->p->mft_record_size));
 				}
 				this->virtual_offset = this->next_virtual_offset;
 				while (j != this->ret_ptrs.end() && this->virtual_offset >= j->first)
 				{
 					++j;
 				}
-				if (j != this->ret_ptrs.end() && WaitForSingleObject(this->closing_event, 0) != WAIT_OBJECT_0)
+				bool const more = j != this->ret_ptrs.end() && WaitForSingleObject(this->closing_event, 0) != WAIT_OBJECT_0;
+				if (more)
 				{
 					long long const lbn = j->second + (this->virtual_offset - (j == this->ret_ptrs.begin() ? 0 : (j - 1)->first));
 					this->OVERLAPPED::Offset = static_cast<unsigned long>(lbn);
 					this->OVERLAPPED::OffsetHigh = static_cast<unsigned long>(lbn >> (CHAR_BIT * sizeof(this->OVERLAPPED::Offset)));
 					unsigned long const nb = static_cast<unsigned long>(std::min(std::max(1ULL * cluster_size, 1ULL << 20), j->first - this->virtual_offset));
-					if (this->buf.size() != nb) { Buffer(nb).swap(this->buf); }
+					Buffer(nb).swap(this->buf);
 					++this->num_reads;
 					if (ReadFile(this->p->volume(), this->buf.data(), nb, NULL, this))
 					{
@@ -1501,7 +1745,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 					else { result = 0; }
 					this->next_virtual_offset = this->virtual_offset + nb;
 				}
-				else
+				if (!more)
 				{
 					this->p->set_total_loads(this->num_reads);
 				}
@@ -1604,6 +1848,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	WTL::CStatusBarCtrl statusbar;
 	WTL::CAccelerator accel;
 	std::map<std::tstring, CacheInfo> cache;
+	std::tstring lastRequestedIcon;
 	HANDLE hRichEdit;
 	Results results;
 	WTL::CImageList imgListSmall, imgListLarge, imgListExtraLarge;
@@ -1614,6 +1859,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	Handle closing_event;
 	Handle iocp;
 	Threads threads;
+	std::locale loc;
 	static DWORD WINAPI SHOpenFolderAndSelectItemsThread(IN LPVOID lpParameter)
 	{
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
@@ -1634,7 +1880,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		return SHOpenFolderAndSelectItems(p->first.first, static_cast<UINT>(relative_item_ids.size()), relative_item_ids.empty() ? NULL : &relative_item_ids[0], 0);
 	}
 public:
-	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), iconLoader(BackgroundWorker::create(true)), hRichEdit(LoadLibrary(_T("riched20.dll")))
+	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(""), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
 	{
 	}
 	void OnDestroy()
@@ -1707,18 +1953,17 @@ public:
 				}
 #endif
 				Handle fileTemp;  // To prevent icon retrieval from changing the file time
-				try
 				{
-					Handle(CreateFile(normalizedPath.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING | FILE_FLAG_OPEN_REPARSE_POINT, NULL)).swap(fileTemp);
-					if (!fileTemp) { Handle(CreateFile(normalizedPath.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL)).swap(fileTemp); }
-					if (fileTemp)
+					std::tstring ntpath = _T("\\??\\") + path;
+					winnt::UNICODE_STRING us = { static_cast<unsigned short>(ntpath.size() * sizeof(*ntpath.begin())), static_cast<unsigned short>(ntpath.size() * sizeof(*ntpath.begin())), ntpath.empty() ? NULL : &*ntpath.begin() };
+					winnt::OBJECT_ATTRIBUTES oa = { sizeof(oa), NULL, &us };
+					winnt::IO_STATUS_BLOCK iosb;
+					if (winnt::NtOpenFile(&fileTemp.value, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0x00200000 /* FILE_OPEN_REPARSE_POINT */ | 0x00000008 /*FILE_NO_INTERMEDIATE_BUFFERING*/) == 0)
 					{
 						FILETIME preserve = { ULONG_MAX, ULONG_MAX };
 						SetFileTime(fileTemp, NULL, &preserve, NULL);
 					}
 				}
-				catch (std::invalid_argument &) { }
-				catch (CStructured_Exception &) { }
 				BOOL success = FALSE;
 				SetLastError(0);
 				if (shfi.hIcon == NULL)
@@ -1747,8 +1992,23 @@ public:
 		}
 	};
 
-	int CacheIcon(std::tstring const &path, int const iItem, ULONG fileAttributes, bool lifo)
+	static void remove_path_stream_and_trailing_sep(std::tstring &path)
 	{
+		for (;;)
+		{
+			size_t colon_or_sep = path.find_last_of(_T("\\:"));
+			if (!~colon_or_sep || path[colon_or_sep] != _T(':')) { break; }
+			path.erase(colon_or_sep, path.size() - colon_or_sep);
+		}
+		while (!path.empty() && isdirsep(*(path.end() - 1)) && path.find_first_of(_T('\\')) != path.size() - 1)
+		{
+			path.erase(path.end() - 1);
+		}
+	}
+
+	int CacheIcon(std::tstring path, int const iItem, ULONG fileAttributes, bool lifo)
+	{
+		remove_path_stream_and_trailing_sep(path);
 		if (this->cache.find(path) == this->cache.end())
 		{
 			this->cache[path] = CacheInfo();
@@ -1756,12 +2016,13 @@ public:
 
 		CacheInfo const &entry = this->cache[path];
 
-		if (!entry.valid)
+		if (!entry.valid && this->lastRequestedIcon != path)
 		{
 			SIZE size; this->lvFiles.GetImageList(LVSIL_SMALL).GetIconSize(size);
 
 			IconLoaderCallback callback = { this, path, size, fileAttributes, iItem };
 			this->iconLoader->add(callback, lifo);
+			this->lastRequestedIcon = path;
 		}
 		return entry.iIconSmall;
 	}
@@ -1863,6 +2124,7 @@ public:
 				path_names.push_back(std::tstring(&buf[i], n));
 			}
 		}
+
 		this->cmbDrive.SetCurSel(this->cmbDrive.AddString(_T("(All drives)")));
 		for (size_t j = 0; j != path_names.size(); ++j)
 		{
@@ -1891,7 +2153,6 @@ public:
 		bool cancelled = false;
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0)
 		{
-			std::locale loc("");
 			try
 			{
 				std::vector<std::pair<std::tstring, std::tstring> > vnames(
@@ -1997,7 +2258,11 @@ public:
 
 	void Search()
 	{
+		CProgressDialog dlg(*this);
+		dlg.SetProgressTitle(_T("Searching..."));
+		if (dlg.HasUserCancelled()) { return; }
 		WTL::CWaitCursor wait;
+		this->lastRequestedIcon.resize(0);
 		this->lvFiles.SetItemCount(0);
 		this->results.clear();
 		std::tstring pattern;
@@ -2006,12 +2271,30 @@ public:
 			if (this->txtPattern.GetWindowText(bstr.m_str))
 			{ pattern.assign(bstr, bstr.Length()); }
 		}
-		bool const is_path_pattern = !!~pattern.find(_T('\\'));
+		bool is_regex = false;
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+		typedef boost::xpressive::basic_regex<std::tstring::const_iterator> RE;
+		boost::xpressive::match_results<RE::iterator_type> mr;
+		RE re;
+		try
+		{
+			if (!pattern.empty() && *pattern.begin() == _T('>'))
+			{
+				re = RE::compile(pattern.begin() + 1, pattern.end(), boost::xpressive::regex_constants::nosubs | boost::xpressive::regex_constants::optimize | boost::xpressive::regex_constants::single_line | boost::xpressive::regex_constants::icase | boost::xpressive::regex_constants::collate);
+				is_regex = true;
+			}
+		}
+		catch (boost::xpressive::regex_error const &ex) { this->MessageBox(ATL::CA2T(ex.what()), _T("Regex Error"), MB_ICONERROR); return; }
+#else
+		if (!pattern.empty() && *pattern.begin() == _T('>'))
+		{ this->MessageBox(_T("Regex support not included."), _T("Regex Error"), MB_ICONERROR); return; }
+#endif
+		bool const is_path_pattern = is_regex || ~pattern.find(_T('\\'));
 		if (!is_path_pattern && !~pattern.find(_T('*')) && !~pattern.find(_T('?'))) { pattern.insert(pattern.begin(), _T('*')); pattern.insert(pattern.end(), _T('*')); }
-
 		clock_t const start = clock();
 		HANDLE wait_handles[MAXIMUM_WAIT_OBJECTS];
 		size_t wait_indices[MAXIMUM_WAIT_OBJECTS];
+		HANDLE wait_volumes[MAXIMUM_WAIT_OBJECTS];
 		// TODO: What if they exceed maximum wait objects?
 		unsigned int wait_handles_size = 0;
 		std::vector<Results::value_type::first_type> indices;
@@ -2035,33 +2318,80 @@ public:
 			{
 				wait_handles[wait_handles_size] = reinterpret_cast<HANDLE>(i->finished_event());
 				wait_indices[wait_handles_size] = ii;
+				wait_volumes[wait_handles_size] = i->volume();
 				++wait_handles_size;
 			}
 		}
-		while (wait_handles_size)
+		class RaiseIoPriority
 		{
-			unsigned long const wait_handles_index = WaitForMultipleObjects(wait_handles_size, wait_handles, FALSE, INFINITE);
-			if (wait_handles_index < wait_handles_size)
+			HANDLE wait_volumes[MAXIMUM_WAIT_OBJECTS];
+			size_t wait_handles_size;
+			winnt::FILE_IO_PRIORITY_HINT_INFORMATION old_io_priorities[MAXIMUM_WAIT_OBJECTS];
+		public:
+			explicit RaiseIoPriority(HANDLE const (&wait_volumes)[MAXIMUM_WAIT_OBJECTS], size_t const wait_handles_size)
+				: wait_handles_size(wait_handles_size)
 			{
-				size_t const ii = wait_indices[wait_handles_index];
-
-				Results::value_type::first_type const i = indices[ii];
-#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
-				typedef boost::xpressive::basic_regex<std::tstring::const_iterator> RE;
-				try
-#endif
+				std::copy(wait_volumes, wait_volumes + static_cast<ptrdiff_t>(this->wait_handles_size), this->wait_volumes);
+				for (size_t i = 0; i != this->wait_handles_size; ++i)
 				{
-#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
-					RE re = RE::compile(pattern.begin(), pattern.end(), boost::xpressive::regex_constants::nosubs | boost::xpressive::regex_constants::optimize | boost::xpressive::regex_constants::single_line | boost::xpressive::regex_constants::icase | boost::xpressive::regex_constants::collate);
-#endif
-					uintptr_t const finished_event = i->finished_event();
-					if (WaitForSingleObject(reinterpret_cast<HANDLE>(finished_event), INFINITE) == WAIT_OBJECT_0)
+					winnt::IO_STATUS_BLOCK iosb;
+					winnt::NtQueryInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
+					winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityNormal };
+					winnt::NtSetInformationFile(wait_volumes[i], &iosb, &io_priority, sizeof(io_priority), 43);
+				}
+			}
+			~RaiseIoPriority()
+			{
+				for (size_t i = 0; i != this->wait_handles_size; ++i)
+				{
+					winnt::IO_STATUS_BLOCK iosb;
+					winnt::NtSetInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
+				}
+			}
+		};
+		RaiseIoPriority const raise_io_priorities(wait_volumes, wait_handles_size);
+		while (!dlg.HasUserCancelled() && wait_handles_size)
+		{
+			unsigned long const wait_result = CProgressDialog::WaitMessageLoop(wait_handles, wait_handles_size);
+			if (wait_result == WAIT_TIMEOUT)
+			{
+				for (unsigned int i = 0; i != wait_handles_size; ++i)
+				{
+					size_t const ii = wait_indices[i];
+				}
+			}
+			else
+			{
+				if (wait_result < wait_handles_size)
+				{
+					size_t const ii = wait_indices[wait_result];
+
+					Results::value_type::first_type const i = indices[ii];
+					size_t const old_size = this->results.size();
+					std::tstring const root_path = i->root_path();
+					std::tstring current_path = root_path;
+					while (!current_path.empty() && *(current_path.end() - 1) == _T('\\')) { current_path.erase(current_path.end() - 1); }
+					try
 					{
-						size_t const old_size = this->results.size();
-						std::tstring path = i->root_path();
-						while (!path.empty() && *(path.end() - 1) == _T('\\')) { path.erase(path.end() - 1); }
-						i->matches([&, this, i](std::pair<std::tstring::const_iterator, std::tstring::const_iterator> const path, std::pair<unsigned long long, unsigned long long> const sizes, NtfsIndex::key_type const key)
+						size_t progress_numerator = 0;
+						size_t const progress_denominator = i->total_items();
+						i->matches([&dlg, is_path_pattern, &root_path, &pattern, is_regex, this, i, &progress_numerator, progress_denominator
+	#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
+							, &re
+							, &mr
+	#endif
+						](std::pair<std::tstring::const_iterator, std::tstring::const_iterator> const path, std::pair<unsigned long long, unsigned long long> const sizes, NtfsIndex::key_type const key)
 						{
+							if (dlg.ShouldUpdate() || progress_denominator - progress_numerator <= 1)
+							{
+								if (dlg.HasUserCancelled()) { throw CStructured_Exception(ERROR_CANCELLED, NULL); }
+								std::tstring text(0x100 + root_path.size() + static_cast<ptrdiff_t>(path.second - path.first), _T('\0'));
+								text.resize(static_cast<size_t>(_stprintf(&*text.begin(), _T("Searching %.*s (%s of %s)...\r\n%.*s"), static_cast<int>(root_path.size()), root_path.c_str(), nformat(progress_numerator, this->loc).c_str(), nformat(progress_denominator, this->loc).c_str(), static_cast<int>(path.second - path.first), path.first == path.second ? NULL : &*path.first)));
+								dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(), text.data() + text.size()));
+								dlg.SetProgress(static_cast<long long>(progress_numerator), static_cast<long long>(progress_denominator));
+								dlg.Flush();
+							}
+							++progress_numerator;
 							std::pair<std::tstring::const_iterator, std::tstring::const_iterator> needle = path;
 							if (!is_path_pattern)
 							{
@@ -2070,32 +2400,33 @@ public:
 							}
 							bool const match =
 #ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
-								boost::xpressive::regex_match(needle.first, needle.second, re)
-#else
-								wildcard(pattern.begin(), pattern.end(), needle.first, needle.second, tchar_ci_traits())
+								is_regex ? boost::xpressive::regex_match(needle.first, needle.second, mr, re) :
 #endif
+								wildcard(pattern.begin(), pattern.end(), needle.first, needle.second, tchar_ci_traits())
 								;
 							if (match)
 							{
 								this->results.push_back(Results::value_type(i, Results::value_type::second_type(key, sizes)));
 							}
-						}, path);
-						std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
-						this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), LVSICF_NOINVALIDATEALL);
+						}, current_path);
+
 					}
+					catch (CStructured_Exception &ex)
+					{
+						if (ex.GetSENumber() != ERROR_CANCELLED) { throw; }
+					}
+					std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
+					this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), LVSICF_NOINVALIDATEALL);
 				}
-#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
-				catch (boost::xpressive::regex_error const &ex) { this->MessageBox(ATL::CA2T(ex.what()), _T("Regex Error"), MB_ICONERROR); }
-#endif
+				--wait_handles_size;
+				using std::swap;
+				swap(wait_indices[wait_result], wait_indices[wait_handles_size]);
+				swap(wait_handles[wait_result], wait_handles[wait_handles_size]);
 			}
-			--wait_handles_size;
-			using std::swap;
-			swap(wait_indices[wait_handles_index], wait_indices[wait_handles_size]);
-			swap(wait_handles[wait_handles_index], wait_handles[wait_handles_size]);
 		}
 		clock_t const end = clock();
 		TCHAR buf[0x100];
-		_stprintf(buf, _T("%s results in %.2lf seconds"), nformat(this->results.size()).c_str(), (end - start) * 1.0 / CLOCKS_PER_SEC);
+		_stprintf(buf, _T("%s results in %.2lf seconds"), nformat(this->results.size(), this->loc).c_str(), (end - start) * 1.0 / CLOCKS_PER_SEC);
 		this->statusbar.SetText(0, buf);
 	}
 
@@ -2153,21 +2484,22 @@ public:
 					int i = -1;
 					for (;;)
 					{
-						i = this->lvFiles.GetNextItem(i, LVNI_ALL | LVNI_SELECTED);
+						i = this->lvFiles.GetNextItem(i, LVNI_SELECTED);
 						if (i < 0) { break; }
 						indices.push_back(i);
 					}
 				}
 			}
+			int const focused = this->lvFiles.GetNextItem(-1, LVNI_FOCUSED);
 			if (!indices.empty())
 			{
-				this->RightClick(indices, point);
+				this->RightClick(indices, point, focused);
 			}
 		}
 		return result;
 	}
 
-	void RightClick(std::vector<int> const &indices, POINT const &point)
+	void RightClick(std::vector<int> const &indices, POINT const &point, int const focused)
 	{
 		std::vector<Results::const_iterator> results;
 		for (size_t i = 0; i < indices.size(); ++i)
@@ -2189,12 +2521,10 @@ public:
 		{
 			Results::const_iterator const row = results[i];
 			Results::value_type::first_type const &index = row->first;
-			std::tstring path;
-			path = index->root_path();
+			std::tstring path = index->root_path();
 			if (index->get_path(row->second.first, path, false))
 			{
-				while (!path.empty() && *(path.end() - 1) == _T('\\'))
-				{ path.erase(path.end() - 1); }
+				remove_path_stream_and_trailing_sep(path);
 			}
 			if (i == 0)
 			{
@@ -2262,29 +2592,32 @@ public:
 			hr = contextMenu->QueryContextMenu(menu, 0, minID, UINT_MAX, 0x80 /*CMF_ITEMMENU*/);
 		}
 
+		unsigned int ninserted = 0;
 		UINT const openContainingFolderId = minID - 1;
+
 		if (results.size() == 1)
 		{
-			if (contextMenu)
-			{
-				MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
-				menu.InsertMenuItem(0, TRUE, &mii);
-			}
+			MENUITEMINFO mii2 = { sizeof(mii2), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
+			menu.InsertMenuItem(ninserted++, TRUE, &mii2);
 
+			menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
+		}
+		if (0 <= focused && static_cast<size_t>(focused) < this->results.size())
+		{
 			std::basic_stringstream<TCHAR> ssName;
-			ssName.imbue(std::locale(""));
-			// ssName << _T("File #") << static_cast<unsigned long>(results.back()->record().segment_number);
+			ssName.imbue(this->loc);
+			ssName << _T("File #") << (this->results.begin() + focused)->second.first.first.first;
 			std::tstring name = ssName.str();
 			if (!name.empty())
 			{
 				MENUITEMINFO mii1 = { sizeof(mii1), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_DISABLED, minID - 2, NULL, NULL, NULL, NULL, (name.c_str(), &name[0]) };
-				menu.InsertMenuItem(0, TRUE, &mii1);
+				menu.InsertMenuItem(ninserted++, TRUE, &mii1);
 			}
-
-			MENUITEMINFO mii2 = { sizeof(mii2), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
-			menu.InsertMenuItem(0, TRUE, &mii2);
-
-			menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
+		}
+		if (contextMenu && ninserted)
+		{
+			MENUITEMINFO mii = { sizeof(mii), 0, MFT_MENUBREAK };
+			menu.InsertMenuItem(ninserted, TRUE, &mii);
 		}
 		UINT id = menu.TrackPopupMenu(
 			TPM_RETURNCMD | TPM_NONOTIFY | (GetKeyState(VK_SHIFT) < 0 ? CMF_EXTENDEDVERBS : 0) |
@@ -2409,8 +2742,8 @@ public:
 		{
 		case COLUMN_INDEX_NAME: if (path.size() == cch_root_path) { text = _T("."); } else { text = path; deldirsep(text); } text.erase(text.begin(), basename(text.begin(), text.end())); break;
 		case COLUMN_INDEX_PATH: text = path; break;
-		case COLUMN_INDEX_SIZE: text = nformat(result->second.second.first); break;
-		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(result->second.second.second); break;
+		case COLUMN_INDEX_SIZE: text = nformat(result->second.second.first, this->loc); break;
+		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(result->second.second.second, this->loc); break;
 		case COLUMN_INDEX_CREATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).first.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
 		case COLUMN_INDEX_MODIFICATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.first, &text[0], text.size()); text = std::tstring(text.c_str()); break;
 		case COLUMN_INDEX_ACCESS_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
@@ -2430,8 +2763,11 @@ public:
 			std::tstring path;
 			std::tstring const text = this->GetSubItemText(result, pLV->item.iSubItem, path);
 			if (!text.empty()) { _tcsncpy(pLV->item.pszText, text.c_str(), pLV->item.cchTextMax); }
-			int iImage = this->CacheIcon(path, static_cast<int>(pLV->item.iItem), i->get_stdinfo(result->second.first.first.first).first.first, true);
-			if (iImage >= 0) { pLV->item.iImage = iImage; }
+			if (pLV->item.iSubItem == 0)
+			{
+				int iImage = this->CacheIcon(path, static_cast<int>(pLV->item.iItem), i->get_stdinfo(result->second.first.first.first).first.first, true);
+				if (iImage >= 0) { pLV->item.iImage = iImage; }
+			}
 		}
 		return 0;
 	}
