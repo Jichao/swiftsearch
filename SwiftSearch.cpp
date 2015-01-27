@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <time.h>
+#include <wchar.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -36,7 +37,6 @@ extern WTL::CAppModule _Module;
 #include <atlctrls.h>
 #include <atlctrlx.h>
 #include <atltheme.h>
-#include <comdef.h>
 
 #include "nformat.hpp"
 #include "path.hpp"
@@ -48,7 +48,18 @@ extern WTL::CAppModule _Module;
 #include "resource.h"
 
 #ifndef _DEBUG
+#define clear() resize(0)
+#include <boost/exception/info.hpp>
+#undef clear
+#include <boost/xpressive/detail/dynamic/matchable.hpp>
+#define clear() resize(0)
+#define push_back(x) operator +=(x)
+#include <boost/xpressive/detail/dynamic/parser_traits.hpp>
+#undef  push_back
+#undef clear
+#include <boost/xpressive/match_results.hpp>
 #include <boost/xpressive/xpressive_dynamic.hpp>
+
 #endif
 
 #ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
@@ -59,11 +70,15 @@ namespace std { typedef basic_string<TCHAR> tstring; }
 namespace std
 {
 	template<class> struct is_scalar;
+#if defined(_CPPLIB_VER) && 600 <= _CPPLIB_VER
 #ifdef _XMEMORY_
 	template<class T1, class T2> struct is_scalar<std::pair<T1, T2> > : integral_constant<bool, is_pod<T1>::value && is_pod<T2>::value>{};
 	template<class T1, class T2, class _Diff, class _Valty>
 	inline void _Uninit_def_fill_n(std::pair<T1, T2> *_First, _Diff _Count, _Wrap_alloc<allocator<std::pair<T1, T2> > >&, _Valty *, _Scalar_ptr_iterator_tag)
 	{ _Fill_n(_First, _Count, _Valty()); }
+#endif
+#else
+	template<class T> struct is_pod { static bool const value = __is_pod(T); };
 #endif
 }
 
@@ -207,9 +222,21 @@ loop:
 	return p == patEnd && s == strEnd;
 }
 
+static void append(std::tstring &str, TCHAR const sz[], size_t const cch)
+{
+	if (str.size() + cch > str.capacity())
+	{ str.reserve((str.size() + cch) * 2); }
+	str.append(sz, cch);
+}
+
+static void append(std::tstring &str, TCHAR const sz[])
+{
+	return append(str, sz, std::char_traits<TCHAR>::length(sz));
+}
+
 namespace winnt
 {
-	struct IO_STATUS_BLOCK { union { NTSTATUS Status; PVOID Pointer; }; ULONG_PTR Information; };
+	struct IO_STATUS_BLOCK { union { long Status; void *Pointer; }; uintptr_t Information; };
 
 	struct UNICODE_STRING
 	{
@@ -235,6 +262,7 @@ namespace winnt
 	union FILE_IO_PRIORITY_HINT_INFORMATION { IO_PRIORITY_HINT PriorityHint; unsigned long long _alignment; };
 
 	template<class T> struct identity { typedef T type; };
+	typedef long NTSTATUS;
 #define X(F, T) identity<T>::type &F = *reinterpret_cast<identity<T>::type *>(GetProcAddress(GetModuleHandle(_T("NTDLL.dll")), #F))
 	X(NtOpenFile, NTSTATUS NTAPI(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN OBJECT_ATTRIBUTES *ObjectAttributes, OUT IO_STATUS_BLOCK *IoStatusBlock, IN ULONG ShareAccess, IN ULONG OpenOptions));
 	X(NtReadFile, NTSTATUS NTAPI(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN IO_APC_ROUTINE *ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID Buffer, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL));
@@ -251,7 +279,7 @@ LONGLONG RtlSystemTimeToLocalTime(LONGLONG systemTime)
 {
 	LARGE_INTEGER time2, localTime;
 	time2.QuadPart = systemTime;
-	NTSTATUS status = winnt::RtlSystemTimeToLocalTime(&time2, &localTime);
+	long status = winnt::RtlSystemTimeToLocalTime(&time2, &localTime);
 	if (status != 0) { RaiseException(status, 0, 0, NULL); }
 	return localTime.QuadPart;
 }
@@ -568,43 +596,6 @@ public:
 	friend void swap(Handle &a, Handle &b) { return a.swap(b); }
 };
 
-std::vector<char> vector_bool(std::vector<bool> const &v)
-{
-	std::vector<char> r;
-	r.resize(v.empty() ? 0 : 1 + (v.size() - 1) / (CHAR_BIT * sizeof(*r.begin())));
-#if defined(_CPPLIB_VER) && _CPPLIB_VER >= 600
-	bool b = sizeof(*r.begin()) > sizeof(*v._Myvec.begin());
-	if (b) { throw std::logic_error("fix buffer underflow on the next line"); }
-	memcpy(r.empty() ? NULL : &*r.begin(), v.empty() ? NULL : &*v._Myvec.begin(), r.size() * sizeof(*r.begin()));
-#else
-	std::vector_bool_specializations<>::deprecate();
-	for (size_t j = 0; j != v.size(); ++j)
-	{
-		size_t const k = j / (CHAR_BIT * sizeof(*r.begin()));
-		r[k] = static_cast<char>(r[k] | (static_cast<char>(v[j]) << (j % (CHAR_BIT * sizeof(*r.begin())))));
-	}
-#endif
-	return r;
-}
-
-std::vector<bool> vector_bool(std::vector<char> const &v)
-{
-	std::vector<bool> r(v.size() * sizeof(*v.begin()) * CHAR_BIT);
-#if defined(_CPPLIB_VER) && _CPPLIB_VER >= 600
-	bool b = sizeof(*v.begin()) > sizeof(*r._Myvec.begin());
-	if (b) { throw std::logic_error("fix buffer overflow on the next line"); }
-	memcpy(reinterpret_cast<char *>(r.empty() ? NULL : &*r._Myvec.begin()), v.empty() ? NULL : &*v.begin(), v.size() * sizeof(*v.begin()));
-#else
-	std::vector_bool_specializations<>::deprecate();
-	for (size_t j = 0; j != v.size(); ++j)
-	{
-		for (size_t k = 0; k != sizeof(v[j]) * CHAR_BIT; ++k)
-		{ r[sizeof(v[j]) * CHAR_BIT + k] = !!((v[j] >> k) & 1); }
-	}
-#endif
-	return r;
-}
-
 void read(void *const file, unsigned long long const offset, void *const buffer, size_t const size, HANDLE const event_handle = NULL)
 {
 	if (!event_handle || event_handle == INVALID_HANDLE_VALUE)
@@ -747,13 +738,9 @@ protected:
 class NtfsIndex : public RefCounted<NtfsIndex>
 {
 	typedef NtfsIndex this_type;
-	mutable mutex _mutex;
-	std::tstring _root_path;
-	Handle _volume;
-	typedef std::codecvt<std::tstring::value_type, char, std::mbstate_t> CodeCvt;
+	typedef std::codecvt<std::tstring::value_type, char, int /*std::mbstate_t*/> CodeCvt;
 	NtfsIndex *unvolatile() volatile { return const_cast<NtfsIndex *>(this); }
 	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
-	std::tstring names;
 #pragma pack(push)
 #pragma pack(2)
 	struct StandardInfo
@@ -797,67 +784,22 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 		ChildInfos::value_type first_child;
 	};
 	friend struct std::is_scalar<Record>;
+	mutable mutex _mutex;
+	std::tstring _root_path;
+	Handle _volume;
+	std::tstring names;
 	Records records;
 	LinkInfos nameinfos;
 	StreamInfos streaminfos;
 	ChildInfos childinfos;
 	Handle _finished_event;
-	bool _atomic_unfinished;
-	size_t loads_so_far;
+	boost::atomic<size_t> loads_so_far;
 	size_t total_loads;
 	size_t _total_items;
 	boost::atomic<bool> _cancelled;
 	boost::atomic<unsigned int> _records_so_far;
+	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type_internal;
 
-	// IF YOU ADD FIELDS: update clear()!!
-
-	mutex *get_mutex() const
-	{
-		return static_cast<bool const /* WRONG USE OF VOLATILE! but it works on x86 */ volatile &>(this->_atomic_unfinished) ? &this->_mutex : NULL;
-	}
-public:
-	unsigned int mft_record_size;
-	unsigned int total_records;
-	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type;
-	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), _total_items(), _records_so_far(0), _cancelled(false), mft_record_size(), total_records()
-	{
-		bool success = false;
-		std::tstring dirsep;
-		dirsep.append(1, _T('\\'));
-		dirsep.append(1, _T('/'));
-		try
-		{
-			std::tstring path_name = value;
-			path_name.erase(path_name.begin() + static_cast<ptrdiff_t>(path_name.size() - std::min(path_name.find_last_not_of(dirsep), path_name.size())), path_name.end());
-			if (!path_name.empty() && *path_name.begin() != _T('\\') && *path_name.begin() != _T('/')) { path_name.insert(0, _T("\\\\.\\")); }
-			Handle volume(CreateFile(path_name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL));
-			winnt::IO_STATUS_BLOCK iosb;
-			struct : winnt::FILE_FS_ATTRIBUTE_INFORMATION { unsigned char buf[MAX_PATH]; } info = {};
-			if (winnt::NtQueryVolumeInformationFile(volume.value, &iosb, &info, sizeof(info), 5) ||
-				info.FileSystemNameLength != 4 * sizeof(*info.FileSystemName) || _tcsncmp(info.FileSystemName, _T("NTFS"), 4))
-			{ throw std::invalid_argument("invalid volume"); }
-			winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityLow };
-			winnt::NtSetInformationFile(volume, &iosb, &io_priority, sizeof(io_priority), 43);
-			volume.swap(this->_volume);
-			success = true;
-		}
-		catch (std::invalid_argument &) {}
-		if (success) { using std::swap; swap(this->_root_path, value); }
-		if (!success) { SetEvent(this->_finished_event); }
-	}
-	~NtfsIndex()
-	{
-	}
-	size_t total_items() const volatile
-	{
-		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
-		return me->total_items();
-	}
-	size_t total_items() const { return this->_total_items; }
-	size_t records_so_far() const volatile { return this->_records_so_far.load(boost::memory_order_acquire); }
-	size_t records_so_far() const { return this->_records_so_far.load(boost::memory_order_relaxed); }
-	void *volume() const volatile { return this->_volume.value; }
 	static Records::iterator at(Records &records, size_t const frs, Records::iterator *const existing_to_revalidate = NULL)
 	{
 		if (frs >= records.size())
@@ -868,41 +810,8 @@ public:
 		}
 		return records.begin() + static_cast<ptrdiff_t>(frs);
 	}
+
 	LinkInfos::value_type const *nameinfo(size_t const i) const { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
-	std::tstring const &root_path() const { return this->_root_path; }
-	std::tstring const &root_path() const volatile
-	{
-		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
-		return me->root_path();
-	}
-	bool cancelled() const volatile
-	{
-		this_type const *const me = this->unvolatile();
-		return me->_cancelled.load(boost::memory_order_acquire);
-	}
-	void cancel() volatile
-	{
-		this_type *const me = this->unvolatile();
-		me->_cancelled.store(true, boost::memory_order_release);
-	}
-	bool is_finished() const volatile
-	{
-		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
-		return me->is_finished();
-	}
-	bool is_finished() const { return this->loads_so_far == this->total_loads; }
-	uintptr_t finished_event() const volatile
-	{
-		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
-		return me->finished_event();
-	}
-	uintptr_t finished_event() const
-	{
-		return reinterpret_cast<uintptr_t>(this->_finished_event.value);
-	}
 	static Record empty_record()
 	{
 		Record empty_record = Record();
@@ -917,7 +826,7 @@ public:
 		empty_record.first_stream.first.name.offset = negative_one;
 		return empty_record;
 	}
-	void sort(key_type::first_type::first_type const frs, Records &new_records, LinkInfos &new_nameinfos, StreamInfos &new_streaminfos, ChildInfos &new_childinfos)
+	void sort(key_type_internal::first_type::first_type const frs, Records &new_records, LinkInfos &new_nameinfos, StreamInfos &new_streaminfos, ChildInfos &new_childinfos)
 	{
 		if (frs < this->records.size())
 		{
@@ -928,7 +837,7 @@ public:
 			}
 		}
 	}
-	void sort(key_type::first_type const key_first, Records &new_records, LinkInfos &new_nameinfos, StreamInfos &new_streaminfos, ChildInfos &new_childinfos)
+	void sort(key_type_internal::first_type const key_first, Records &new_records, LinkInfos &new_nameinfos, StreamInfos &new_streaminfos, ChildInfos &new_childinfos)
 	{
 		Records::const_iterator const fr = at(this->records, static_cast<ptrdiff_t>(key_first.first));
 		Records::iterator const new_fr = at(new_records, static_cast<ptrdiff_t>(key_first.first));
@@ -953,9 +862,80 @@ public:
 			}
 		}
 	}
+public:
+	typedef key_type_internal key_type;
+	unsigned int mft_record_size;
+	unsigned int total_records;
+	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), loads_so_far(0), total_loads(), _total_items(), _records_so_far(0), _cancelled(false), mft_record_size(), total_records()
+	{
+		bool success = false;
+		std::tstring dirsep;
+		dirsep.append(1, _T('\\'));
+		dirsep.append(1, _T('/'));
+		try
+		{
+			std::tstring path_name = value;
+			path_name.erase(path_name.begin() + static_cast<ptrdiff_t>(path_name.size() - std::min(path_name.find_last_not_of(dirsep), path_name.size())), path_name.end());
+			if (!path_name.empty() && *path_name.begin() != _T('\\') && *path_name.begin() != _T('/')) { path_name.insert(0, _T("\\\\.\\")); }
+			Handle volume(CreateFile(path_name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL));
+			winnt::IO_STATUS_BLOCK iosb;
+			struct : winnt::FILE_FS_ATTRIBUTE_INFORMATION { unsigned char buf[MAX_PATH]; } info = {};
+			if (winnt::NtQueryVolumeInformationFile(volume.value, &iosb, &info, sizeof(info), 5) ||
+				info.FileSystemNameLength != 4 * sizeof(*info.FileSystemName) || std::char_traits<TCHAR>::compare(info.FileSystemName, _T("NTFS"), 4))
+			{ throw std::invalid_argument("invalid volume"); }
+			winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityLow };
+			winnt::NtSetInformationFile(volume, &iosb, &io_priority, sizeof(io_priority), 43);
+			volume.swap(this->_volume);
+			success = true;
+		}
+		catch (std::invalid_argument &) {}
+		if (success) { using std::swap; swap(this->_root_path, value); }
+		if (!success) { SetEvent(this->_finished_event); }
+	}
+	~NtfsIndex()
+	{
+	}
+	size_t total_items() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->_mutex);
+		return me->total_items();
+	}
+	size_t total_items() const { return this->_total_items; }
+	size_t records_so_far() const volatile { return this->_records_so_far.load(boost::memory_order_acquire); }
+	size_t records_so_far() const { return this->_records_so_far.load(boost::memory_order_relaxed); }
+	void *volume() const volatile { return this->_volume.value; }
+	std::tstring const &root_path() const { return this->_root_path; }
+	std::tstring const &root_path() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->_mutex);
+		return me->root_path();
+	}
+	bool cancelled() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		return me->_cancelled.load(boost::memory_order_acquire);
+	}
+	void cancel() volatile
+	{
+		this_type *const me = this->unvolatile();
+		me->_cancelled.store(true, boost::memory_order_release);
+	}
+	uintptr_t finished_event() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->_mutex);
+		return me->finished_event();
+	}
+	uintptr_t finished_event() const
+	{
+		return reinterpret_cast<uintptr_t>(this->_finished_event.value);
+	}
 	bool check_finished()
 	{
-		bool const b = this->is_finished() && !this->_root_path.empty();
+		bool const finished = this->loads_so_far.load(boost::memory_order_acquire) == this->total_loads;
+		bool const b = finished && !this->_root_path.empty();
 		if (b)
 		{
 			if (false)
@@ -970,17 +950,16 @@ public:
 				// using std::swap; swap(this->streaminfos, new_streaminfos);
 				// using std::swap; swap(this->childinfos, new_childinfos);
 			}
-			this->_atomic_unfinished = false;
 			Handle().swap(this->_volume);
 			_ftprintf(stderr, _T("Finished: %s (%u ms)\n"), this->_root_path.c_str(), (clock() - begin_time) * 1000U / CLOCKS_PER_SEC);
 		}
-		this->is_finished() ? SetEvent(this->_finished_event) : ResetEvent(this->_finished_event);
+		finished ? SetEvent(this->_finished_event) : ResetEvent(this->_finished_event);
 		return b;
 	}
 	bool set_total_loads(size_t const n) volatile
 	{
 		this_type *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
+		lock_guard<mutex> const lock(me->_mutex);
 		return me->set_total_loads(n);
 	}
 	bool set_total_loads(size_t const n)
@@ -991,7 +970,7 @@ public:
 	void load(unsigned long long const virtual_offset, void *const buffer, size_t const size) volatile
 	{
 		this_type *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
+		lock_guard<mutex> const lock(me->_mutex);
 		me->load(virtual_offset, buffer, size);
 	}
 	void reserve(unsigned int const records)
@@ -1041,7 +1020,7 @@ public:
 								info.name.offset = static_cast<unsigned int>(this->names.size());
 								info.name.length = fn->FileNameLength;
 								info.parent = frs_parent;
-								this->names.append(fn->FileName, fn->FileNameLength);
+								append(this->names, fn->FileName, fn->FileNameLength);
 								size_t const link_index = this->nameinfos.size();
 								this->nameinfos.push_back(LinkInfos::value_type(info, base_record->first_name));
 								base_record->first_name = link_index;
@@ -1073,7 +1052,7 @@ public:
 							{
 								info.name.offset = static_cast<unsigned int>(this->names.size());
 								info.name.length = ah->NameLength;
-								this->names.append(ah->name(), ah->name() + ah->NameLength);
+								append(this->names, ah->name(), ah->NameLength);
 							}
 							info.is_index = ah->Type == ntfs::AttributeIndexRoot && isI30;
 							info.type_name = ah->Type == ntfs::AttributeData || ah->Type == ntfs::AttributeIndexRoot && isI30 ? NULL : ntfs::attribute_names[ah->Type >> (CHAR_BIT / 2)];
@@ -1095,19 +1074,14 @@ public:
 				// fprintf(stderr, "%llx\n", frsh->BaseFileRecordSegment);
 			}
 		}
-		{
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-			++this->loads_so_far;
-		}
+		this->loads_so_far.fetch_add(1, boost::memory_order_acq_rel);
 		this->check_finished();
 	}
 
 	size_t get_path(key_type key, std::tstring &result, bool const name_only) const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
+		lock_guard<mutex> const lock(me->_mutex);
 		return me->get_path(key, result, name_only);
 	}
 
@@ -1132,12 +1106,12 @@ public:
 							size_t const old_size = result.size();
 							if (key.first.first != 0x000000000005)
 							{
-								result.append(&this->names[j->first.name.offset], j->first.name.length);
+								append(result, &this->names[j->first.name.offset], j->first.name.length);
 								if (leaf)
 								{
 									if (k->first.name.length || k->first.type_name) { result += _T(':'); }
-									result.append(&this->names[k->first.name.offset], k->first.name.length);
-									if (k->first.type_name) { result += _T(':'); result.append(k->first.type_name); }
+									append(result, &this->names[k->first.name.offset], k->first.name.length);
+									if (k->first.type_name) { result += _T(':'); append(result, k->first.type_name); }
 								}
 								if (k->first.is_index) { result += _T('\\'); }
 							}
@@ -1162,7 +1136,7 @@ public:
 	std::pair<std::pair<unsigned long, unsigned long long>, std::pair<unsigned long long, unsigned long long> > get_stdinfo(unsigned int const frn) const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
+		lock_guard<mutex> const lock(me->_mutex);
 		return me->get_stdinfo(frn);
 	}
 
@@ -1183,7 +1157,7 @@ public:
 	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path) const volatile
 	{
 		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->get_mutex());
+		lock_guard<mutex> const lock(me->_mutex);
 		return me->matches<F>(func, path);
 	}
 
@@ -1231,7 +1205,7 @@ public:
 					{
 						size_t const old_size = path.size();
 						path += _T('\\');
-						path.append(&this->names[j->first.name.offset], j->first.name.length);
+						append(path, &this->names[j->first.name.offset], j->first.name.length);
 						key_type::first_type const subkey_first(static_cast<unsigned int>(i->first.first), ji);
 						if (subkey_first != key_first)
 						{
@@ -1251,7 +1225,7 @@ public:
 				if (k->first.name.length)
 				{
 					path += _T(':');
-					path.append(&this->names[k->first.name.offset], k->first.name.length);
+					append(path, &this->names[k->first.name.offset], k->first.name.length);
 				}
 				else if (fr->stdinfo.attributes & FILE_ATTRIBUTE_DIRECTORY)
 				{
@@ -1387,15 +1361,16 @@ bool mergesort(It const begin, It const end, ItBuf const buf, Pred comp, bool co
 	{
 		ptrdiff_t const k = n + n - m;
 #define X() for (ptrdiff_t j = 0; j < k; j += m + m) { mergesort_level<It, ItBuf, Pred>(begin, n, buf, comp, in_buf, m, j); }
+#ifdef _OPENMP
 		if (parallel)
 		{
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
 			X();
 		}
 		else
+#endif
 		{
+			(void) parallel;
 			X();
 		}
 #undef X
@@ -1534,11 +1509,11 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 		}
 	}
 
-	unsigned long WaitMessageLoop(HANDLE const handles[], size_t const nhandles)
+	unsigned long WaitMessageLoop(uintptr_t const handles[], size_t const nhandles)
 	{
 		for (;;)
 		{
-			unsigned long result = MsgWaitForMultipleObjectsEx(static_cast<unsigned int>(nhandles), handles, UPDATE_INTERVAL, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			unsigned long result = MsgWaitForMultipleObjectsEx(static_cast<unsigned int>(nhandles), reinterpret_cast<HANDLE const *>(handles), UPDATE_INTERVAL, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 			if (WAIT_OBJECT_0 <= result && result < WAIT_OBJECT_0 + nhandles || result == WAIT_TIMEOUT)
 			{ return result; }
 			else if (result == WAIT_OBJECT_0 + static_cast<unsigned int>(nhandles))
@@ -1724,21 +1699,21 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 				if (void *const volume = this->p->volume())
 				{
 					if (::PostMessage(m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), reinterpret_cast<LPARAM>(&*this->p))) { intrusive_ptr_add_ref(this->p.get()); }
-					DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, this->p->volume(), reinterpret_cast<HDEVNOTIFY>(m_hWnd) };
+					DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, volume, reinterpret_cast<HDEVNOTIFY>(m_hWnd) };
 					dev.dbch_hdevnotify = RegisterDeviceNotification(m_hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
 					long long mft_start_lcn;
 					{
 						unsigned long br;
 						NTFS_VOLUME_DATA_BUFFER volume_data;
-						CheckAndThrow(DeviceIoControl(this->p->volume(), FSCTL_GET_NTFS_VOLUME_DATA, NULL, 0, &volume_data, sizeof(volume_data), &br, NULL));
+						CheckAndThrow(DeviceIoControl(volume, FSCTL_GET_NTFS_VOLUME_DATA, NULL, 0, &volume_data, sizeof(volume_data), &br, NULL));
 						this->cluster_size = static_cast<unsigned int>(volume_data.BytesPerCluster);
 						mft_start_lcn = volume_data.MftStartLcn.QuadPart;
 						this->p->mft_record_size = volume_data.BytesPerFileRecordSegment;
 						this->p->total_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / this->p->mft_record_size);
 					}
-					CheckAndThrow(!!CreateIoCompletionPort(this->p->volume(), iocp, reinterpret_cast<uintptr_t>(&*this->p), 0));
+					CheckAndThrow(!!CreateIoCompletionPort(volume, iocp, reinterpret_cast<uintptr_t>(&*this->p), 0));
 					long long llsize = 0;
-					get_mft_retrieval_pointers(this->p->volume(), _T("$MFT::$DATA"), &llsize, mft_start_lcn, this->cluster_size, this->p->mft_record_size).swap(this->ret_ptrs);
+					get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &llsize, mft_start_lcn, this->cluster_size, this->p->mft_record_size).swap(this->ret_ptrs);
 					this->j = this->ret_ptrs.begin();
 					this->p->reserve(this->p->total_records);
 					result = +1;
@@ -1798,13 +1773,13 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		unsigned long num_threads = 0;
 #ifdef _OPENMP
 #pragma omp parallel
-#endif
-		{
-#ifdef _OPENMP
 #pragma omp atomic
+		++num_threads;
+#else
+		SYSTEM_INFO sysinfo;
+		GetSystemInfo(&sysinfo);
+		num_threads = sysinfo.dwNumberOfProcessors;
 #endif
-			++num_threads;
-		}
 		return num_threads;
 	}
 	static unsigned int CALLBACK iocp_worker(void *iocp)
@@ -1885,21 +1860,21 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 
 	class RaiseIoPriority
 	{
-		HANDLE const *wait_volumes;
+		uintptr_t const *wait_volumes;
 		size_t wait_handles_size;
 		std::vector<winnt::FILE_IO_PRIORITY_HINT_INFORMATION> old_io_priorities;
 		RaiseIoPriority(RaiseIoPriority const &);
 		RaiseIoPriority &operator =(RaiseIoPriority const &);
 	public:
-		explicit RaiseIoPriority(HANDLE const wait_volumes[], size_t const wait_handles_size)
+		explicit RaiseIoPriority(uintptr_t const wait_volumes [], size_t const wait_handles_size)
 			: wait_volumes(wait_volumes), wait_handles_size(wait_handles_size), old_io_priorities(wait_handles_size)
 		{
 			for (size_t i = 0; i != this->wait_handles_size; ++i)
 			{
 				winnt::IO_STATUS_BLOCK iosb;
-				winnt::NtQueryInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
+				winnt::NtQueryInformationFile(reinterpret_cast<HANDLE>(wait_volumes[i]), &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
 				winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityNormal };
-				winnt::NtSetInformationFile(wait_volumes[i], &iosb, &io_priority, sizeof(io_priority), 43);
+				winnt::NtSetInformationFile(reinterpret_cast<HANDLE>(wait_volumes[i]), &iosb, &io_priority, sizeof(io_priority), 43);
 			}
 		}
 		~RaiseIoPriority()
@@ -1907,7 +1882,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 			for (size_t i = 0; i != this->wait_handles_size; ++i)
 			{
 				winnt::IO_STATUS_BLOCK iosb;
-				winnt::NtSetInformationFile(wait_volumes[i], &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
+				winnt::NtSetInformationFile(reinterpret_cast<HANDLE>(wait_volumes[i]), &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
 			}
 		}
 	};
@@ -1933,6 +1908,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	Handle iocp;
 	Threads threads;
 	std::locale loc;
+	HANDLE hWait, hEvent;
 	static DWORD WINAPI SHOpenFolderAndSelectItemsThread(IN LPVOID lpParameter)
 	{
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
@@ -1953,11 +1929,12 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		return SHOpenFolderAndSelectItems(p->first.first, static_cast<UINT>(relative_item_ids.size()), relative_item_ids.empty() ? NULL : &relative_item_ids[0], 0);
 	}
 public:
-	CMainDlg() : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(""), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
+	CMainDlg(HANDLE const hEvent) : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(""), hWait(), hEvent(hEvent), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
 	{
 	}
 	void OnDestroy()
 	{
+		UnregisterWait(this->hWait);
 		this->DeleteNotifyIcon();
 		this->iconLoader->clear();
 		for (size_t i = 0; i != this->threads.size(); ++i)
@@ -2105,6 +2082,19 @@ public:
 	{
 		return this->lvFiles.SendMessage(uMsg, wParam, lParam);
 	}
+	
+	static VOID CALLBACK WaitCallback(PVOID lpParameter, BOOLEAN TimerOrWaitFired)
+	{
+		HWND const hWnd = reinterpret_cast<HWND>(lpParameter);
+		if (!TimerOrWaitFired)
+		{
+			WINDOWPLACEMENT placement = { sizeof(placement) };
+			if (::GetWindowPlacement(hWnd, &placement))
+			{
+				::ShowWindowAsync(hWnd, ::IsZoomed(hWnd) || (placement.flags & WPF_RESTORETOMAXIMIZED) != 0 ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
+			}
+		}
+	}
 
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
 	{
@@ -2194,7 +2184,7 @@ public:
 				prev = buf.size();
 				buf.resize(std::max(static_cast<size_t>(GetLogicalDriveStrings(static_cast<unsigned long>(buf.size()), buf.empty() ? NULL : &*buf.begin())), buf.size()));
 			} while (prev < buf.size());
-			for (size_t i = 0, n; n = _tcsnlen(&buf[i], buf.size() - i), i < buf.size() && buf[i]; i += n + 1)
+			for (size_t i = 0, n; n = std::char_traits<TCHAR>::length(&buf[i]), i < buf.size() && buf[i]; i += n + 1)
 			{
 				path_names.push_back(std::tstring(&buf[i], n));
 			}
@@ -2215,6 +2205,7 @@ public:
 			unsigned int id;
 			this->threads.push_back(_beginthreadex(NULL, 0, iocp_worker, this->iocp, 0, &id));
 		}
+		RegisterWaitForSingleObject(&this->hWait, hEvent, &WaitCallback, this->m_hWnd, INFINITE, WT_EXECUTEINUITHREAD);
 		return TRUE;
 	}
 
@@ -2366,7 +2357,7 @@ public:
 				is_regex = true;
 			}
 		}
-		catch (boost::xpressive::regex_error const &ex) { this->MessageBox(ATL::CA2T(ex.what()), _T("Regex Error"), MB_ICONERROR); return; }
+		catch (boost::xpressive::regex_error const &ex) { this->MessageBox(static_cast<WTL::CString>(ex.what()), _T("Regex Error"), MB_ICONERROR); return; }
 #else
 		if (!pattern.empty() && *pattern.begin() == _T('>'))
 		{ this->MessageBox(_T("Regex support not included."), _T("Regex Error"), MB_ICONERROR); return; }
@@ -2374,8 +2365,8 @@ public:
 		bool const is_path_pattern = is_regex || ~pattern.find(_T('\\'));
 		if (!is_path_pattern && !~pattern.find(_T('*')) && !~pattern.find(_T('?'))) { pattern.insert(pattern.begin(), _T('*')); pattern.insert(pattern.end(), _T('*')); }
 		clock_t const start = clock();
-		std::vector<HANDLE> wait_handles;
-		std::vector<HANDLE> wait_volumes;
+		std::vector<uintptr_t> wait_handles;
+		std::vector<uintptr_t> wait_volumes;
 		std::vector<Results::value_type::first_type> wait_indices;
 		// TODO: What if they exceed maximum wait objects?
 		bool any_io_pending = true;
@@ -2385,9 +2376,9 @@ public:
 			boost::intrusive_ptr<NtfsIndex> const p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
 			if (p && (selected == ii || selected == 0))
 			{
-				wait_handles.push_back(reinterpret_cast<HANDLE>(p->finished_event()));
+				wait_handles.push_back(p->finished_event());
 				wait_indices.push_back(p);
-				wait_volumes.push_back(p->volume());
+				wait_volumes.push_back(reinterpret_cast<uintptr_t>(p->volume()));
 				size_t const records_so_far = p->records_so_far();
 				any_io_pending |= records_so_far < p->total_records;
 				overall_progress_denominator += p->total_records * 2;
@@ -2717,7 +2708,7 @@ public:
 			}
 			else
 			{
-				this->MessageBox(_com_error(hr).ErrorMessage(), _T("Error"), MB_OK | MB_ICONERROR);
+				this->MessageBox(GetAnyErrorText(hr), _T("Error"), MB_OK | MB_ICONERROR);
 			}
 		}
 	}
@@ -3270,7 +3261,7 @@ int _tmain(int argc, TCHAR* argv[])
 	HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, _T("Local\\SwiftSearch.{CB77990E-A78F-44dc-B382-089B01207F02}"));
 	if (hEvent != NULL && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
-		typedef NTSTATUS(WINAPI *PNtSetTimerResolution)(unsigned long DesiredResolution, bool SetResolution, unsigned long *CurrentResolution);
+		typedef long(WINAPI *PNtSetTimerResolution)(unsigned long DesiredResolution, bool SetResolution, unsigned long *CurrentResolution);
 		if (PNtSetTimerResolution const NtSetTimerResolution = reinterpret_cast<PNtSetTimerResolution>(GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "NtSetTimerResolution")))
 		{
 			unsigned long prev; NtSetTimerResolution(1, true, &prev);
@@ -3283,15 +3274,21 @@ int _tmain(int argc, TCHAR* argv[])
 		{
 			WTL::CMessageLoop msgLoop;
 			_Module.AddMessageLoop(&msgLoop);
-			CMainDlg wnd;
+			CMainDlg wnd(hEvent);
 			wnd.Create(reinterpret_cast<HWND>(NULL), NULL);
 			wnd.ShowWindow(SW_SHOWDEFAULT);
 			msgLoop.Run();
 			_Module.RemoveMessageLoop();
 		}
 		__if_exists(_Module) { _Module.Term(); }
+		return 0;
 	}
-	return 0;
+	else
+	{
+		AllowSetForegroundWindow(ASFW_ANY);
+		PulseEvent(hEvent);  // PulseThread() is normally unreliable, but we don't really care here...
+		return GetLastError();
+	}
 }
 
 int __stdcall _tWinMain(HINSTANCE const hInstance, HINSTANCE /*hPrevInstance*/, LPTSTR /*lpCmdLine*/, int nShowCmd)

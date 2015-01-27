@@ -1,7 +1,7 @@
 #pragma once
 
+#define _WIN32_WINNT 0x502
 #include <SDKDDKVer.h>
-
 #define _USE_MATH_DEFINES 1
 #define _CRT_OBSOLETE_NO_WARNINGS 1
 #define _CRT_SECURE_NO_WARNINGS 1
