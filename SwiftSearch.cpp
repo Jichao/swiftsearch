@@ -806,7 +806,11 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	size_t loads_so_far;
 	size_t total_loads;
 	size_t _total_items;
+	boost::atomic<bool> _cancelled;
 	boost::atomic<unsigned int> _records_so_far;
+
+	// IF YOU ADD FIELDS: update clear()!!
+
 	mutex *get_mutex() const
 	{
 		return static_cast<bool const /* WRONG USE OF VOLATILE! but it works on x86 */ volatile &>(this->_atomic_unfinished) ? &this->_mutex : NULL;
@@ -815,7 +819,7 @@ public:
 	unsigned int mft_record_size;
 	unsigned int total_records;
 	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type;
-	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), _total_items(), _records_so_far(0), mft_record_size(), total_records()
+	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _atomic_unfinished(true), loads_so_far(), total_loads(), _total_items(), _records_so_far(0), _cancelled(false), mft_record_size(), total_records()
 	{
 		bool success = false;
 		std::tstring dirsep;
@@ -873,6 +877,16 @@ public:
 		this_type const *const me = this->unvolatile();
 		lock_guard<mutex> const lock(me->get_mutex());
 		return me->root_path();
+	}
+	bool cancelled() const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		return me->_cancelled.load(boost::memory_order_acquire);
+	}
+	void cancel() volatile
+	{
+		this_type *const me = this->unvolatile();
+		me->_cancelled.store(true, boost::memory_order_release);
 	}
 	bool is_finished() const volatile
 	{
@@ -1422,7 +1436,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 	friend CDialogResize<This>;
 	friend CDialogImpl<This>;
 	friend CModifiedDialogImpl<This>;
-	enum { IDD = IDD_DIALOGPROGRESS };
+	enum { IDD = IDD_DIALOGPROGRESS, BACKGROUND_COLOR = COLOR_WINDOW };
 	class CUnselectableWindow : public ATL::CWindowImpl<CUnselectableWindow>
 	{
 		BEGIN_MSG_MAP(CUnselectableWindow)
@@ -1449,8 +1463,7 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 	BOOL OnInitDialog(CWindow /*wndFocus*/, LPARAM /*lInitParam*/)
 	{
 		(this->progressText.SubclassWindow)(this->GetDlgItem(IDC_RICHEDITPROGRESS));
-		this->progressText.SendMessage(EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
-
+		// SetClassLongPtr(this->m_hWnd, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(GetSysColorBrush(COLOR_3DFACE)));
 		this->progressBar.Attach(this->GetDlgItem(IDC_PROGRESS1));
 		this->DlgResize_Init(false, false, 0);
 		ATL::CComBSTR bstr;
@@ -1472,9 +1485,24 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 		PostQuitMessage(ERROR_CANCELLED);
 	}
 
+	BOOL OnEraseBkgnd(WTL::CDCHandle dc)
+	{
+		RECT rc = {};
+		this->GetClientRect(&rc);
+		dc.FillRect(&rc, BACKGROUND_COLOR);
+		return TRUE;
+	}
+
+	HBRUSH OnCtlColorStatic(WTL::CDCHandle dc, WTL::CStatic /*wndStatic*/)
+	{
+		return GetSysColorBrush(BACKGROUND_COLOR);
+	}
+
 	BEGIN_MSG_MAP_EX(This)
 		CHAIN_MSG_MAP(CDialogResize<This>)
 		MSG_WM_INITDIALOG(OnInitDialog)
+		// MSG_WM_ERASEBKGND(OnEraseBkgnd)
+		// MSG_WM_CTLCOLORSTATIC(OnCtlColorStatic)
 		COMMAND_HANDLER_EX(IDRETRY, BN_CLICKED, OnPause)
 		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
 	END_MSG_MAP()
@@ -1542,7 +1570,7 @@ public:
 	{
 		if (this->windowCreated)
 		{
-			EnableWindowRecursive(parent, TRUE);
+			::EnableWindow(parent, TRUE);
 			this->DestroyWindow();
 		}
 	}
@@ -1578,7 +1606,7 @@ public:
 		if (!this->windowCreated && abs(static_cast<int>(now - this->creationTime)) >= static_cast<int>(this->GetMinDelay()))
 		{
 			this->windowCreated = !!this->Create(parent);
-			EnableWindowRecursive(parent, FALSE);
+			::EnableWindow(parent, FALSE);
 			this->Flush();
 		}
 		if (this->windowCreated && (justCreated || this->ShouldUpdate()))
@@ -1685,8 +1713,11 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		Buffer buf;
 	public:
 		explicit OverlappedNtfsMftRead(Handle const &iocp, std::tstring const &path_name, HWND const m_hWnd, Handle const &closing_event)
-			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), records_so_far(0), virtual_offset(), next_virtual_offset(), next_overlapped(), ret_ptrs(), j(ret_ptrs.begin()) { }
-		int operator()(size_t const size, uintptr_t const /*key*/)
+			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), records_so_far(0), virtual_offset(), next_virtual_offset(), next_overlapped(), ret_ptrs(), j(ret_ptrs.begin()) {}
+		~OverlappedNtfsMftRead()
+		{
+		}
+		int operator()(size_t const size, uintptr_t const key)
 		{
 			int result = -1;
 			if (!this->p)
@@ -1694,7 +1725,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 				this->p.reset(new NtfsIndex(path_name));
 				if (void *const volume = this->p->volume())
 				{
-					if (::PostMessage(m_hWnd, WM_THREADMESSAGE, 1, reinterpret_cast<LPARAM>(&*this->p))) { intrusive_ptr_add_ref(this->p.get()); }
+					if (::PostMessage(m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), reinterpret_cast<LPARAM>(&*this->p))) { intrusive_ptr_add_ref(this->p.get()); }
 					DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, this->p->volume(), reinterpret_cast<HDEVNOTIFY>(m_hWnd) };
 					dev.dbch_hdevnotify = RegisterDeviceNotification(m_hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
 					long long mft_start_lcn;
@@ -1714,6 +1745,10 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 					this->p->reserve(this->p->total_records);
 					result = +1;
 				}
+				else
+				{
+					::PostMessage(m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), NULL);
+				}
 			}
 			if (this->p)
 			{
@@ -1729,7 +1764,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 				{
 					++j;
 				}
-				bool const more = j != this->ret_ptrs.end() && WaitForSingleObject(this->closing_event, 0) != WAIT_OBJECT_0;
+				bool const more = j != this->ret_ptrs.end() && WaitForSingleObject(this->closing_event, 0) != WAIT_OBJECT_0 && !this->p->cancelled();
 				if (more)
 				{
 					long long const lbn = j->second + (this->virtual_offset - (j == this->ret_ptrs.begin() ? 0 : (j - 1)->first));
@@ -1743,8 +1778,9 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 						/* Completed synchronously... call the method */
 						result = +1;
 					}
-					else if (GetLastError() != ERROR_IO_PENDING) { CheckAndThrow(false); }
-					else { result = 0; }
+					else if (GetLastError() == ERROR_IO_PENDING)
+					{ result = 0; }
+					else { CheckAndThrow(false); }
 					this->next_virtual_offset = this->virtual_offset + nb;
 				}
 				if (!more)
@@ -1752,16 +1788,24 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 					this->p->set_total_loads(this->num_reads);
 				}
 			}
+			if (this->p->cancelled() && result > 0)
+			{
+				result = -1;
+			}
 			return result;
 		}
 	};
 	static unsigned long get_num_threads()
 	{
-		unsigned long num_threads;
+		unsigned long num_threads = 0;
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
 		{
-			SYSTEM_INFO sysinfo;
-			GetSystemInfo(&sysinfo);
-			num_threads = sysinfo.dwNumberOfProcessors;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+			++num_threads;
 		}
 		return num_threads;
 	}
@@ -1815,7 +1859,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		std::tstring description;
 	};
 	static unsigned int const WM_TASKBARCREATED;
-	enum { WM_NOTIFYICON = WM_USER + 100, WM_THREADMESSAGE = WM_USER + 101 };
+	enum { WM_NOTIFYICON = WM_USER + 100, WM_DRIVESETITEMDATA = WM_USER + 101 };
 
 	typedef std::vector<std::pair<boost::intrusive_ptr<NtfsIndex volatile const>, std::pair<NtfsIndex::key_type, std::pair<unsigned long long, unsigned long long> > > > Results;
 	
@@ -1916,6 +1960,7 @@ public:
 	}
 	void OnDestroy()
 	{
+		this->DeleteNotifyIcon();
 		this->iconLoader->clear();
 		for (size_t i = 0; i != this->threads.size(); ++i)
 		{
@@ -2140,6 +2185,7 @@ public:
 		}
 
 		this->DlgResize_Init(false, false);
+		// this->SetTimer(0, 15 * 60 * 60, );
 
 		std::vector<std::tstring> path_names;
 		{
@@ -2161,8 +2207,9 @@ public:
 		{
 			// Do NOT capture 'this'!! It is volatile!!
 			typedef OverlappedNtfsMftRead T;
+			int const index = this->cmbDrive.AddString(path_names[j].c_str());
 			std::auto_ptr<T> p(new T(this->iocp, path_names[j], this->m_hWnd, this->closing_event));
-			if (PostQueuedCompletionStatus(this->iocp, 0, 0, &*p)) { p.release(); }
+			if (PostQueuedCompletionStatus(this->iocp, 0, static_cast<uintptr_t>(index), &*p)) { p.release(); }
 		}
 
 		for (size_t i = 0; i != this->num_threads; ++i)
@@ -2289,10 +2336,16 @@ public:
 
 	void Search()
 	{
+		WTL::CWaitCursor wait;
+		int const selected = this->cmbDrive.GetCurSel();
+		if (selected != 0 && !this->cmbDrive.GetItemDataPtr(selected))
+		{
+			this->MessageBox(_T("This does not appear to be a valid NTFS volume."), _T("Error"), MB_OK | MB_ICONERROR);
+			return;
+		}
 		CProgressDialog dlg(*this);
 		dlg.SetProgressTitle(_T("Searching..."));
 		if (dlg.HasUserCancelled()) { return; }
-		WTL::CWaitCursor wait;
 		this->lastRequestedIcon.resize(0);
 		this->lvFiles.SetItemCount(0);
 		this->results.clear();
@@ -2328,12 +2381,11 @@ public:
 		std::vector<Results::value_type::first_type> wait_indices;
 		// TODO: What if they exceed maximum wait objects?
 		bool any_io_pending = true;
-		WTL::CString cursel; if (int index = this->cmbDrive.GetCurSel()) { this->cmbDrive.GetLBText(index, cursel); }
 		size_t overall_progress_numerator = 0, overall_progress_denominator = 0;
 		for (int ii = 0; ii < this->cmbDrive.GetCount(); ++ii)
 		{
-			NtfsIndex *const p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
-			if (p && (cursel.IsEmpty() || cursel == p->root_path().c_str()))
+			boost::intrusive_ptr<NtfsIndex> const p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
+			if (p && (selected == ii || selected == 0))
 			{
 				wait_handles.push_back(reinterpret_cast<HANDLE>(p->finished_event()));
 				wait_indices.push_back(p);
@@ -2352,7 +2404,8 @@ public:
 			{
 				if (dlg.ShouldUpdate())
 				{
-					std::tstring text = _T("Reading file tables...");
+					std::basic_ostringstream<TCHAR> ss;
+					ss << _T("Reading file tables...");
 					bool any = false;
 					size_t temp_overall_progress_numerator = overall_progress_numerator;
 					for (size_t i = 0; i != wait_indices.size(); ++i)
@@ -2362,12 +2415,13 @@ public:
 						temp_overall_progress_numerator += records_so_far;
 						if (records_so_far != j->total_records)
 						{
-							if (any) { text += _T(","); }
-							text += _T(" ");
-							text += j->root_path();
+							if (any) { ss << _T(", "); }
+							else { ss << _T(" "); }
+							ss << j->root_path() << _T(" ") << _T("(") << nformat(records_so_far, this->loc) << _T(" of ") << nformat(j->total_records, this->loc) << _T(")");
 							any = true;
 						}
 					}
+					std::tstring const text = ss.str();
 					dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(), text.data() + text.size()));
 					dlg.SetProgress(static_cast<long long>(temp_overall_progress_numerator), static_cast<long long>(overall_progress_denominator));
 					dlg.Flush();
@@ -2437,7 +2491,7 @@ public:
 						if (ex.GetSENumber() != ERROR_CANCELLED) { throw; }
 					}
 					if (any_io_pending) { overall_progress_numerator += i->total_records; }
-					overall_progress_numerator += static_cast<size_t>(static_cast<unsigned long long>(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) / static_cast<unsigned long long>(current_progress_denominator));
+					if (current_progress_denominator) { overall_progress_numerator += static_cast<size_t>(static_cast<unsigned long long>(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) / static_cast<unsigned long long>(current_progress_denominator)); }
 					std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
 					this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), LVSICF_NOINVALIDATEALL);
 				}
@@ -2795,15 +2849,24 @@ public:
 		return 0;
 	}
 
-	void OnCancel(UINT /*uNotifyCode*/, int nID, HWND /*hWnd*/)
+	void OnCancel(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
-		this->DestroyWindow();
-		PostQuitMessage(nID);
-		// this->EndDialog(nID);
+		if (this->CheckAndCreateIcon(false))
+		{
+			this->ShowWindow(SW_HIDE);
+		}
 	}
 
 	BOOL PreTranslateMessage(MSG* pMsg)
 	{
+		if (this->accel)
+		{
+			if (this->accel.TranslateAccelerator(this->m_hWnd, pMsg))
+			{
+				return TRUE;
+			}
+		}
+
 		return this->CWindow::IsDialogMessage(pMsg);
 	}
 	
@@ -2947,21 +3010,24 @@ public:
 		{
 		case DBT_DEVICEQUERYREMOVEFAILED:
 			{
-				this->RefreshVolumes();
 			}
 			break;
 		case DBT_DEVICEQUERYREMOVE:
 			{
 				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
 				if (header.dbch_devicetype == DBT_DEVTYP_HANDLE)
-				{ this->RemoveDevice(reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header).dbch_handle); }
+				{
+					reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header);
+				}
 			}
 			break;
 		case DBT_DEVICEREMOVECOMPLETE:
 			{
 				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
 				if (header.dbch_devicetype == DBT_DEVTYP_HANDLE)
-				{ this->RemoveDevice(reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header).dbch_handle); }
+				{
+					reinterpret_cast<DEV_BROADCAST_HANDLE const &>(header);
+				}
 			}
 			break;
 		case DBT_DEVICEARRIVAL:
@@ -2969,7 +3035,6 @@ public:
 				DEV_BROADCAST_HDR const &header = *reinterpret_cast<DEV_BROADCAST_HDR *>(lParam);
 				if (header.dbch_devicetype == DBT_DEVTYP_VOLUME)
 				{
-					this->RefreshVolumes();
 				}
 			}
 			break;
@@ -2977,37 +3042,44 @@ public:
 		}
 		return TRUE;
 	}
-
-	void RefreshVolumes()
+	
+	void OnShowWindow(BOOL bShow, UINT /*nStatus*/)
 	{
-
+		if (bShow)
+		{
+			SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
+			this->DeleteNotifyIcon();
+			this->txtPattern.SetFocus();
+		}
+		else
+		{
+			SetPriorityClass(GetCurrentProcess(), 0x100000 /*PROCESS_MODE_BACKGROUND_BEGIN*/);
+			SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+		}
 	}
 
-	void RemoveDevice(HANDLE handle)
+	void DeleteNotifyIcon()
 	{
-		for (int i = this->cmbDrive.GetCount() - 1; i >= 0; i--)
-		{
-		}
+		NOTIFYICONDATA nid = { sizeof(nid), *this, 0 };
+		Shell_NotifyIcon(NIM_DELETE, &nid);
+		SetPriorityClass(GetCurrentProcess(), 0x200000 /*PROCESS_MODE_BACKGROUND_END*/);
+	}
+
+	BOOL CheckAndCreateIcon(bool checkVisible)
+	{
+		NOTIFYICONDATA nid = { sizeof(nid), *this, 0, NIF_MESSAGE | NIF_ICON | NIF_TIP, WM_NOTIFYICON, this->GetIcon(FALSE), _T("SwiftSearch") };
+		return (!checkVisible || !this->IsWindowVisible()) && Shell_NotifyIcon(NIM_ADD, &nid);
 	}
 
 	LRESULT OnTaskbarCreated(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/)
 	{
-		// this->CheckAndCreateIcon(true);
+		this->CheckAndCreateIcon(true);
 		return 0;
 	}
 
-	LRESULT OnThreadMessage(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
+	LRESULT OnDriveSetItemData(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
 	{
-		switch (wParam)
-		{
-		case 1:
-			if (NtfsIndex *const p = reinterpret_cast<NtfsIndex *>(lParam))
-			{
-				this->cmbDrive.SetItemDataPtr(this->cmbDrive.AddString(p->root_path().c_str()), p);
-			}
-			break;
-		default: break;
-		}
+		this->cmbDrive.SetItemDataPtr(static_cast<int>(wParam), reinterpret_cast<NtfsIndex *>(lParam));
 		return 0;
 	}
 
@@ -3019,19 +3091,99 @@ public:
 		}
 		return 0;
 	}
+	
+	void OnHelpAbout(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		this->MessageBox(_T("© 2015 Mehrdad N.\r\nAll rights reserved."), _T("About"), MB_ICONINFORMATION);
+	}
+
+	void OnHelpRegex(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		this->MessageBox(
+			_T("To find a file, select the drive you want to search, enter part of the file name or path, and click Search.\r\n\r\n")
+			_T("You can either use wildcards, which are the default, or regular expressions, which require starting the pattern with a '>' character.\r\n\r\n")
+			_T("Wildcards work the same as in Windows; regular expressions are implemented using the Boost.Xpressive library.\r\n\r\n")
+			_T("Some common regular expressions:\r\n")
+			_T(".\t= A single character\r\n")
+			_T("\\+\t= A plus symbol (backslash is the escape character)\r\n")
+			_T("[a-cG-K]\t= A single character from a to c or from G to K\r\n")
+			_T("(abc|def)\t= Either \"abc\" or \"def\"\r\n\r\n")
+			_T("\"Quantifiers\" can follow any expression:\r\n")
+			_T("*\t= Zero or more occurrences\r\n")
+			_T("+\t= One or more occurrences\r\n")
+			_T("{m,n}\t= Between m and n occurrences (n is optional)\r\n")
+			_T("Examples of regular expressions:\r\n")
+			_T("Hi{2,}.*Bye= At least two occurrences of \"Hi\", followed by any number of characters, followed by \"Bye\"\r\n")
+			_T(".*\t= At least zero characters\r\n")
+			_T("Hi.+\\+Bye\t= At least one character between \"Hi\" and \"+Bye\"\r\n")
+		, _T("Regular expressions"), MB_ICONINFORMATION);
+	}
+
+	void OnFileFitColumns(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		WTL::CListViewCtrl &wndListView = this->lvFiles;
+
+		RECT rect;
+		wndListView.GetClientRect(&rect);
+		DWORD width;
+		width = (std::max)(1, (int) (rect.right - rect.left) - GetSystemMetrics(SM_CXVSCROLL));
+		WTL::CHeaderCtrl wndListViewHeader = wndListView.GetHeader();
+		int oldTotalColumnsWidth;
+		oldTotalColumnsWidth = 0;
+		int columnCount;
+		columnCount = wndListViewHeader.GetItemCount();
+		for (int i = 0; i < columnCount; i++)
+		{
+			oldTotalColumnsWidth += wndListView.GetColumnWidth(i);
+		}
+		for (int i = 0; i < columnCount; i++)
+		{
+			int colWidth = wndListView.GetColumnWidth(i);
+			int newWidth = MulDiv(colWidth, width, oldTotalColumnsWidth);
+			newWidth = (std::max)(newWidth, 1);
+			wndListView.SetColumnWidth(i, newWidth);
+		}
+	}
+
+	void OnRefresh(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		int const selected = this->cmbDrive.GetCurSel();
+		for (int ii = 0; ii < this->cmbDrive.GetCount(); ++ii)
+		{
+			if (selected == 0 || ii == selected)
+			{
+				if (boost::intrusive_ptr<NtfsIndex> const q = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii)))
+				{
+					std::tstring const path_name = q->root_path();
+					q->cancel();
+					this->cmbDrive.SetItemDataPtr(ii, NULL);
+					intrusive_ptr_release(q.get());
+					typedef OverlappedNtfsMftRead T;
+					std::auto_ptr<T> p(new T(this->iocp, path_name, this->m_hWnd, this->closing_event));
+					if (PostQueuedCompletionStatus(this->iocp, 0, static_cast<uintptr_t>(ii), &*p)) { p.release(); }
+				}
+			}
+		}
+	}
 
 	BEGIN_MSG_MAP_EX(CMainDlg)
 		CHAIN_MSG_MAP(CInvokeImpl<CMainDlg>)
 		CHAIN_MSG_MAP(CDialogResize<CMainDlg>)
 		MSG_WM_DESTROY(OnDestroy)
 		MSG_WM_INITDIALOG(OnInitDialog)
+		MSG_WM_SHOWWINDOW(OnShowWindow)
+		MSG_WM_CLOSE(OnClose)
 		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
-		MESSAGE_HANDLER_EX(WM_THREADMESSAGE, OnThreadMessage)
+		MESSAGE_HANDLER_EX(WM_DRIVESETITEMDATA, OnDriveSetItemData)
 		MESSAGE_HANDLER_EX(WM_TASKBARCREATED, OnTaskbarCreated)
 		MESSAGE_HANDLER_EX(WM_MOUSEWHEEL, OnMouseWheel)
 		MESSAGE_HANDLER_EX(WM_CONTEXTMENU, OnContextMenu)
+		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)
+		COMMAND_ID_HANDLER_EX(ID_HELP_USINGREGULAREXPRESSIONS, OnHelpRegex)
+		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNSTOWINDOW, OnFileFitColumns)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
+		COMMAND_ID_HANDLER_EX(ID_ACCELERATOR40006, OnRefresh)
 		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
 		COMMAND_HANDLER_EX(IDOK, BN_CLICKED, OnOK)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_CUSTOMDRAW, OnFilesListCustomDraw)
