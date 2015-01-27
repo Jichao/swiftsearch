@@ -828,19 +828,17 @@ public:
 		try
 		{
 			std::tstring path_name = value;
-			if (false)
-			{
-				path_name.erase(path_name.begin() + static_cast<ptrdiff_t>(path_name.size() - std::min(path_name.find_last_not_of(dirsep), path_name.size())), path_name.end());
-				if (!path_name.empty() && *path_name.begin() != _T('\\') && *path_name.begin() != _T('/')) { path_name.insert(0, _T("\\\\.\\")); }
-			}
-			else
-			{
-				path_name.append(_T("$Volume"));
-			}
-			Handle(CreateFile(path_name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL)).swap(this->_volume);
+			path_name.erase(path_name.begin() + static_cast<ptrdiff_t>(path_name.size() - std::min(path_name.find_last_not_of(dirsep), path_name.size())), path_name.end());
+			if (!path_name.empty() && *path_name.begin() != _T('\\') && *path_name.begin() != _T('/')) { path_name.insert(0, _T("\\\\.\\")); }
+			Handle volume(CreateFile(path_name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL));
 			winnt::IO_STATUS_BLOCK iosb;
+			struct : winnt::FILE_FS_ATTRIBUTE_INFORMATION { unsigned char buf[MAX_PATH]; } info = {};
+			if (winnt::NtQueryVolumeInformationFile(volume.value, &iosb, &info, sizeof(info), 5) ||
+				info.FileSystemNameLength != 4 * sizeof(*info.FileSystemName) || _tcsncmp(info.FileSystemName, _T("NTFS"), 4))
+			{ throw std::invalid_argument("invalid volume"); }
 			winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityLow };
-			winnt::NtSetInformationFile(this->_volume, &iosb, &io_priority, sizeof(io_priority), 43);
+			winnt::NtSetInformationFile(volume, &iosb, &io_priority, sizeof(io_priority), 43);
+			volume.swap(this->_volume);
 			success = true;
 		}
 		catch (std::invalid_argument &) {}
@@ -2157,7 +2155,7 @@ public:
 				this->txtPattern.SetFont(WTL::CFontHandle().CreateFontIndirect(&logFont));
 			}
 		}
-		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | LVS_EX_GRIDLINES | LVS_EX_COLUMNOVERFLOW);
+		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | LVS_EX_GRIDLINES | 0x80000000 /*LVS_EX_COLUMNOVERFLOW*/);
 		this->statusbar = CreateStatusWindow(WS_CHILD | SBT_TOOLTIPS, NULL, *this, IDC_STATUS_BAR);
 		int const rcStatusPaneWidths[] = { 360, -1 };
 		if ((this->statusbar.GetStyle() & WS_VISIBLE) != 0)
