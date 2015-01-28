@@ -177,7 +177,7 @@ Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource H
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ForcedIncludeFiles>stdafx.h;$(ProjectDir)/targetver.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalOptions>/d2Zi+ %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\mfc42;$(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\mfc42;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <TreatWChar_tAsBuiltInType>false</TreatWChar_tAsBuiltInType>
       <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>
@@ -228,7 +228,7 @@ Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource H
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ForcedIncludeFiles>stdafx.h;$(ProjectDir)/targetver.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalOptions>/d2Zi+ %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\mfc42;$(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SystemDrive)\WinDDK\3790.1830\inc\crt;$(SystemDrive)\WinDDK\3790.1830\inc\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wxp;$(SystemDrive)\WinDDK\3790.1830\inc\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\ddk\wdm\wnet;$(SystemDrive)\WinDDK\3790.1830\inc\atl30;$(SystemDrive)\WinDDK\3790.1830\inc\mfc42;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <TreatWChar_tAsBuiltInType>false</TreatWChar_tAsBuiltInType>
       <DebugInformationFormat>None</DebugInformationFormat>
