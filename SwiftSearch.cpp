@@ -738,9 +738,6 @@ protected:
 class NtfsIndex : public RefCounted<NtfsIndex>
 {
 	typedef NtfsIndex this_type;
-	typedef std::codecvt<std::tstring::value_type, char, int /*std::mbstate_t*/> CodeCvt;
-	NtfsIndex *unvolatile() volatile { return const_cast<NtfsIndex *>(this); }
-	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
 #pragma pack(push)
 #pragma pack(2)
 	struct StandardInfo
@@ -770,6 +767,7 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	};
 	friend struct std::is_scalar<StreamInfo>;
 #pragma pack(pop)
+	typedef std::codecvt<std::tstring::value_type, char, int /*std::mbstate_t*/> CodeCvt;
 	typedef std::vector<std::pair<LinkInfo, size_t /* next */> > LinkInfos;
 	typedef std::vector<std::pair<StreamInfo, size_t /* next */> > StreamInfos;
 	struct Record;
@@ -788,7 +786,7 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	std::tstring _root_path;
 	Handle _volume;
 	std::tstring names;
-	Records records;
+	Records records /* optimization: this is a sparse vector. make this a vector of OFFSETS to the actual data in another vector. */;
 	LinkInfos nameinfos;
 	StreamInfos streaminfos;
 	ChildInfos childinfos;
@@ -800,6 +798,8 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	boost::atomic<unsigned int> _records_so_far;
 	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type_internal;
 
+	NtfsIndex *unvolatile() volatile { return const_cast<NtfsIndex *>(this); }
+	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
 	static Records::iterator at(Records &records, size_t const frs, Records::iterator *const existing_to_revalidate = NULL)
 	{
 		if (frs >= records.size())
@@ -1560,7 +1560,7 @@ public:
 		MSG msg;
 		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
-			if (!this->IsDialogMessage(&msg))
+			if (!this->windowCreated || !this->IsDialogMessage(&msg))
 			{
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
@@ -1800,16 +1800,33 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		return 0;
 	}
 
-	template<typename TWindow>
-	class CUpDownNotify : public ATL::CWindowImpl<CUpDownNotify<TWindow>, TWindow>
+	class CSearchPattern : public ATL::CWindowImpl<CSearchPattern, WTL::CEdit>
 	{
 		BEGIN_MSG_MAP_EX(CCustomDialogCode)
+			MSG_WM_MOUSEMOVE(OnMouseMove)
+			MSG_WM_MOUSELEAVE(OnMouseLeave)
+			MSG_WM_MOUSEHOVER(OnMouseHover)
+			MESSAGE_HANDLER_EX(EM_REPLACESEL, OnReplaceSel)
 			MESSAGE_RANGE_HANDLER_EX(WM_KEYDOWN, WM_KEYUP, OnKey)
 		END_MSG_MAP()
-
+		bool tracking;
 	public:
+		CSearchPattern() : tracking() { }
 		struct KeyNotify { NMHDR hdr; WPARAM vkey; LPARAM lParam; };
 		enum { CUN_KEYDOWN, CUN_KEYUP };
+
+		LRESULT OnReplaceSel(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam)
+		{
+			int start = 0, end = 0;
+			this->GetSel(start, end);
+			TCHAR const *const sz = reinterpret_cast<TCHAR const *>(lParam);
+			if ((!sz || !*sz) && start == 0 && end == this->GetWindowTextLength())
+			{
+				this->PostMessage(EM_SETSEL, start, end);
+			}
+			else { this->SetMsgHandled(FALSE); }
+			return 0;
+		}
 
 		LRESULT OnKey(UINT uMsg, WPARAM wParam, LPARAM lParam)
 		{
@@ -1822,7 +1839,34 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 			}
 			else { return this->DefWindowProc(uMsg, wParam, lParam); }
 		}
+
+		void EnsureTrackingMouseHover()
+		{
+			if (!this->tracking)
+			{
+				TRACKMOUSEEVENT tme = { sizeof(tme), TME_HOVER | TME_LEAVE, this->m_hWnd, 0 };
+				this->tracking = !!TrackMouseEvent(&tme);
+			}
+		}
+
+		void OnMouseMove(UINT /*nFlags*/, WTL::CPoint /*point*/)
+		{
+			this->EnsureTrackingMouseHover();
+		}
+
+		void OnMouseLeave()
+		{
+			this->tracking = false;
+			this->HideBalloonTip();
+		}
+
+		void OnMouseHover(WPARAM /*wParam*/, WTL::CPoint /*ptPos*/)
+		{
+			EDITBALLOONTIP tip = { sizeof(tip), _T("Search Pattern"), _T("Entern pattern to match against the file's name or path, such as:\r\nC:\\Windows\\*.exe\r\nPicture*.jpg"), TTI_INFO };
+			this->ShowBalloonTip(&tip);
+		}
 	};
+
 	struct CacheInfo
 	{
 		CacheInfo() : valid(false), iIconSmall(-1), iIconLarge(-1), iIconExtraLarge(-1) { this->szTypeName[0] = _T('\0'); }
@@ -1891,7 +1935,8 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	static NameComparator<StrCmp> name_comparator(StrCmp const &cmp) { return NameComparator<StrCmp>(cmp); }
 
 	size_t num_threads;
-	CUpDownNotify<WTL::CEdit> txtPattern;
+	CSearchPattern txtPattern;
+	WTL::CButton btnOK;
 	WTL::CRichEditCtrl richEdit;
 	WTL::CStatusBarCtrl statusbar;
 	WTL::CAccelerator accel;
@@ -1909,6 +1954,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	Threads threads;
 	std::locale loc;
 	HANDLE hWait, hEvent;
+	CoInit coinit;
 	static DWORD WINAPI SHOpenFolderAndSelectItemsThread(IN LPVOID lpParameter)
 	{
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
@@ -2100,14 +2146,15 @@ public:
 	{
 		_Module.GetMessageLoop()->AddMessageFilter(this);
 
-		this->txtPattern.SubclassWindow(this->GetDlgItem(IDC_EDITFILENAME));
 		this->lvFiles.Attach(this->GetDlgItem(IDC_LISTFILES));
+		this->btnOK.Attach(this->GetDlgItem(IDOK));
 		this->cmbDrive.Attach(this->GetDlgItem(IDC_LISTVOLUMES));
 		this->richEdit.Create(this->lvFiles, NULL, 0, ES_MULTILINE, WS_EX_TRANSPARENT);
 		this->richEdit.SetFont(this->lvFiles.GetFont());
 		this->accel.LoadAccelerators(IDR_ACCELERATOR1);
-		this->txtPattern.SetCueBannerText(_T("File name or path"));
-		// this->txtPattern.SetWindowText(_T("*"));
+		this->txtPattern.SubclassWindow(this->GetDlgItem(IDC_EDITFILENAME));
+		this->txtPattern.EnsureTrackingMouseHover();
+		this->txtPattern.SetCueBannerText(_T("Search by name or path (hover for help)"), true);
 		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT,  200, _T("Name") }; this->lvFiles.InsertColumn(0, &column); }
 		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT,  340, _T("Directory") }; this->lvFiles.InsertColumn(1, &column); }
 		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size") }; this->lvFiles.InsertColumn(2, &column); }
@@ -2172,6 +2219,7 @@ public:
 			this->lvFiles.SetWindowPos(NULL, 0, 0, clientRect.Width(), clientRect.Height() - rcStatusPane1.Height(), SWP_NOMOVE | SWP_NOZORDER);
 		}
 
+		SHAutoComplete(this->txtPattern, SHACF_FILESYS_ONLY | SHACF_USETAB);
 		this->DlgResize_Init(false, false);
 		// this->SetTimer(0, 15 * 60 * 60, );
 
@@ -2344,25 +2392,25 @@ public:
 			if (this->txtPattern.GetWindowText(bstr.m_str))
 			{ pattern.assign(bstr, bstr.Length()); }
 		}
-		bool is_regex = false;
+		bool const is_regex = !pattern.empty() && *pattern.begin() == _T('>');
+		if (is_regex) { pattern.erase(pattern.begin()); }
+		bool const is_path_pattern = is_regex || ~pattern.find(_T('\\'));
+		bool const requires_root_path_match = is_path_pattern && !pattern.empty() && (is_regex
+			? *pattern.begin() != _T('.') && *pattern.begin() != _T('(') && *pattern.begin() != _T('[') && *pattern.begin() != _T('.')
+			: *pattern.begin() != _T('*') && *pattern.begin() != _T('?'));
 #ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
 		typedef boost::xpressive::basic_regex<std::tstring::const_iterator> RE;
 		boost::xpressive::match_results<RE::iterator_type> mr;
 		RE re;
-		try
-		{
-			if (!pattern.empty() && *pattern.begin() == _T('>'))
-			{
-				re = RE::compile(pattern.begin() + 1, pattern.end(), boost::xpressive::regex_constants::nosubs | boost::xpressive::regex_constants::optimize | boost::xpressive::regex_constants::single_line | boost::xpressive::regex_constants::icase | boost::xpressive::regex_constants::collate);
-				is_regex = true;
-			}
+		if (is_regex)
+		{ 
+			try { re = RE::compile(pattern.begin(), pattern.end(), boost::xpressive::regex_constants::nosubs | boost::xpressive::regex_constants::optimize | boost::xpressive::regex_constants::single_line | boost::xpressive::regex_constants::icase | boost::xpressive::regex_constants::collate); }
+			catch (boost::xpressive::regex_error const &ex) { this->MessageBox(static_cast<WTL::CString>(ex.what()), _T("Regex Error"), MB_ICONERROR); return; }
 		}
-		catch (boost::xpressive::regex_error const &ex) { this->MessageBox(static_cast<WTL::CString>(ex.what()), _T("Regex Error"), MB_ICONERROR); return; }
 #else
-		if (!pattern.empty() && *pattern.begin() == _T('>'))
+		if (is_regex)
 		{ this->MessageBox(_T("Regex support not included."), _T("Regex Error"), MB_ICONERROR); return; }
 #endif
-		bool const is_path_pattern = is_regex || ~pattern.find(_T('\\'));
 		if (!is_path_pattern && !~pattern.find(_T('*')) && !~pattern.find(_T('?'))) { pattern.insert(pattern.begin(), _T('*')); pattern.insert(pattern.end(), _T('*')); }
 		clock_t const start = clock();
 		std::vector<uintptr_t> wait_handles;
@@ -2376,12 +2424,16 @@ public:
 			boost::intrusive_ptr<NtfsIndex> const p = static_cast<NtfsIndex *>(this->cmbDrive.GetItemDataPtr(ii));
 			if (p && (selected == ii || selected == 0))
 			{
-				wait_handles.push_back(p->finished_event());
-				wait_indices.push_back(p);
-				wait_volumes.push_back(reinterpret_cast<uintptr_t>(p->volume()));
-				size_t const records_so_far = p->records_so_far();
-				any_io_pending |= records_so_far < p->total_records;
-				overall_progress_denominator += p->total_records * 2;
+				std::tstring const root_path = p->root_path();
+				if (!requires_root_path_match || pattern.size() >= root_path.size() && std::equal(root_path.begin(), root_path.end(), pattern.begin()))
+				{
+					wait_handles.push_back(p->finished_event());
+					wait_indices.push_back(p);
+					wait_volumes.push_back(reinterpret_cast<uintptr_t>(p->volume()));
+					size_t const records_so_far = p->records_so_far();
+					any_io_pending |= records_so_far < p->total_records;
+					overall_progress_denominator += p->total_records * 2;
+				}
 			}
 		}
 		if (!any_io_pending) { overall_progress_denominator /= 2; }
@@ -2495,6 +2547,23 @@ public:
 		this->statusbar.SetText(0, buf);
 	}
 
+	void OnBrowse(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
+	{
+		TCHAR path[MAX_PATH];
+		BROWSEINFO info = { this->m_hWnd, NULL, path, _T("If you would like to filter the results such that they include only the subfolders and files of a specific folder, specify that folder here:"), BIF_NONEWFOLDERBUTTON | BIF_USENEWUI | BIF_RETURNONLYFSDIRS | BIF_DONTGOBELOWDOMAIN };
+		if (LPITEMIDLIST const pidl = SHBrowseForFolder(&info))
+		{
+			bool const success = !!SHGetPathFromIDList(pidl, path);
+			ILFree(pidl);
+			if (success)
+			{
+				this->txtPattern.SetWindowText((std::tstring(path) + _T("\\*")).c_str());
+				this->GotoDlgCtrl(this->txtPattern);
+				this->txtPattern.SetSel(this->txtPattern.GetWindowTextLength(), this->txtPattern.GetWindowTextLength());
+			}
+		}
+	}
+
 	void OnOK(UINT /*uNotifyCode*/, int /*nID*/, HWND /*hWnd*/)
 	{
 		if (GetFocus() == this->lvFiles)
@@ -2514,7 +2583,7 @@ public:
 				}
 			}
 		}
-		else if (GetFocus() == this->txtPattern)
+		else if (GetFocus() == this->txtPattern || GetFocus() == this->btnOK)
 		{
 			this->Search();
 		}
@@ -2768,21 +2837,21 @@ public:
 		}
 		return 0;
 	}
-	
+
 	LRESULT OnFileNameArrowKey(LPNMHDR pnmh)
 	{
-		CUpDownNotify<WTL::CEdit>::KeyNotify *const p = (CUpDownNotify<WTL::CEdit>::KeyNotify *)pnmh;
+		CSearchPattern::KeyNotify *const p = (CSearchPattern::KeyNotify *)pnmh;
 		if (p->vkey == VK_UP || p->vkey == VK_DOWN)
 		{
-			this->cmbDrive.SendMessage(p->hdr.code == CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN ? WM_KEYDOWN : WM_KEYUP, p->vkey, p->lParam);
+			this->cmbDrive.SendMessage(p->hdr.code == CSearchPattern::CUN_KEYDOWN ? WM_KEYDOWN : WM_KEYUP, p->vkey, p->lParam);
 		}
 		else
 		{
-			if (p->hdr.code == CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN && p->vkey == VK_DOWN && this->lvFiles.GetItemCount() > 0)
+			if (p->hdr.code == CSearchPattern::CUN_KEYDOWN && p->vkey == VK_DOWN && this->lvFiles.GetItemCount() > 0)
 			{
 				this->lvFiles.SetFocus();
 			}
-			this->lvFiles.SendMessage(p->hdr.code == CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN ? WM_KEYDOWN : WM_KEYUP, p->vkey, p->lParam);
+			this->lvFiles.SendMessage(p->hdr.code == CSearchPattern::CUN_KEYDOWN ? WM_KEYDOWN : WM_KEYUP, p->vkey, p->lParam);
 		}
 		return 0;
 	}
@@ -3031,20 +3100,20 @@ public:
 		}
 		return TRUE;
 	}
-	
-	void OnShowWindow(BOOL bShow, UINT /*nStatus*/)
+
+	void OnWindowPosChanged(LPWINDOWPOS lpWndPos)
 	{
-		if (bShow)
+		if (lpWndPos->flags & SWP_SHOWWINDOW)
 		{
 			SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
 			this->DeleteNotifyIcon();
-			this->txtPattern.SetFocus();
 		}
-		else
+		else if (lpWndPos->flags & SWP_HIDEWINDOW)
 		{
 			SetPriorityClass(GetCurrentProcess(), 0x100000 /*PROCESS_MODE_BACKGROUND_BEGIN*/);
 			SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
 		}
+		this->SetMsgHandled(FALSE);
 	}
 
 	void DeleteNotifyIcon()
@@ -3160,7 +3229,7 @@ public:
 		CHAIN_MSG_MAP(CDialogResize<CMainDlg>)
 		MSG_WM_DESTROY(OnDestroy)
 		MSG_WM_INITDIALOG(OnInitDialog)
-		MSG_WM_SHOWWINDOW(OnShowWindow)
+		MSG_WM_WINDOWPOSCHANGED(OnWindowPosChanged)
 		MSG_WM_CLOSE(OnClose)
 		MESSAGE_HANDLER_EX(WM_DEVICECHANGE, OnDeviceChange)  // Don't use MSG_WM_DEVICECHANGE(); it's broken (uses DWORD)
 		MESSAGE_HANDLER_EX(WM_NOTIFYICON, OnNotifyIcon)
@@ -3175,11 +3244,12 @@ public:
 		COMMAND_ID_HANDLER_EX(ID_ACCELERATOR40006, OnRefresh)
 		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
 		COMMAND_HANDLER_EX(IDOK, BN_CLICKED, OnOK)
+		COMMAND_HANDLER_EX(IDC_BUTTON_BROWSE, BN_CLICKED, OnBrowse)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_CUSTOMDRAW, OnFilesListCustomDraw)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_GETDISPINFO, OnFilesGetDispInfo)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_COLUMNCLICK, OnFilesListColumnClick)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, NM_DBLCLK, OnFilesDoubleClick)
-		NOTIFY_HANDLER_EX(IDC_EDITFILENAME, CUpDownNotify<WTL::CEdit>::CUN_KEYDOWN, OnFileNameArrowKey)
+		NOTIFY_HANDLER_EX(IDC_EDITFILENAME, CSearchPattern::CUN_KEYDOWN, OnFileNameArrowKey)
 		NOTIFY_HANDLER_EX(IDC_LISTFILES, LVN_KEYDOWN, OnFilesKeyDown)
 		END_MSG_MAP()
 
@@ -3187,7 +3257,8 @@ public:
 		DLGRESIZE_CONTROL(IDC_LISTFILES, DLSZ_SIZE_X | DLSZ_SIZE_Y)
 		DLGRESIZE_CONTROL(IDC_EDITFILENAME, DLSZ_SIZE_X)
 		DLGRESIZE_CONTROL(IDC_STATUS_BAR, DLSZ_SIZE_X | DLSZ_MOVE_Y)
-		// DLGRESIZE_CONTROL(IDOK, DLSZ_MOVE_X)
+		DLGRESIZE_CONTROL(IDOK, DLSZ_MOVE_X)
+		DLGRESIZE_CONTROL(IDC_BUTTON_BROWSE, DLSZ_MOVE_X)
 	END_DLGRESIZE_MAP()
 	enum { IDD = IDD_DIALOG1 };
 };
