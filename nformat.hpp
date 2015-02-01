@@ -9,7 +9,7 @@
 #include <string>
 #include <sstream>
 
-std::locale get_numpunct_locale(std::locale const &loc = std::locale(""))
+std::locale get_numpunct_locale(std::locale const &loc)
 {
 	std::locale result(loc);
 #if defined(_MSC_VER) && defined(_ADDFAC)
@@ -21,7 +21,7 @@ std::locale get_numpunct_locale(std::locale const &loc = std::locale(""))
 }
 
 template<class T>
-std::basic_string<TCHAR> nformat(T v, std::locale const &loc = std::locale(""), bool is_numpunct_locale = false)
+std::basic_string<TCHAR> nformat(T v, std::locale const &loc, bool is_numpunct_locale)
 {
 	std::basic_ostringstream<TCHAR> ss;
 	ss.imbue(is_numpunct_locale ? loc : get_numpunct_locale(loc));
@@ -31,7 +31,7 @@ std::basic_string<TCHAR> nformat(T v, std::locale const &loc = std::locale(""), 
 
 #if defined(_MSC_VER) && !defined(_WIN64) && (!defined(_CPPLIB_VER) || _CPPLIB_VER < 403)
 template<class V>
-std::basic_string<TCHAR> nformat64(V v, std::locale const &loc = std::locale(""), bool is_numpunct_locale = false)
+std::basic_string<TCHAR> nformat64(V v, std::locale const &loc, bool is_numpunct_locale)
 {
 	struct SS : public std::basic_ostringstream<TCHAR>
 	{
@@ -93,10 +93,12 @@ std::basic_string<TCHAR> nformat64(V v, std::locale const &loc = std::locale("")
 	return ss.str();
 }
 
-std::basic_string<TCHAR> nformat(         long long v, std::locale const &loc = std::locale(""), bool is_numpunct_locale = false)
+template<>
+std::basic_string<TCHAR> nformat<         long long>(         long long v, std::locale const &loc, bool is_numpunct_locale)
 { return nformat64(v, loc, is_numpunct_locale); }
 
-std::basic_string<TCHAR> nformat(unsigned long long v, std::locale const &loc = std::locale(""), bool is_numpunct_locale = false)
+template<>
+std::basic_string<TCHAR> nformat<unsigned long long>(unsigned long long v, std::locale const &loc, bool is_numpunct_locale)
 { return nformat64(v, loc, is_numpunct_locale); }
 #endif
 

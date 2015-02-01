@@ -241,7 +241,7 @@ namespace winnt
 	struct UNICODE_STRING
 	{
 		unsigned short Length, MaximumLength;
-		wchar_t *Buffer;
+		wchar_t *buffer_ptr;
 	};
 
 	struct OBJECT_ATTRIBUTES
@@ -265,7 +265,7 @@ namespace winnt
 	typedef long NTSTATUS;
 #define X(F, T) identity<T>::type &F = *reinterpret_cast<identity<T>::type *>(GetProcAddress(GetModuleHandle(_T("NTDLL.dll")), #F))
 	X(NtOpenFile, NTSTATUS NTAPI(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess, IN OBJECT_ATTRIBUTES *ObjectAttributes, OUT IO_STATUS_BLOCK *IoStatusBlock, IN ULONG ShareAccess, IN ULONG OpenOptions));
-	X(NtReadFile, NTSTATUS NTAPI(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN IO_APC_ROUTINE *ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID Buffer, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL));
+	X(NtReadFile, NTSTATUS NTAPI(IN HANDLE FileHandle, IN HANDLE Event OPTIONAL, IN IO_APC_ROUTINE *ApcRoutine OPTIONAL, IN PVOID ApcContext OPTIONAL, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID buffer_ptr, IN ULONG Length, IN PLARGE_INTEGER ByteOffset OPTIONAL, IN PULONG Key OPTIONAL));
 	X(NtQueryVolumeInformationFile, NTSTATUS NTAPI(HANDLE FileHandle, IO_STATUS_BLOCK *IoStatusBlock, PVOID FsInformation, unsigned long Length, unsigned long FsInformationClass));
 	X(NtQueryInformationFile, NTSTATUS NTAPI(IN HANDLE FileHandle, OUT IO_STATUS_BLOCK *IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN unsigned long FileInformationClass));
 	X(NtSetInformationFile, NTSTATUS NTAPI(IN HANDLE FileHandle, OUT IO_STATUS_BLOCK *IoStatusBlock, IN PVOID FileInformation, IN ULONG Length, IN unsigned long FileInformationClass));
@@ -622,77 +622,48 @@ unsigned int get_cluster_size(void *const volume)
 	return info.BytesPerSector * info.SectorsPerAllocationUnit;
 }
 
-std::vector<std::pair<unsigned long long, long long> > get_mft_retrieval_pointers(void *const volume, TCHAR const path[], long long *const size, long long const mft_start_lcn, unsigned int const cluster_size, unsigned int const file_record_size)
+std::vector<std::pair<unsigned long long, long long> > get_mft_retrieval_pointers(void *const volume, TCHAR const path[], long long *const size, long long const mft_start_lcn, unsigned int const file_record_size)
 {
 	typedef std::vector<std::pair<unsigned long long, long long> > Result;
 	Result result;
-	if (false)
+	Handle handle;
 	{
-		std::vector<unsigned char> file_record(file_record_size);
-		read(volume, static_cast<unsigned long long>(mft_start_lcn) * cluster_size, file_record.empty() ? NULL : &*file_record.begin(), file_record.size() * sizeof(*file_record.begin()));
-		ntfs::FILE_RECORD_SEGMENT_HEADER const *const frsh = reinterpret_cast<ntfs::FILE_RECORD_SEGMENT_HEADER const *>(&*file_record.begin());
-		for (ntfs::ATTRIBUTE_RECORD_HEADER const *ah = frsh->begin(); ah < frsh->end(file_record.size()) && ah->Type != ntfs::AttributeTypeCode() && ah->Type != ntfs::AttributeEnd; ah = ah->next())
+		Handle root_dir;
 		{
-			if (ah->Type == ntfs::AttributeAttributeList)
-			{
-				if (ah->IsNonResident)
-				{
-					// ah->n
-				}
-			}
-			// if (ah->Type == (data ? ntfs::AttributeData : ntfs::AttributeBitmap) && !ah->NameLength)
-			{
-				// TODO: Get retrieval pointers directly from volume
-			}
+			unsigned long long root_dir_id = 0x0005000000000005;
+			winnt::UNICODE_STRING us = { sizeof(root_dir_id), sizeof(root_dir_id), reinterpret_cast<wchar_t *>(&root_dir_id) };
+			winnt::OBJECT_ATTRIBUTES oa = { sizeof(oa), volume, &us };
+			winnt::IO_STATUS_BLOCK iosb;
+			unsigned long const error = winnt::RtlNtStatusToDosError(winnt::NtOpenFile(&root_dir.value, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0x00002000 /* FILE_OPEN_BY_FILE_ID */ | 0x00000020 /* FILE_SYNCHRONOUS_IO_NONALERT */));
+			if (error) { SetLastError(error); CheckAndThrow(!error); }
 		}
-		throw std::logic_error("not implemented");
-	}
-	else
-	{
-		Handle handle;
 		{
-			Handle root_dir;
-			{
-				unsigned long long root_dir_id = 0x0005000000000005;
-				winnt::UNICODE_STRING us = { sizeof(root_dir_id), sizeof(root_dir_id), reinterpret_cast<wchar_t *>(&root_dir_id) };
-				winnt::OBJECT_ATTRIBUTES oa = { sizeof(oa), volume, &us };
-				winnt::IO_STATUS_BLOCK iosb;
-				unsigned long const error = winnt::RtlNtStatusToDosError(winnt::NtOpenFile(&root_dir.value, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0x00002000 /* FILE_OPEN_BY_FILE_ID */ | 0x00000020 /* FILE_SYNCHRONOUS_IO_NONALERT */));
-				if (error) { SetLastError(error); CheckAndThrow(!error); }
-			}
-			{
-				size_t const cch = path ? std::char_traits<TCHAR>::length(path) : 0;
-				winnt::UNICODE_STRING us = { static_cast<unsigned short>(cch * sizeof(*path)), static_cast<unsigned short>(cch * sizeof(*path)), const_cast<TCHAR *>(path) };
-				winnt::OBJECT_ATTRIBUTES oa = { sizeof(oa), root_dir, &us };
-				winnt::IO_STATUS_BLOCK iosb;
-				unsigned long const error = winnt::RtlNtStatusToDosError(winnt::NtOpenFile(&handle.value, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0x00200000 /* FILE_OPEN_REPARSE_POINT */ | 0x00000020 /* FILE_SYNCHRONOUS_IO_NONALERT */));
-				if (error) { SetLastError(error); CheckAndThrow(!error); }
-			}
-		}
-		result.resize(1 + (sizeof(RETRIEVAL_POINTERS_BUFFER) - 1) / sizeof(Result::value_type));
-		STARTING_VCN_INPUT_BUFFER input = {};
-		BOOL success;
-		for (unsigned long nr; !(success = DeviceIoControl(handle, FSCTL_GET_RETRIEVAL_POINTERS, &input, sizeof(input), &*result.begin(), static_cast<unsigned long>(result.size()) * sizeof(*result.begin()), &nr, NULL), success) && GetLastError() == ERROR_MORE_DATA;)
-		{
-			size_t const n = result.size();
-			Result(/* free old memory */).swap(result);
-			Result(n * 2).swap(result);
-		}
-		CheckAndThrow(success);
-		if (size)
-		{
-			LARGE_INTEGER large_size;
-			CheckAndThrow(GetFileSizeEx(handle, &large_size));
-			*size = large_size.QuadPart;
-		}
-		result.erase(result.begin() + 1 + reinterpret_cast<unsigned long const &>(*result.begin()), result.end());
-		result.erase(result.begin(), result.begin() + 1);
-		for (Result::iterator i = result.begin(); i != result.end(); ++i)
-		{
-			i->first *= cluster_size;
-			i->second *= static_cast<long long>(cluster_size);
+			size_t const cch = path ? std::char_traits<TCHAR>::length(path) : 0;
+			winnt::UNICODE_STRING us = { static_cast<unsigned short>(cch * sizeof(*path)), static_cast<unsigned short>(cch * sizeof(*path)), const_cast<TCHAR *>(path) };
+			winnt::OBJECT_ATTRIBUTES oa = { sizeof(oa), root_dir, &us };
+			winnt::IO_STATUS_BLOCK iosb;
+			unsigned long const error = winnt::RtlNtStatusToDosError(winnt::NtOpenFile(&handle.value, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0x00200000 /* FILE_OPEN_REPARSE_POINT */ | 0x00000020 /* FILE_SYNCHRONOUS_IO_NONALERT */));
+			if (error) { SetLastError(error); CheckAndThrow(!error); }
 		}
 	}
+	result.resize(1 + (sizeof(RETRIEVAL_POINTERS_BUFFER) - 1) / sizeof(Result::value_type));
+	STARTING_VCN_INPUT_BUFFER input = {};
+	BOOL success;
+	for (unsigned long nr; !(success = DeviceIoControl(handle, FSCTL_GET_RETRIEVAL_POINTERS, &input, sizeof(input), &*result.begin(), static_cast<unsigned long>(result.size()) * sizeof(*result.begin()), &nr, NULL), success) && GetLastError() == ERROR_MORE_DATA;)
+	{
+		size_t const n = result.size();
+		Result(/* free old memory */).swap(result);
+		Result(n * 2).swap(result);
+	}
+	CheckAndThrow(success);
+	if (size)
+	{
+		LARGE_INTEGER large_size;
+		CheckAndThrow(GetFileSizeEx(handle, &large_size));
+		*size = large_size.QuadPart;
+	}
+	result.erase(result.begin() + 1 + reinterpret_cast<unsigned long const &>(*result.begin()), result.end());
+	result.erase(result.begin(), result.begin() + 1);
 	return result;
 }
 
@@ -702,8 +673,17 @@ class Overlapped : public OVERLAPPED
 	Overlapped &operator =(Overlapped const &);
 public:
 	virtual ~Overlapped() { }
-	explicit Overlapped() : OVERLAPPED() { }
-	virtual int /* > 0 if re-queue requested, = 0 if no re-queue but no destruction, < 0 if destruction requested */ operator()(size_t const size, uintptr_t const key) = 0;
+	Overlapped() : OVERLAPPED() { }
+	virtual int /* > 0 if re-queue requested, = 0 if no re-queue but no destruction, < 0 if destruction requested */ operator()(size_t const size, uintptr_t const /*key*/) = 0;
+	long long offset() const
+	{
+		return (static_cast<long long>(this->OVERLAPPED::OffsetHigh) << (CHAR_BIT * sizeof(this->OVERLAPPED::Offset))) | this->OVERLAPPED::Offset;
+	}
+	void offset(long long const value)
+	{
+		this->OVERLAPPED::Offset = static_cast<unsigned long>(value);
+		this->OVERLAPPED::OffsetHigh = static_cast<unsigned long>(value >> (CHAR_BIT * sizeof(this->OVERLAPPED::Offset)));
+	}
 };
 
 static clock_t const begin_time = clock();
@@ -793,8 +773,6 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	StreamInfos streaminfos;
 	ChildInfos childinfos;
 	Handle _finished_event;
-	boost::atomic<size_t> loads_so_far;
-	size_t total_loads;
 	size_t _total_items;
 	boost::atomic<bool> _cancelled;
 	boost::atomic<unsigned int> _records_so_far;
@@ -832,7 +810,7 @@ public:
 	typedef key_type_internal key_type;
 	unsigned int mft_record_size;
 	unsigned int total_records;
-	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), loads_so_far(0), total_loads(), _total_items(), _records_so_far(0), _cancelled(false), mft_record_size(), total_records()
+	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _total_items(), _records_so_far(0), _cancelled(false), mft_record_size(), total_records()
 	{
 		bool success = false;
 		std::tstring dirsep;
@@ -900,7 +878,8 @@ public:
 	}
 	bool check_finished()
 	{
-		bool const finished = this->loads_so_far.load(boost::memory_order_acquire) == this->total_loads;
+		unsigned int const records_so_far = this->_records_so_far.load(boost::memory_order_acquire);
+		bool const finished = records_so_far == this->total_records;
 		bool const b = finished && !this->_root_path.empty();
 		if (b)
 		{
@@ -922,17 +901,6 @@ public:
 		}
 		finished ? SetEvent(this->_finished_event) : ResetEvent(this->_finished_event);
 		return b;
-	}
-	bool set_total_loads(size_t const n) volatile
-	{
-		this_type *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
-		return me->set_total_loads(n);
-	}
-	bool set_total_loads(size_t const n)
-	{
-		this->total_loads = n;
-		return this->check_finished();
 	}
 	void load(unsigned long long const virtual_offset, void *const buffer, size_t const size) volatile
 	{
@@ -1039,7 +1007,6 @@ public:
 				// fprintf(stderr, "%llx\n", frsh->BaseFileRecordSegment);
 			}
 		}
-		this->loads_so_far.fetch_add(1, boost::memory_order_acq_rel);
 		this->check_finished();
 	}
 
@@ -1351,21 +1318,21 @@ bool mergesort(It const begin, It const end, ItBuf const buf, Pred comp, bool co
 template<class It, class Pred>
 void inplace_mergesort(It const begin, It const end, Pred const &pred, bool const parallel)
 {
-	class Buffer
+	class buffer_ptr
 	{
-		Buffer(Buffer const &) { }
-		void operator =(Buffer const &) { }
+		buffer_ptr(buffer_ptr const &) { }
+		void operator =(buffer_ptr const &) { }
 		typedef typename std::iterator_traits<It>::value_type value_type;
 		typedef value_type *pointer;
 		typedef size_t size_type;
 		pointer p;
 	public:
 		typedef pointer iterator;
-		~Buffer() { delete [] this->p; }
-		explicit Buffer(size_type const n) : p(new value_type[n]) { }
+		~buffer_ptr() { delete [] this->p; }
+		explicit buffer_ptr(size_type const n) : p(new value_type[n]) { }
 		iterator begin() { return this->p; }
 	} buf(static_cast<size_t>(std::distance(begin, end)));
-	if (mergesort<It, typename Buffer::iterator, Pred>(begin, end, buf.begin(), pred, parallel))
+	if (mergesort<It, typename buffer_ptr::iterator, Pred>(begin, end, buf.begin(), pred, parallel))
 	{
 		using std::swap_ranges; swap_ranges(begin, end, buf.begin());
 	}
@@ -1602,9 +1569,130 @@ public:
 	}
 };
 
-class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize<CMainDlg>, public CInvokeImpl<CMainDlg>, private WTL::CMessageFilter
+class OverlappedNtfsMftReadPayload : public RefCounted<OverlappedNtfsMftReadPayload>, public Overlapped
 {
 	typedef std::vector<std::pair<unsigned long long, long long> > RetPtrs;
+	std::tstring path_name;
+	Handle iocp;
+	HWND m_hWnd;
+	int WM_DRIVESETITEMDATA;
+	Handle closing_event;
+	RetPtrs ret_ptrs;
+	unsigned int cluster_size;
+	boost::atomic<RetPtrs::size_type> j;
+	boost::atomic<unsigned int> records_so_far;
+	boost::intrusive_ptr<NtfsIndex volatile> p;
+public:
+	class Operation;
+	~OverlappedNtfsMftReadPayload()
+	{
+	}
+	OverlappedNtfsMftReadPayload(Handle const &iocp, std::tstring const &path_name, HWND const m_hWnd, int const WM_DRIVESETITEMDATA, Handle const &closing_event)
+		: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), WM_DRIVESETITEMDATA(WM_DRIVESETITEMDATA), closing_event(closing_event), records_so_far(0), ret_ptrs(), cluster_size(), j(0)
+	{ }
+	bool queue_next() volatile;
+	int operator()(size_t const /*size*/, uintptr_t const /*key*/);
+};
+class OverlappedNtfsMftReadPayload::Operation : public Overlapped
+{
+	boost::intrusive_ptr<OverlappedNtfsMftReadPayload volatile> q;
+	unsigned long long _voffset;
+	static void *operator new(size_t n) { return ::operator new(n); }
+public:
+	static void *operator new(size_t n, size_t m) { return operator new(n + m); }
+	static void operator delete(void *p) { return ::operator delete(p); }
+	static void operator delete(void *p, size_t /*m*/) { return operator delete(p); }
+	explicit Operation(boost::intrusive_ptr<OverlappedNtfsMftReadPayload volatile> const &q) : Overlapped(), q(q), _voffset() { }
+	unsigned long long voffset() { return this->_voffset; }
+	void voffset(unsigned long long const value) { this->_voffset = value; }
+	int operator()(size_t const size, uintptr_t const /*key*/)
+	{
+		OverlappedNtfsMftReadPayload const *const q = const_cast<OverlappedNtfsMftReadPayload const *>(this->q.get());
+		if (!q->p->cancelled())
+		{
+			this->q->queue_next();
+			q->p->load(this->voffset(), this + 1, size);
+		}
+		return -1;
+	}
+};
+bool OverlappedNtfsMftReadPayload::queue_next() volatile
+{
+	OverlappedNtfsMftReadPayload const *const me = const_cast<OverlappedNtfsMftReadPayload const *>(this);
+	bool any = false;
+	size_t const j = this->j.fetch_add(1, boost::memory_order_acq_rel);
+	if (j < me->ret_ptrs.size())
+	{
+		unsigned long long const vcn = j ? me->ret_ptrs[j - 1].first : 0, voffset = vcn * me->cluster_size;
+		unsigned int const cb = me->ret_ptrs[j].first * me->cluster_size - voffset;
+		std::auto_ptr<Operation> p(new(cb) Operation(this));
+		p->offset(me->ret_ptrs[j].second * static_cast<long long>(me->cluster_size));
+		p->voffset(voffset);
+		if (ReadFile(me->p->volume(), p.get() + 1, cb, NULL, p.get()))
+		{
+			if (PostQueuedCompletionStatus(me->iocp, cb, 0, p.get()))
+			{
+				any = true, p.release();
+			}
+			else { CheckAndThrow(false); }
+		}
+		else if (GetLastError() == ERROR_IO_PENDING)
+		{
+			any = true, p.release();
+		}
+		else { CheckAndThrow(false); }
+	}
+	return any;
+}
+int OverlappedNtfsMftReadPayload::operator()(size_t const /*size*/, uintptr_t const key)
+{
+	int result = -1;
+	boost::intrusive_ptr<NtfsIndex> p(new NtfsIndex(this->path_name));
+	this->p = p;
+	if (void *const volume = p->volume())
+	{
+		if (::PostMessage(this->m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), reinterpret_cast<LPARAM>(&*p))) { intrusive_ptr_add_ref(p.get()); }
+		DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, volume, reinterpret_cast<HDEVNOTIFY>(this->m_hWnd) };
+		dev.dbch_hdevnotify = RegisterDeviceNotification(this->m_hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
+		unsigned long br;
+		NTFS_VOLUME_DATA_BUFFER info;
+		CheckAndThrow(DeviceIoControl(volume, FSCTL_GET_NTFS_VOLUME_DATA, NULL, 0, &info, sizeof(info), &br, NULL));
+		p->mft_record_size = info.BytesPerFileRecordSegment;
+		p->total_records = static_cast<unsigned int>(info.MftValidDataLength.QuadPart / p->mft_record_size);
+		CheckAndThrow(!!CreateIoCompletionPort(volume, this->iocp, reinterpret_cast<uintptr_t>(&*p), 0));
+		long long llsize = 0;
+		RetPtrs const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &llsize, info.MftStartLcn.QuadPart, p->mft_record_size);
+		this->cluster_size = static_cast<unsigned int>(info.BytesPerCluster);
+		unsigned long long prev_vcn = 0;
+		for (RetPtrs::const_iterator i = ret_ptrs.begin(); i != ret_ptrs.end(); ++i)
+		{
+			long long const clusters_left = static_cast<long long>(std::max(i->first, prev_vcn) - prev_vcn);
+			unsigned long long n;
+			for (long long m = 0; m < clusters_left; m += static_cast<long long>(n))
+			{
+				n = std::min(i->first - prev_vcn, 1 + ((2ULL << 20) - 1) / this->cluster_size);
+				prev_vcn += n;
+				this->ret_ptrs.push_back(RetPtrs::value_type(prev_vcn, i->second + m));
+			}
+		}
+		p->reserve(p->total_records);
+		boost::intrusive_ptr<OverlappedNtfsMftReadPayload> const self_ref(this);
+		bool any = false;
+		for (int concurrency = 0; concurrency < 2; ++concurrency)
+		{
+			any |= this->queue_next();
+		}
+		if (any) { result = 0; }
+	}
+	else
+	{
+		::PostMessage(this->m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), NULL);
+	}
+	return result;
+}
+
+class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize<CMainDlg>, public CInvokeImpl<CMainDlg>, private WTL::CMessageFilter
+{
 	enum { IDC_STATUS_BAR = 1100 + 0 };
 	enum { COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_ACCESS_TIME };
 	struct CThemedListViewCtrl : public WTL::CListViewCtrl, public WTL::CThemeImpl<CThemedListViewCtrl> { using WTL::CListViewCtrl::Attach; };
@@ -1624,119 +1712,6 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 			}
 		}
 	};
-	class OverlappedNtfsMftRead : public Overlapped
-	{
-		class Buffer
-		{
-			Buffer(Buffer const &);
-			Buffer &operator =(Buffer const &);
-			void *p;
-			size_t n;
-		public:
-			~Buffer() { if (p) { operator delete(p); } }
-			Buffer() : p(), n() { }
-			explicit Buffer(size_t const n) : p(operator new(n)), n(n) { }
-			void *data() { return this->p; }
-			size_t size() const { return this->n; }
-			void swap(Buffer &other) { using std::swap; swap(this->p, other.p); swap(this->n, other.n); }
-		};
-		std::tstring path_name;
-		Handle iocp;
-		HWND m_hWnd;
-		Handle closing_event;
-		unsigned int cluster_size;
-		unsigned int num_reads;
-		boost::atomic<unsigned int> records_so_far;
-		unsigned long long virtual_offset, next_virtual_offset;
-		OVERLAPPED next_overlapped;
-		RetPtrs ret_ptrs;
-		RetPtrs::const_iterator j;
-		boost::intrusive_ptr<NtfsIndex> p;
-		Buffer buf;
-	public:
-		explicit OverlappedNtfsMftRead(Handle const &iocp, std::tstring const &path_name, HWND const m_hWnd, Handle const &closing_event)
-			: Overlapped(), path_name(path_name), iocp(iocp), m_hWnd(m_hWnd), closing_event(closing_event), cluster_size(), num_reads(), records_so_far(0), virtual_offset(), next_virtual_offset(), next_overlapped(), ret_ptrs(), j(ret_ptrs.begin()) {}
-		~OverlappedNtfsMftRead()
-		{
-		}
-		int operator()(size_t const size, uintptr_t const key)
-		{
-			int result = -1;
-			if (!this->p)
-			{
-				this->p.reset(new NtfsIndex(path_name));
-				if (void *const volume = this->p->volume())
-				{
-					if (::PostMessage(m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), reinterpret_cast<LPARAM>(&*this->p))) { intrusive_ptr_add_ref(this->p.get()); }
-					DEV_BROADCAST_HANDLE dev = { sizeof(dev), DBT_DEVTYP_HANDLE, 0, volume, reinterpret_cast<HDEVNOTIFY>(m_hWnd) };
-					dev.dbch_hdevnotify = RegisterDeviceNotification(m_hWnd, &dev, DEVICE_NOTIFY_WINDOW_HANDLE);
-					long long mft_start_lcn;
-					{
-						unsigned long br;
-						NTFS_VOLUME_DATA_BUFFER volume_data;
-						CheckAndThrow(DeviceIoControl(volume, FSCTL_GET_NTFS_VOLUME_DATA, NULL, 0, &volume_data, sizeof(volume_data), &br, NULL));
-						this->cluster_size = static_cast<unsigned int>(volume_data.BytesPerCluster);
-						mft_start_lcn = volume_data.MftStartLcn.QuadPart;
-						this->p->mft_record_size = volume_data.BytesPerFileRecordSegment;
-						this->p->total_records = static_cast<unsigned int>(volume_data.MftValidDataLength.QuadPart / this->p->mft_record_size);
-					}
-					CheckAndThrow(!!CreateIoCompletionPort(volume, iocp, reinterpret_cast<uintptr_t>(&*this->p), 0));
-					long long llsize = 0;
-					get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &llsize, mft_start_lcn, this->cluster_size, this->p->mft_record_size).swap(this->ret_ptrs);
-					this->j = this->ret_ptrs.begin();
-					this->p->reserve(this->p->total_records);
-					result = +1;
-				}
-				else
-				{
-					::PostMessage(m_hWnd, WM_DRIVESETITEMDATA, static_cast<WPARAM>(key), NULL);
-				}
-			}
-			if (this->p)
-			{
-				Buffer old_buffer; old_buffer.swap(this->buf);
-				unsigned long long const old_virtual_offset = this->virtual_offset;
-				if (size)
-				{
-					static_cast<NtfsIndex volatile *>(this->p.get())->load(old_virtual_offset, old_buffer.data(), size);
-					this->records_so_far.fetch_add(static_cast<unsigned int>(size / this->p->mft_record_size));
-				}
-				this->virtual_offset = this->next_virtual_offset;
-				while (j != this->ret_ptrs.end() && this->virtual_offset >= j->first)
-				{
-					++j;
-				}
-				bool const more = j != this->ret_ptrs.end() && WaitForSingleObject(this->closing_event, 0) != WAIT_OBJECT_0 && !this->p->cancelled();
-				if (more)
-				{
-					long long const lbn = j->second + (this->virtual_offset - (j == this->ret_ptrs.begin() ? 0 : (j - 1)->first));
-					this->OVERLAPPED::Offset = static_cast<unsigned long>(lbn);
-					this->OVERLAPPED::OffsetHigh = static_cast<unsigned long>(lbn >> (CHAR_BIT * sizeof(this->OVERLAPPED::Offset)));
-					unsigned long const nb = static_cast<unsigned long>(std::min(std::max(1ULL * cluster_size, 1ULL << 20), j->first - this->virtual_offset));
-					Buffer(nb).swap(this->buf);
-					++this->num_reads;
-					if (ReadFile(this->p->volume(), this->buf.data(), nb, NULL, this))
-					{
-						/* Completed synchronously... call the method */
-						result = +1;
-					}
-					else if (GetLastError() == ERROR_IO_PENDING)
-					{ result = 0; }
-					else { CheckAndThrow(false); }
-					this->next_virtual_offset = this->virtual_offset + nb;
-				}
-				if (!more)
-				{
-					this->p->set_total_loads(this->num_reads);
-				}
-			}
-			if (this->p->cancelled() && result > 0)
-			{
-				result = -1;
-			}
-			return result;
-		}
-	};
 	static unsigned long get_num_threads()
 	{
 		unsigned long num_threads = 0;
@@ -1747,7 +1722,11 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 #else
 		SYSTEM_INFO sysinfo;
 		GetSystemInfo(&sysinfo);
-		num_threads = sysinfo.dwNumberOfProcessors;
+		if (int const n = _ttoi((_T("OMP_NUM_THREADS"))))
+		{
+			num_threads = static_cast<int>(n);
+		}
+		else { num_threads = sysinfo.dwNumberOfProcessors; }
 #endif
 		return num_threads;
 	}
@@ -1755,9 +1734,11 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	{
 		ULONG_PTR key;
 		OVERLAPPED *overlapped_ptr;
+		Overlapped *p;
 		for (unsigned long nr; GetQueuedCompletionStatus(iocp, &nr, &key, &overlapped_ptr, INFINITE);)
 		{
-			std::auto_ptr<Overlapped> overlapped(static_cast<Overlapped *>(overlapped_ptr));
+			p = static_cast<Overlapped *>(overlapped_ptr);
+			std::auto_ptr<Overlapped> overlapped(p);
 			if (overlapped.get())
 			{
 				int r = (*overlapped)(static_cast<size_t>(nr), key);
@@ -1873,31 +1854,25 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 
 	class RaiseIoPriority
 	{
-		uintptr_t const *wait_volumes;
-		size_t wait_handles_size;
-		std::vector<winnt::FILE_IO_PRIORITY_HINT_INFORMATION> old_io_priorities;
+		uintptr_t _volume;
+		winnt::FILE_IO_PRIORITY_HINT_INFORMATION _old;
 		RaiseIoPriority(RaiseIoPriority const &);
 		RaiseIoPriority &operator =(RaiseIoPriority const &);
 	public:
-		explicit RaiseIoPriority(uintptr_t const wait_volumes [], size_t const wait_handles_size)
-			: wait_volumes(wait_volumes), wait_handles_size(wait_handles_size), old_io_priorities(wait_handles_size)
+		static winnt::FILE_IO_PRIORITY_HINT_INFORMATION set(uintptr_t const volume, winnt::IO_PRIORITY_HINT const value)
 		{
-			for (size_t i = 0; i != this->wait_handles_size; ++i)
-			{
-				winnt::IO_STATUS_BLOCK iosb;
-				winnt::NtQueryInformationFile(reinterpret_cast<HANDLE>(wait_volumes[i]), &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
-				winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { winnt::IoPriorityNormal };
-				winnt::NtSetInformationFile(reinterpret_cast<HANDLE>(wait_volumes[i]), &iosb, &io_priority, sizeof(io_priority), 43);
-			}
+			winnt::FILE_IO_PRIORITY_HINT_INFORMATION old = {};
+			winnt::IO_STATUS_BLOCK iosb;
+			winnt::NtQueryInformationFile(reinterpret_cast<HANDLE>(volume), &iosb, &old, sizeof(old), 43);
+			winnt::FILE_IO_PRIORITY_HINT_INFORMATION io_priority = { value };
+			winnt::NtSetInformationFile(reinterpret_cast<HANDLE>(volume), &iosb, &io_priority, sizeof(io_priority), 43);
+			return old;
 		}
-		~RaiseIoPriority()
-		{
-			for (size_t i = 0; i != this->wait_handles_size; ++i)
-			{
-				winnt::IO_STATUS_BLOCK iosb;
-				winnt::NtSetInformationFile(reinterpret_cast<HANDLE>(wait_volumes[i]), &iosb, &old_io_priorities[i], sizeof(old_io_priorities[i]), 43);
-			}
-		}
+		uintptr_t volume() const { return this->_volume; }
+		RaiseIoPriority() : _volume(), _old() { }
+		explicit RaiseIoPriority(uintptr_t const volume) : _volume(volume), _old(set(volume, winnt::IoPriorityNormal)) { }
+		~RaiseIoPriority() { if (this->_volume) { set(this->_volume, this->_old.PriorityHint); } }
+		void swap(RaiseIoPriority &other) { using std::swap; swap(this->_volume, other._volume); swap(this->_old, other._old); }
 	};
 
 	template<class StrCmp>
@@ -1944,7 +1919,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		return SHOpenFolderAndSelectItems(p->first.first, static_cast<UINT>(relative_item_ids.size()), relative_item_ids.empty() ? NULL : &relative_item_ids[0], 0);
 	}
 public:
-	CMainDlg(HANDLE const hEvent) : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(""), hWait(), hEvent(hEvent), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
+	CMainDlg(HANDLE const hEvent) : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(get_numpunct_locale(std::locale(""))), hWait(), hEvent(hEvent), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
 	{
 	}
 	void OnDestroy()
@@ -2211,10 +2186,10 @@ public:
 		for (size_t j = 0; j != path_names.size(); ++j)
 		{
 			// Do NOT capture 'this'!! It is volatile!!
-			typedef OverlappedNtfsMftRead T;
 			int const index = this->cmbDrive.AddString(path_names[j].c_str());
-			std::auto_ptr<T> p(new T(this->iocp, path_names[j], this->m_hWnd, this->closing_event));
-			if (PostQueuedCompletionStatus(this->iocp, 0, static_cast<uintptr_t>(index), &*p)) { p.release(); }
+			typedef OverlappedNtfsMftReadPayload T;
+			std::auto_ptr<T> q(new T(this->iocp, path_names[j], this->m_hWnd, WM_DRIVESETITEMDATA, this->closing_event));
+			if (PostQueuedCompletionStatus(this->iocp, 0, static_cast<uintptr_t>(index), &*q)) { q.release(); }
 		}
 
 		for (size_t i = 0; i != this->num_threads; ++i)
@@ -2383,7 +2358,6 @@ public:
 		if (!is_path_pattern && !~pattern.find(_T('*')) && !~pattern.find(_T('?'))) { pattern.insert(pattern.begin(), _T('*')); pattern.insert(pattern.end(), _T('*')); }
 		clock_t const start = clock();
 		std::vector<uintptr_t> wait_handles;
-		std::vector<uintptr_t> wait_volumes;
 		std::vector<Results::value_type::first_type> wait_indices;
 		// TODO: What if they exceed maximum wait objects?
 		bool any_io_pending = true;
@@ -2398,7 +2372,6 @@ public:
 				{
 					wait_handles.push_back(p->finished_event());
 					wait_indices.push_back(p);
-					wait_volumes.push_back(reinterpret_cast<uintptr_t>(p->volume()));
 					size_t const records_so_far = p->records_so_far();
 					any_io_pending |= records_so_far < p->total_records;
 					overall_progress_denominator += p->total_records * 2;
@@ -2406,9 +2379,14 @@ public:
 			}
 		}
 		if (!any_io_pending) { overall_progress_denominator /= 2; }
-		RaiseIoPriority const raise_io_priorities(wait_volumes.empty() ? NULL : &*wait_volumes.begin(), wait_volumes.size());
+		RaiseIoPriority set_priority;
 		while (!dlg.HasUserCancelled() && !wait_handles.empty())
 		{
+			if (uintptr_t const volume = reinterpret_cast<uintptr_t>(wait_indices.at(0)->volume()))
+			{
+				if (set_priority.volume() != volume)
+				{ RaiseIoPriority(volume).swap(set_priority); }
+			}
 			unsigned long const wait_result = dlg.WaitMessageLoop(wait_handles.empty() ? NULL : &*wait_handles.begin(), wait_handles.size());
 			if (wait_result == WAIT_TIMEOUT)
 			{
@@ -2427,7 +2405,7 @@ public:
 						{
 							if (any) { ss << _T(", "); }
 							else { ss << _T(" "); }
-							ss << j->root_path() << _T(" ") << _T("(") << nformat(records_so_far, this->loc) << _T(" of ") << nformat(j->total_records, this->loc) << _T(")");
+							ss << j->root_path() << _T(" ") << _T("(") << nformat(records_so_far, this->loc, true) << _T(" of ") << nformat(j->total_records, this->loc, true) << _T(")");
 							any = true;
 						}
 					}
@@ -2473,8 +2451,8 @@ public:
 								std::tstring text(0x100 + root_path.size() + static_cast<ptrdiff_t>(path.second - path.first), _T('\0'));
 								text.resize(static_cast<size_t>(_stprintf(&*text.begin(), _T("Searching %.*s (%s of %s)...\r\n%.*s"),
 									static_cast<int>(root_path.size()), root_path.c_str(),
-									nformat(current_progress_numerator, this->loc).c_str(),
-									nformat(current_progress_denominator, this->loc).c_str(),
+									nformat(current_progress_numerator, this->loc, true).c_str(),
+									nformat(current_progress_denominator, this->loc, true).c_str(),
 									static_cast<int>(path.second - path.first), path.first == path.second ? NULL : &*path.first)));
 								dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(), text.data() + text.size()));
 								dlg.SetProgress(temp_overall_progress_numerator + static_cast<unsigned long long>(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) / static_cast<unsigned long long>(current_progress_denominator), static_cast<long long>(overall_progress_denominator));
@@ -2506,14 +2484,13 @@ public:
 					std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
 					this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), 0);
 				}
-				using std::swap;
-				swap(wait_indices[wait_result], wait_indices.back()), wait_indices.pop_back();
-				swap(wait_handles[wait_result], wait_handles.back()), wait_handles.pop_back();
+				wait_indices.erase(wait_indices.begin() + static_cast<ptrdiff_t>(wait_result));
+				wait_handles.erase(wait_handles.begin() + static_cast<ptrdiff_t>(wait_result));
 			}
 		}
 		clock_t const end = clock();
 		TCHAR buf[0x100];
-		_stprintf(buf, _T("%s results in %.2lf seconds"), nformat(this->results.size(), this->loc).c_str(), (end - start) * 1.0 / CLOCKS_PER_SEC);
+		_stprintf(buf, _T("%s results in %.2lf seconds"), nformat(this->results.size(), this->loc, true).c_str(), (end - start) * 1.0 / CLOCKS_PER_SEC);
 		this->statusbar.SetText(0, buf);
 	}
 
@@ -2847,8 +2824,8 @@ public:
 		{
 		case COLUMN_INDEX_NAME: if (path.size() == cch_root_path) { text = _T("."); } else { text = path; deldirsep(text); } text.erase(text.begin(), basename(text.begin(), text.end())); break;
 		case COLUMN_INDEX_PATH: text = path; break;
-		case COLUMN_INDEX_SIZE: text = nformat(result->second.second.first, this->loc); break;
-		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(result->second.second.second, this->loc); break;
+		case COLUMN_INDEX_SIZE: text = nformat(result->second.second.first, this->loc, true); break;
+		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(result->second.second.second, this->loc, true); break;
 		case COLUMN_INDEX_CREATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).first.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
 		case COLUMN_INDEX_MODIFICATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.first, &text[0], text.size()); text = std::tstring(text.c_str()); break;
 		case COLUMN_INDEX_ACCESS_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
@@ -3186,8 +3163,8 @@ public:
 					q->cancel();
 					this->cmbDrive.SetItemDataPtr(ii, NULL);
 					intrusive_ptr_release(q.get());
-					typedef OverlappedNtfsMftRead T;
-					std::auto_ptr<T> p(new T(this->iocp, path_name, this->m_hWnd, this->closing_event));
+					typedef OverlappedNtfsMftReadPayload T;
+					std::auto_ptr<T> p(new T(this->iocp, path_name, this->m_hWnd, WM_DRIVESETITEMDATA, this->closing_event));
 					if (PostQueuedCompletionStatus(this->iocp, 0, static_cast<uintptr_t>(ii), &*p)) { p.release(); }
 				}
 			}
@@ -3238,7 +3215,6 @@ WTL::CAppModule _Module;
 
 int _tmain(int argc, TCHAR* argv[])
 {
-#if !defined(_WIN64) //&& defined(NDEBUG) && NDEBUG
 	if (!IsDebuggerPresent())
 	{
 		HMODULE hKernel32 = NULL;
@@ -3298,7 +3274,6 @@ int _tmain(int argc, TCHAR* argv[])
 			/* continue running in x86 mode... */
 		}
 	}
-#endif
 	HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, _T("Local\\SwiftSearch.{CB77990E-A78F-44dc-B382-089B01207F02}"));
 	if (hEvent != NULL && GetLastError() != ERROR_ALREADY_EXISTS)
 	{
