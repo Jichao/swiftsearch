@@ -146,6 +146,17 @@ namespace std
 		typedef T &reference;
 	};
 
+	template<class T>
+	struct iterator_traits<T const *>
+	{
+		typedef random_access_iterator_tag iterator_category;
+		typedef T value_type;
+		typedef ptrdiff_t difference_type;
+		typedef ptrdiff_t distance_type;
+		typedef T const *pointer;
+		typedef T const &reference;
+	};
+
 	template<class C>
 	struct iterator_traits<insert_iterator<C> >
 	{

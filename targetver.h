@@ -22,4 +22,6 @@
 #define _ITERATOR_DEBUG_LEVEL 0
 #define __STDC_WANT_SECURE_LIB__ 0
 #define _STRALIGN_USE_SECURE_CRT 0
+#define __SIZEOF_LONG_LONG__ (ULLONG_MAX / (UCHAR_MAX + 1U) + 1)
+#define __SIZEOF_WCHAR_T__ (WCHAR_MAX / (UCHAR_MAX + 1U) + 1)
 #endif

@@ -42,6 +42,7 @@ extern WTL::CAppModule _Module;
 #include "path.hpp"
 
 #include "BackgroundWorker.hpp"
+#include "QueryFileLayout.h"
 #include "ShellItemIDList.hpp"
 #include "CModifiedDialogImpl.hpp"
 
@@ -225,7 +226,7 @@ loop:
 static void append(std::tstring &str, TCHAR const sz[], size_t const cch)
 {
 	if (str.size() + cch > str.capacity())
-	{ str.reserve((str.size() + cch) * 2); }
+	{ str.reserve(str.size() + str.size() / 2 + cch * 2); }
 	str.append(sz, cch);
 }
 
@@ -624,6 +625,8 @@ unsigned int get_cluster_size(void *const volume)
 
 std::vector<std::pair<unsigned long long, long long> > get_mft_retrieval_pointers(void *const volume, TCHAR const path[], long long *const size, long long const mft_start_lcn, unsigned int const file_record_size)
 {
+	(void) mft_start_lcn;
+	(void) file_record_size;
 	typedef std::vector<std::pair<unsigned long long, long long> > Result;
 	Result result;
 	Handle handle;
@@ -726,6 +729,10 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 		long long created, written, accessed;
 		unsigned long attributes;
 	};
+	struct SizeInfo
+	{
+		unsigned long long length, allocated, bulkiness;
+	};
 	friend struct std::is_scalar<StandardInfo>;
 	struct NameInfo
 	{
@@ -739,11 +746,11 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 		unsigned int parent;
 	};
 	friend struct std::is_scalar<LinkInfo>;
-	struct StreamInfo
+	struct StreamInfo : SizeInfo
 	{
+		StreamInfo() : SizeInfo(), name(), type_name_id() { }
 		NameInfo name;
-		unsigned char type_name_id /* zero if and only if $I30:$INDEX_ROOT */;
-		unsigned long long length, allocated;
+		unsigned char type_name_id /* zero if and only if $I30:$INDEX_ROOT or $I30:$INDEX_ALLOCATION */;
 	};
 	friend struct std::is_scalar<StreamInfo>;
 	typedef std::codecvt<std::tstring::value_type, char, int /*std::mbstate_t*/> CodeCvt;
@@ -776,10 +783,8 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 	size_t _total_items;
 	boost::atomic<bool> _cancelled;
 	boost::atomic<unsigned int> _records_so_far;
-	typedef std::pair<std::pair<unsigned int, unsigned short>, unsigned short> key_type_internal;
+	typedef std::pair<std::pair<unsigned int, unsigned short>, std::pair<unsigned short, unsigned long long /* direct address */> > key_type_internal;
 
-	NtfsIndex *unvolatile() volatile { return const_cast<NtfsIndex *>(this); }
-	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
 	Records::iterator at(size_t const frs, Records::iterator *const existing_to_revalidate = NULL)
 	{
 		if (frs >= this->records_lookup.size())
@@ -789,25 +794,28 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 		{
 			ptrdiff_t const j = (existing_to_revalidate ? *existing_to_revalidate : this->records_data.end()) - this->records_data.begin();
 			*k = static_cast<unsigned int>(this->records_data.size());
-			this->records_data.push_back(Record());
-			Record &empty_record = this->records_data.back();
+			Record empty_record = Record();
 			empty_record.name_count = 0;
 			empty_record.stream_count = 0;
 			empty_record.stdinfo.attributes = negative_one;
-			empty_record.first_stream.second = negative_one;
 			empty_record.first_name = negative_one;
 			empty_record.first_child.second = negative_one;
 			empty_record.first_child.first.first = negative_one;
-			empty_record.first_stream.first.length = negative_one;
 			empty_record.first_stream.first.name.offset = negative_one;
+			empty_record.first_stream.first.name.length = 0;
+			empty_record.first_stream.second = negative_one;
+			this->records_data.push_back(empty_record);
 			if (existing_to_revalidate) { *existing_to_revalidate = this->records_data.begin() + j; }
 		}
 		return this->records_data.begin() + static_cast<ptrdiff_t>(*k);
 	}
 
+	LinkInfos::value_type *nameinfo(size_t const i) { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
 	LinkInfos::value_type const *nameinfo(size_t const i) const { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
 public:
 	typedef key_type_internal key_type;
+	typedef StandardInfo standard_info;
+	typedef SizeInfo size_info;
 	unsigned int mft_record_size;
 	unsigned int total_records;
 	NtfsIndex(std::tstring value) : _finished_event(CreateEvent(NULL, TRUE, FALSE, NULL)), _total_items(), _records_so_far(0), _cancelled(false), mft_record_size(), total_records()
@@ -839,6 +847,8 @@ public:
 	~NtfsIndex()
 	{
 	}
+	NtfsIndex *unvolatile() volatile { return const_cast<NtfsIndex *>(this); }
+	NtfsIndex const *unvolatile() const volatile { return const_cast<NtfsIndex *>(this); }
 	size_t total_items() const volatile
 	{
 		this_type const *const me = this->unvolatile();
@@ -849,6 +859,7 @@ public:
 	size_t records_so_far() const volatile { return this->_records_so_far.load(boost::memory_order_acquire); }
 	size_t records_so_far() const { return this->_records_so_far.load(boost::memory_order_relaxed); }
 	void *volume() const volatile { return this->_volume.value; }
+	mutex &get_mutex() const volatile { return this->unvolatile()->_mutex; }
 	std::tstring const &root_path() const { return this->_root_path; }
 	std::tstring const &root_path() const volatile
 	{
@@ -896,6 +907,9 @@ public:
 			{
 				arr[i] = arr[i];
 			}
+			typedef std::tstring::const_iterator It;
+			std::vector<unsigned long long> scratch;
+			this->preprocess(0x000000000005, scratch);
 			Handle().swap(this->_volume);
 			_ftprintf(stderr, _T("Finished: %s (%u ms)\n"), this->_root_path.c_str(), (clock() - begin_time) * 1000U / CLOCKS_PER_SEC);
 		}
@@ -915,6 +929,7 @@ public:
 			this->nameinfos.reserve(records * 2);
 			this->streaminfos.reserve(records);
 			this->childinfos.reserve(records + records / 2);
+			this->names.reserve(records * 32);
 			this->records_lookup.resize(records, ~RecordsLookup::value_type());
 		}
 	}
@@ -957,13 +972,13 @@ public:
 								append(this->names, fn->FileName, fn->FileNameLength);
 								size_t const link_index = this->nameinfos.size();
 								this->nameinfos.push_back(LinkInfos::value_type(info, base_record->first_name));
-								base_record->first_name = link_index;
+								base_record->first_name = static_cast<small_t<size_t>::type>(link_index);
 								Records::iterator const parent = this->at(frs_parent, &base_record);
 								if (~parent->first_child.first.first)
 								{
 									size_t const ichild = this->childinfos.size();
 									this->childinfos.push_back(parent->first_child);
-									parent->first_child.second = ichild;
+									parent->first_child.second = static_cast<small_t<size_t>::type>(ichild);
 								}
 								parent->first_child.first.first = frs_base;
 								parent->first_child.first.second = base_record->name_count;
@@ -972,34 +987,46 @@ public:
 							}
 						}
 						break;
+					// case ntfs::AttributeAttributeList:
+					// case ntfs::AttributeLoggedUtilityStream:
+					case ntfs::AttributeBitmap:
+					case ntfs::AttributeIndexAllocation:
 					case ntfs::AttributeIndexRoot:
 					case ntfs::AttributeData:
 						if (!ah->IsNonResident || !ah->NonResident.LowestVCN)
 						{
-							StreamInfo info = StreamInfo();
 							bool const isI30 = ah->NameLength == 4 && memcmp(ah->name(), _T("$I30"), sizeof(*ah->name()) * 4) == 0;
-							if ((ah->Type == ntfs::AttributeIndexRoot || ah->Type == ntfs::AttributeIndexAllocation || ah->Type == ntfs::AttributeBitmap) && isI30)
+							if (ah->Type == (isI30 ? ntfs::AttributeIndexAllocation : ntfs::AttributeIndexRoot))
 							{
-								// Suppress name
+								// Skip this -- for $I30, index header will take care of index allocation; for others, no point showing index root anyway
 							}
-							else
+							else if (!(isI30 && ah->Type == ntfs::AttributeBitmap))
 							{
-								info.name.offset = static_cast<unsigned int>(this->names.size());
-								info.name.length = ah->NameLength;
-								append(this->names, ah->name(), ah->NameLength);
+								StreamInfo info = StreamInfo();
+								if ((ah->Type == ntfs::AttributeIndexRoot || ah->Type == ntfs::AttributeIndexAllocation) && isI30)
+								{
+									// Suppress name
+								}
+								else
+								{
+									info.name.offset = static_cast<unsigned int>(this->names.size());
+									info.name.length = ah->NameLength;
+									append(this->names, ah->name(), ah->NameLength);
+								}
+								info.type_name_id = static_cast<unsigned char>((ah->Type == ntfs::AttributeIndexRoot || ah->Type == ntfs::AttributeIndexAllocation) && isI30 ? 0 : ah->Type >> (CHAR_BIT / 2));
+								info.length = ah->IsNonResident ? static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... */ : ah->NonResident.DataSize) : ah->Resident.ValueLength;
+								info.allocated = ah->IsNonResident ? ah->NonResident.CompressionUnit ? static_cast<unsigned long long>(ah->NonResident.CompressedSize) : static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... should be looking at VCNs */ : ah->NonResident.AllocatedSize) : 0;
+								info.bulkiness = info.allocated;
+								if (~base_record->first_stream.first.name.offset)
+								{
+									size_t const stream_index = this->streaminfos.size();
+									this->streaminfos.push_back(base_record->first_stream);
+									base_record->first_stream.second = static_cast<small_t<size_t>::type>(stream_index);
+								}
+								base_record->first_stream.first = info;
+								this->_total_items += base_record->name_count;
+								++base_record->stream_count;
 							}
-							info.type_name_id = static_cast<unsigned char>(ah->Type == ntfs::AttributeIndexRoot && isI30 ? 0 : ah->Type >> (CHAR_BIT / 2));
-							info.length = ah->IsNonResident ? static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... */ : ah->NonResident.DataSize) : ah->Resident.ValueLength;
-							info.allocated = ah->IsNonResident ? ah->NonResident.CompressionUnit ? static_cast<unsigned long long>(ah->NonResident.CompressedSize) : static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... should be looking at VCNs */ : ah->NonResident.AllocatedSize) : 0;
-							if (~base_record->first_stream.first.name.offset)
-							{
-								size_t const stream_index = this->streaminfos.size();
-								this->streaminfos.push_back(base_record->first_stream);
-								base_record->first_stream.second = stream_index;
-							}
-							base_record->first_stream.first = info;
-							this->_total_items += base_record->name_count;
-							++base_record->stream_count;
 						}
 						break;
 					}
@@ -1032,25 +1059,27 @@ public:
 					unsigned short ki = 0;
 					for (StreamInfos::value_type const *k = &this->records_data[this->records_lookup[key.first.first]].first_stream; !found && k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
 					{
-						if (key.second == (std::numeric_limits<unsigned short>::max)() ? !k->first.type_name_id : ki == key.second)
+						if (key.second.first == (std::numeric_limits<unsigned short>::max)() ? !k->first.type_name_id : ki == key.second.first)
 						{
 							found = true;
 							size_t const old_size = result.size();
+							append(result, &this->names[j->first.name.offset], j->first.name.length);
+							if (leaf)
+							{
+								bool const is_alternate_stream = k->first.type_name_id && (k->first.type_name_id << (CHAR_BIT / 2)) != ntfs::AttributeData;
+								if (k->first.name.length || is_alternate_stream) { result += _T(':'); }
+								append(result, k->first.name.length ? &this->names[k->first.name.offset] : NULL, k->first.name.length);
+								if (is_alternate_stream && k->first.type_name_id < sizeof(ntfs::attribute_names) / sizeof(*ntfs::attribute_names))
+								{
+									result += _T(':'); append(result, ntfs::attribute_names[k->first.type_name_id]);
+								}
+							}
 							if (key.first.first != 0x000000000005)
 							{
-								append(result, &this->names[j->first.name.offset], j->first.name.length);
-								if (leaf)
-								{
-									bool const is_alternate_stream = k->first.type_name_id && (k->first.type_name_id << (CHAR_BIT / 2)) != ntfs::AttributeData;
-									if (k->first.name.length || is_alternate_stream) { result += _T(':'); }
-									append(result, &this->names[k->first.name.offset], k->first.name.length);
-									if (is_alternate_stream && k->first.type_name_id < sizeof(ntfs::attribute_names) / sizeof(*ntfs::attribute_names))
-									{ result += _T(':'); append(result, ntfs::attribute_names[k->first.type_name_id]); }
-								}
 								if (!k->first.type_name_id) { result += _T('\\'); }
 							}
 							std::reverse(result.begin() + static_cast<ptrdiff_t>(old_size), result.end());
-							key = key_type(key_type::first_type(j->first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/, ~key_type::first_type::second_type()), ~key_type::second_type());
+							key = key_type(key_type::first_type(j->first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/, ~key_type::first_type::second_type()), key_type::second_type(~key_type::second_type::first_type(), static_cast<key_type::second_type::second_type>(std::numeric_limits<long long>::max())));
 						}
 					}
 				}
@@ -1067,54 +1096,44 @@ public:
 		return result.size() - old_size;
 	}
 
-	std::pair<std::pair<unsigned long, unsigned long long>, std::pair<unsigned long long, unsigned long long> > get_stdinfo(unsigned int const frn) const volatile
+	size_info get_sizes(key_type const key) const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->_mutex);
+		return me->get_sizes(key);
+	}
+
+	size_info const &get_sizes(key_type const key) const
+	{
+		return (~key.second.second < key.second.second ? this->records_data[static_cast<size_t>(~key.second.second)].first_stream : this->streaminfos[static_cast<size_t>(key.second.second)]).first;
+	}
+
+	standard_info get_stdinfo(unsigned int const frn) const volatile
 	{
 		this_type const *const me = this->unvolatile();
 		lock_guard<mutex> const lock(me->_mutex);
 		return me->get_stdinfo(frn);
 	}
 
-	std::pair<std::pair<unsigned long, unsigned long long>, std::pair<unsigned long long, unsigned long long> > get_stdinfo(unsigned int const frn) const
+	standard_info const &get_stdinfo(unsigned int const frn) const
 	{
-		std::pair<std::pair<unsigned int, unsigned long long>, std::pair<unsigned long long, unsigned long long> > result;
-		if (frn < this->records_lookup.size())
-		{
-			Records::const_iterator const i = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[frn]);
-			result.first.first = i->stdinfo.attributes;
-			result.first.second = i->stdinfo.created;
-			result.second.first = i->stdinfo.written;
-			result.second.second = i->stdinfo.accessed;
-		}
-		return result;
+		return this->records_data[this->records_lookup[frn]].stdinfo;
 	}
 
-	template<class F>
-	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path) const volatile
+	std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> preprocess(key_type::first_type::first_type const frs, std::vector<unsigned long long> &scratch)
 	{
-		this_type const *const me = this->unvolatile();
-		lock_guard<mutex> const lock(me->_mutex);
-		return me->matches<F>(func, path);
-	}
-
-	template<class F>
-	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path) const
-	{
-		return this->matches<F>(func, path, 0x000000000005);
-	}
-
-	template<class F>
-	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path, key_type::first_type::first_type const frs) const
-	{
-		std::pair<unsigned long long, unsigned long long> result = std::pair<unsigned long long, unsigned long long>();
+		std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> result;
 		if (frs < this->records_lookup.size())
 		{
 			Records::const_iterator const i = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[frs]);
 			unsigned short const jn = i->name_count;
 			unsigned short ji = 0;
-			for (LinkInfos::value_type const *j = this->nameinfo(i->first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			for (LinkInfos::value_type *j = this->nameinfo(i->first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
-				std::pair<unsigned long long, unsigned long long> const subresult = this->matches(func, path, key_type::first_type(frs, ji), jn);
-				result.first += subresult.first;
+				std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> const
+					subresult = this->preprocess(key_type::first_type(frs, ji), jn, scratch);
+				result.first.first += subresult.first.first;
+				result.first.second += subresult.first.second;
 				result.second += subresult.second;
 				++ji;
 			}
@@ -1122,14 +1141,97 @@ public:
 		return result;
 	}
 
-	template<class F>
-	std::pair<unsigned long long, unsigned long long> matches(F func, std::tstring &path, key_type::first_type const key_first, unsigned short const total_names) const
+	std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> preprocess(key_type::first_type const key_first, unsigned short const total_names, std::vector<unsigned long long> &scratch)
 	{
-		std::pair<unsigned long long, unsigned long long> result;
+		size_t const old_scratch_size = scratch.size();
+		std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> result;
 		if (key_first.first < this->records_lookup.size())
 		{
-			Records::const_iterator const fr = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[key_first.first]);
-			std::pair<unsigned long long, unsigned long long> children_size = std::pair<unsigned long long, unsigned long long>();
+			Records::iterator const fr = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[key_first.first]);
+			std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> children_size;
+			unsigned short ii = 0;
+			for (ChildInfos::value_type *i = &fr->first_child; i && ~i->first.first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
+			{
+				unsigned short const jn = this->records_data[this->records_lookup[i->first.first]].name_count;
+				unsigned short ji = 0;
+				for (LinkInfos::value_type *j = this->nameinfo(this->records_data[this->records_lookup[i->first.first]].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+				{
+					if (j->first.parent == key_first.first && i->first.second == jn - static_cast<size_t>(1) - ji &&
+						(static_cast<unsigned int>(i->first.first) != key_first.first || ji != key_first.second))
+					{
+						std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> const
+							subresult = this->preprocess(key_type::first_type(static_cast<unsigned int>(i->first.first), ji), jn, scratch);
+						scratch.push_back(subresult.second);
+						children_size.first.first += subresult.first.first;
+						children_size.first.second += subresult.first.second;
+						children_size.second += subresult.second;
+					}
+				}
+			}
+			std::sort(scratch.begin() + static_cast<ptrdiff_t>(old_scratch_size), scratch.end());
+			unsigned long long const threshold = children_size.first.second / 100;
+			while (scratch.size() > old_scratch_size && scratch.back() >= threshold)
+			{
+				children_size.second -= scratch.back();
+				scratch.pop_back();
+			}
+			result = children_size;
+			unsigned short ki = 0;
+			for (StreamInfos::value_type *k = &fr->first_stream; k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+			{
+				result.first.first += k->first.length * (key_first.second + 1) / total_names - k->first.length * key_first.second / total_names;
+				result.first.second += k->first.allocated * (key_first.second + 1) / total_names - k->first.allocated * key_first.second / total_names;
+				result.second += k->first.bulkiness * (key_first.second + 1) / total_names - k->first.bulkiness * key_first.second / total_names;
+				if (!k->first.type_name_id)
+				{
+					k->first.length += children_size.first.first;
+					k->first.allocated += children_size.first.second;
+					k->first.bulkiness += children_size.second;
+				}
+			}
+		}
+		scratch.erase(scratch.begin() + static_cast<ptrdiff_t>(old_scratch_size), scratch.end());
+		return result;
+	}
+
+	template<class F>
+	void matches(F func, std::tstring &path) const volatile
+	{
+		this_type const *const me = this->unvolatile();
+		lock_guard<mutex> const lock(me->_mutex);
+		return me->matches<F &>(func, path);
+	}
+
+	template<class F>
+	void matches(F func, std::tstring &path) const
+	{
+		return this->matches<F &>(func, path, 0x000000000005);
+	}
+
+private:
+	template<class F>
+	void matches(F func, std::tstring &path, key_type::first_type::first_type const frs) const
+	{
+		if (frs < this->records_lookup.size())
+		{
+			Records::const_iterator const i = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[frs]);
+			unsigned short ji = 0;
+			for (LinkInfos::value_type const *j = this->nameinfo(i->first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			{
+				this->matches<F>(func, path, 0, key_type::first_type(frs, ji), &this->names[j->first.name.offset], j->first.name.length);
+				++ji;
+			}
+		}
+	}
+
+	template<class F>
+	void matches(F func, std::tstring &path, size_t const depth, key_type::first_type const key_first, TCHAR const stream_prefix [] = NULL, size_t const stream_prefix_size = 0) const
+	{
+		std::tstring const empty_string;
+		if (key_first.first < this->records_lookup.size())
+		{
+			size_t const islot = this->records_lookup[key_first.first];
+			Records::const_iterator const fr = this->records_data.begin() + static_cast<ptrdiff_t>(islot);
 			unsigned short ii = 0;
 			for (ChildInfos::value_type const *i = &fr->first_child; i && ~i->first.first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
 			{
@@ -1140,43 +1242,43 @@ public:
 					if (j->first.parent == key_first.first && i->first.second == jn - static_cast<size_t>(1) - ji)
 					{
 						size_t const old_size = path.size();
-						path += _T('\\');
-						append(path, &this->names[j->first.name.offset], j->first.name.length);
+						path += _T('\\'), append(path, &this->names[j->first.name.offset], j->first.name.length);
 						key_type::first_type const subkey_first(static_cast<unsigned int>(i->first.first), ji);
 						if (subkey_first != key_first)
 						{
-							std::pair<unsigned long long, unsigned long long> const subresult = this->matches<F>(func, path, subkey_first, jn);
-							children_size.first += subresult.first;
-							children_size.second += subresult.second;
+							this->matches<F>(func, path, depth + 1, subkey_first);
 						}
 						path.resize(old_size);
 					}
 				}
 			}
-			result = children_size;
 			unsigned short ki = 0;
 			for (StreamInfos::value_type const *k = &fr->first_stream; k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
 			{
 				size_t const old_size = path.size();
-				if (k->first.name.length)
-				{
-					path += _T(':');
-					append(path, &this->names[k->first.name.offset], k->first.name.length);
-				}
-				else if (fr->stdinfo.attributes & FILE_ATTRIBUTE_DIRECTORY)
+				append(path, stream_prefix, stream_prefix_size);
+				if (fr->stdinfo.attributes & FILE_ATTRIBUTE_DIRECTORY && key_first.first != 0x00000005)
 				{
 					path += _T('\\');
 				}
+				if (k->first.name.length)
+				{
+					path += _T(':');
+					append(path, k->first.name.length ? &this->names[k->first.name.offset] : NULL, k->first.name.length);
+				}
+				bool const is_alternate_stream = k->first.type_name_id && (k->first.type_name_id << (CHAR_BIT / 2)) != ntfs::AttributeData;
+				if (is_alternate_stream)
+				{
+					if (!k->first.name.length) { path += _T(':'); }
+					path += _T(":"), append(path, ntfs::attribute_names[k->first.type_name_id]);
+				}
 				func(
 					std::pair<std::tstring::const_iterator, std::tstring::const_iterator>(path.begin(), path.end()),
-					std::pair<unsigned long long, unsigned long long>((k->first.type_name_id ? 0 : children_size.first) + k->first.length, (k->first.type_name_id ? 0 : children_size.second) + k->first.allocated),
-					key_type(key_first, ki));
-				result.first += k->first.length * (key_first.second + 1) / total_names - k->first.length * key_first.second / total_names;
-				result.second += k->first.allocated * (key_first.second + 1) / total_names - k->first.allocated * key_first.second / total_names;
-				path.resize(old_size);
+					key_type(key_first, key_type::second_type(ki, k == &fr->first_stream ? ~static_cast<key_type::second_type::second_type>(islot) : static_cast<key_type::second_type::second_type>(k - &*this->streaminfos.begin()))),
+					depth);
+				path.erase(old_size);
 			}
 		}
-		return result;
 	}
 };
 
@@ -1465,11 +1567,11 @@ class CProgressDialog : private CModifiedDialogImpl<CProgressDialog>, private WT
 
 	DWORD GetMinDelay() const
 	{
-		return IsDebuggerPresent() ? 0 : 400;
+		return IsDebuggerPresent() ? 0 : 500;
 	}
 
 public:
-	enum { UPDATE_INTERVAL = 20 };
+	enum { UPDATE_INTERVAL = 25 };
 	CProgressDialog(ATL::CWindow parent)
 		: Base(true), parent(parent), lastUpdateTime(0), creationTime(GetTickCount()), lastProgress(0), lastProgressTotal(1), invalidated(false), canceled(false), windowCreated(false)
 	{
@@ -1508,15 +1610,23 @@ public:
 		}
 	}
 
-	bool HasUserCancelled()
+	void ForceShow()
 	{
-		bool justCreated = false;
-		unsigned long const now = GetTickCount();
-		if (!this->windowCreated && abs(static_cast<int>(now - this->creationTime)) >= static_cast<int>(this->GetMinDelay()))
+		if (!this->windowCreated)
 		{
 			this->windowCreated = !!this->Create(parent);
 			::EnableWindow(parent, FALSE);
 			this->Flush();
+		}
+	}
+
+	bool HasUserCancelled()
+	{
+		bool justCreated = false;
+		unsigned long const now = GetTickCount();
+		if (abs(static_cast<int>(now - this->creationTime)) >= static_cast<int>(this->GetMinDelay()))
+		{
+			this->ForceShow();
 		}
 		if (this->windowCreated && (justCreated || this->ShouldUpdate()))
 		{
@@ -1571,7 +1681,7 @@ public:
 
 class OverlappedNtfsMftReadPayload : public RefCounted<OverlappedNtfsMftReadPayload>, public Overlapped
 {
-	typedef std::vector<std::pair<unsigned long long, long long> > RetPtrs;
+	typedef std::vector<std::pair<std::pair<unsigned long long, unsigned long long>, long long> > RetPtrs;
 	std::tstring path_name;
 	Handle iocp;
 	HWND m_hWnd;
@@ -1623,11 +1733,10 @@ bool OverlappedNtfsMftReadPayload::queue_next() volatile
 	size_t const j = this->j.fetch_add(1, boost::memory_order_acq_rel);
 	if (j < me->ret_ptrs.size())
 	{
-		unsigned long long const vcn = j ? me->ret_ptrs[j - 1].first : 0, voffset = vcn * me->cluster_size;
-		unsigned int const cb = me->ret_ptrs[j].first * me->cluster_size - voffset;
+		unsigned int const cb = static_cast<unsigned int>(me->ret_ptrs[j].first.second * me->cluster_size);
 		std::auto_ptr<Operation> p(new(cb) Operation(this));
 		p->offset(me->ret_ptrs[j].second * static_cast<long long>(me->cluster_size));
-		p->voffset(voffset);
+		p->voffset(me->ret_ptrs[j].first.first * me->cluster_size);
 		if (ReadFile(me->p->volume(), p.get() + 1, cb, NULL, p.get()))
 		{
 			if (PostQueuedCompletionStatus(me->iocp, cb, 0, p.get()))
@@ -1661,18 +1770,19 @@ int OverlappedNtfsMftReadPayload::operator()(size_t const /*size*/, uintptr_t co
 		p->total_records = static_cast<unsigned int>(info.MftValidDataLength.QuadPart / p->mft_record_size);
 		CheckAndThrow(!!CreateIoCompletionPort(volume, this->iocp, reinterpret_cast<uintptr_t>(&*p), 0));
 		long long llsize = 0;
-		RetPtrs const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &llsize, info.MftStartLcn.QuadPart, p->mft_record_size);
+		typedef std::vector<std::pair<unsigned long long, long long> > RP;
+		RP const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &llsize, info.MftStartLcn.QuadPart, p->mft_record_size);
 		this->cluster_size = static_cast<unsigned int>(info.BytesPerCluster);
 		unsigned long long prev_vcn = 0;
-		for (RetPtrs::const_iterator i = ret_ptrs.begin(); i != ret_ptrs.end(); ++i)
+		for (RP::const_iterator i = ret_ptrs.begin(); i != ret_ptrs.end(); ++i)
 		{
 			long long const clusters_left = static_cast<long long>(std::max(i->first, prev_vcn) - prev_vcn);
 			unsigned long long n;
 			for (long long m = 0; m < clusters_left; m += static_cast<long long>(n))
 			{
 				n = std::min(i->first - prev_vcn, 1 + ((2ULL << 20) - 1) / this->cluster_size);
+				this->ret_ptrs.push_back(RetPtrs::value_type(RetPtrs::value_type::first_type(prev_vcn, n), i->second + m));
 				prev_vcn += n;
-				this->ret_ptrs.push_back(RetPtrs::value_type(prev_vcn, i->second + m));
 			}
 		}
 		p->reserve(p->total_records);
@@ -1801,17 +1911,20 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 
 		void OnMouseMove(UINT /*nFlags*/, WTL::CPoint /*point*/)
 		{
+			this->SetMsgHandled(FALSE);
 			this->EnsureTrackingMouseHover();
 		}
 
 		void OnMouseLeave()
 		{
+			this->SetMsgHandled(FALSE);
 			this->tracking = false;
 			this->HideBalloonTip();
 		}
 
 		void OnMouseHover(WPARAM /*wParam*/, WTL::CPoint /*ptPos*/)
 		{
+			this->SetMsgHandled(FALSE);
 			EDITBALLOONTIP tip = { sizeof(tip), _T("Search Pattern"), _T("Entern pattern to match against the file's name or path, such as:\r\nC:\\Windows\\*.exe\r\nPicture*.jpg"), TTI_INFO };
 			this->ShowBalloonTip(&tip);
 		}
@@ -1828,7 +1941,20 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	static unsigned int const WM_TASKBARCREATED;
 	enum { WM_NOTIFYICON = WM_USER + 100, WM_DRIVESETITEMDATA = WM_USER + 101 };
 
-	typedef std::vector<std::pair<boost::intrusive_ptr<NtfsIndex volatile const>, std::pair<NtfsIndex::key_type, std::pair<unsigned long long, unsigned long long> > > > Results;
+	class Result
+	{
+		typedef NtfsIndex::key_type second_type;
+		typedef size_t third_type;
+	public:
+		typedef boost::intrusive_ptr<NtfsIndex volatile const> first_type;
+		struct depth_compare { bool operator()(Result const &a, Result const &b) const { return a.depth < b.depth; } };
+		first_type index;
+		second_type key;
+		third_type depth;
+		Result() : index(), key(), depth() { }
+		Result(first_type const &first, second_type const &second, third_type const &third) : index(first), key(second), depth(third) { }
+	};
+	typedef std::vector<Result> Results;
 	
 	template<class StrCmp>
 	class NameComparator
@@ -1890,8 +2016,9 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 	Results results;
 	WTL::CImageList imgListSmall, imgListLarge, imgListExtraLarge;
 	WTL::CComboBox cmbDrive;
+	int indices_created;
 	CThemedListViewCtrl lvFiles;
-	int lastSortColumn, lastSortIsDescending;
+	WTL::CMenu menu;
 	boost::shared_ptr<BackgroundWorker> iconLoader;
 	Handle closing_event;
 	Handle iocp;
@@ -1919,7 +2046,7 @@ class CMainDlg : public CModifiedDialogImpl<CMainDlg>, public WTL::CDialogResize
 		return SHOpenFolderAndSelectItems(p->first.first, static_cast<UINT>(relative_item_ids.size()), relative_item_ids.empty() ? NULL : &relative_item_ids[0], 0);
 	}
 public:
-	CMainDlg(HANDLE const hEvent) : num_threads(static_cast<size_t>(get_num_threads())), lastSortIsDescending(-1), lastSortColumn(-1), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(get_numpunct_locale(std::locale(""))), hWait(), hEvent(hEvent), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
+	CMainDlg(HANDLE const hEvent) : num_threads(static_cast<size_t>(get_num_threads())), indices_created(), closing_event(CreateEvent(NULL, TRUE, FALSE, NULL)), iocp(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0)), threads(), loc(get_numpunct_locale(std::locale(""))), hWait(), hEvent(hEvent), iconLoader(BackgroundWorker::create(true)), lastRequestedIcon(), hRichEdit(LoadLibrary(_T("riched20.dll")))
 	{
 	}
 	void OnDestroy()
@@ -1937,7 +2064,7 @@ public:
 	{
 		CMainDlg *this_;
 		std::tstring path;
-		SIZE size;
+		SIZE iconSmallSize, iconLargeSize;
 		unsigned long fileAttributes;
 		int iItem;
 
@@ -1945,21 +2072,21 @@ public:
 		{
 			CMainDlg *this_;
 			std::tstring description, path;
-			SHFILEINFO shfi;
+			WTL::CIcon iconSmall, iconLarge;
 			int iItem;
+			TCHAR szTypeName[80];
 			bool operator()()
 			{
 				WTL::CWaitCursor wait(true, IDC_APPSTARTING);
 				CMainDlg::CacheInfo &cached = this_->cache[path];
-				WTL::CIcon iconSmall(shfi.hIcon);
-				_tcscpy(cached.szTypeName, shfi.szTypeName);
+				_tcscpy(cached.szTypeName, this->szTypeName);
 				cached.description = description;
 
 				if (cached.iIconSmall < 0) { cached.iIconSmall = this_->imgListSmall.AddIcon(iconSmall); }
 				else { this_->imgListSmall.ReplaceIcon(cached.iIconSmall, iconSmall); }
 
-				if (cached.iIconLarge < 0) { cached.iIconLarge = this_->imgListLarge.AddIcon(iconSmall); }
-				else { this_->imgListLarge.ReplaceIcon(cached.iIconLarge, iconSmall); }
+				if (cached.iIconLarge < 0) { cached.iIconLarge = this_->imgListLarge.AddIcon(iconLarge); }
+				else { this_->imgListLarge.ReplaceIcon(cached.iIconLarge, iconLarge); }
 
 				cached.valid = true;
 
@@ -2007,22 +2134,28 @@ public:
 				}
 				BOOL success = FALSE;
 				SetLastError(0);
-				if (shfi.hIcon == NULL)
+				WTL::CIcon iconSmall, iconLarge;
+				for (int pass = 0; pass < 2; ++pass)
 				{
+					WTL::CSize const size = pass ? iconLargeSize : iconSmallSize;
 					ULONG const flags = SHGFI_ICON | SHGFI_SHELLICONSIZE | SHGFI_ADDOVERLAYS | //SHGFI_TYPENAME | SHGFI_SYSICONINDEX |
-						((std::max)(size.cx, size.cy) <= (std::max)(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) ? SHGFI_SMALLICON : SHGFI_LARGEICON);
+						(pass ? SHGFI_LARGEICON : SHGFI_SMALLICON);
 					// CoInit com;  // MANDATORY!  Some files, like '.sln' files, won't work without it!
 					success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags) != 0;
 					if (!success && (flags & SHGFI_USEFILEATTRIBUTES) == 0)
 					{ success = SHGetFileInfo(normalizedPath.c_str(), fileAttributes, &shfi, sizeof(shfi), flags | SHGFI_USEFILEATTRIBUTES) != 0; }
+					(pass ? iconLarge : iconSmall).Attach(shfi.hIcon);
 				}
 
 				if (success)
 				{
 					std::tstring const path(path);
 					int const iItem(iItem);
-					MainThreadCallback callback = { this_, description, path, shfi, iItem };
+					MainThreadCallback callback = { this_, description, path, iconSmall.Detach(), iconLarge.Detach(), iItem };
+					_tcscpy(callback.szTypeName, shfi.szTypeName);
 					this_->InvokeAsync(callback);
+					callback.iconLarge.Detach();
+					callback.iconSmall.Detach();
 				}
 				else
 				{
@@ -2045,6 +2178,10 @@ public:
 		{
 			path.erase(path.end() - 1);
 		}
+		if (!path.empty() && *(path.end() - 1) == _T('.') && (path.size() == 1 || isdirsep(*(path.end() - 2))))
+		{
+			path.erase(path.end() - 1);
+		}
 	}
 
 	int CacheIcon(std::tstring path, int const iItem, ULONG fileAttributes, bool lifo)
@@ -2059,9 +2196,10 @@ public:
 
 		if (!entry.valid && this->lastRequestedIcon != path)
 		{
-			SIZE size; this->lvFiles.GetImageList(LVSIL_SMALL).GetIconSize(size);
+			SIZE iconSmallSize; this->imgListSmall.GetIconSize(iconSmallSize);
+			SIZE iconSmallLarge; this->imgListLarge.GetIconSize(iconSmallLarge);
 
-			IconLoaderCallback callback = { this, path, size, fileAttributes, iItem };
+			IconLoaderCallback callback = { this, path, iconSmallSize, iconSmallLarge, fileAttributes, iItem };
 			this->iconLoader->add(callback, lifo);
 			this->lastRequestedIcon = path;
 		}
@@ -2090,6 +2228,7 @@ public:
 	{
 		_Module.GetMessageLoop()->AddMessageFilter(this);
 
+		this->menu.Attach(this->GetMenu());
 		this->lvFiles.Attach(this->GetDlgItem(IDC_LISTFILES));
 		this->btnOK.Attach(this->GetDlgItem(IDOK));
 		this->cmbDrive.Attach(this->GetDlgItem(IDC_LISTVOLUMES));
@@ -2099,13 +2238,15 @@ public:
 		this->txtPattern.SubclassWindow(this->GetDlgItem(IDC_EDITFILENAME));
 		this->txtPattern.EnsureTrackingMouseHover();
 		this->txtPattern.SetCueBannerText(_T("Search by name or path (hover for help)"), true);
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT,  200, _T("Name") }; this->lvFiles.InsertColumn(0, &column); }
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT,  340, _T("Directory") }; this->lvFiles.InsertColumn(1, &column); }
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size") }; this->lvFiles.InsertColumn(2, &column); }
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size on Disk") }; this->lvFiles.InsertColumn(3, &column); }
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Created") }; this->lvFiles.InsertColumn(4, &column); }
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Written") }; this->lvFiles.InsertColumn(5, &column); }
-		{ LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Accessed") }; this->lvFiles.InsertColumn(6, &column); }
+		WTL::CHeaderCtrl hdr = this->lvFiles.GetHeader();
+		// COLUMN_INDEX_NAME, COLUMN_INDEX_PATH, COLUMN_INDEX_SIZE, COLUMN_INDEX_SIZE_ON_DISK, COLUMN_INDEX_CREATION_TIME, COLUMN_INDEX_MODIFICATION_TIME, COLUMN_INDEX_ACCESS_TIME
+		{ int const icol = COLUMN_INDEX_NAME; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 200, _T("Name") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
+		{ int const icol = COLUMN_INDEX_PATH; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 340, _T("Path") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
+		{ int const icol = COLUMN_INDEX_SIZE; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
+		{ int const icol = COLUMN_INDEX_SIZE_ON_DISK; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_RIGHT, 100, _T("Size on Disk") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
+		{ int const icol = COLUMN_INDEX_CREATION_TIME; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Created") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
+		{ int const icol = COLUMN_INDEX_MODIFICATION_TIME; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Written") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
+		{ int const icol = COLUMN_INDEX_ACCESS_TIME; LVCOLUMN column = { LVCF_FMT | LVCF_WIDTH | LVCF_TEXT, LVCFMT_LEFT, 80, _T("Accessed") }; this->lvFiles.InsertColumn(icol, &column); HDITEM hditem = { HDI_LPARAM }; hditem.lParam = 0; hdr.SetItem(icol, &hditem); }
 
 		this->cmbDrive.SetCueBannerText(_T("Search where?"));
 		HINSTANCE hInstance = GetModuleHandle(NULL);
@@ -2119,14 +2260,9 @@ public:
 			this->imgListExtraLarge.Create(48, 48, ILC_COLOR32, 0, IMAGE_LIST_INCREMENT);
 		}
 
-		{
-			this->lvFiles.SetImageList(this->imgListLarge, LVSIL_SMALL);
-			this->lvFiles.SetImageList(this->imgListLarge, LVSIL_NORMAL);
-			this->lvFiles.SetImageList(this->imgListExtraLarge, LVSIL_NORMAL);
-		}
-
 		this->lvFiles.OpenThemeData(VSCLASS_LISTVIEW);
 		SetWindowTheme(this->lvFiles, _T("Explorer"), NULL);
+		if (false)
 		{
 			WTL::CFontHandle font = this->txtPattern.GetFont();
 			LOGFONT logFont;
@@ -2137,6 +2273,12 @@ public:
 			}
 		}
 		this->lvFiles.SetExtendedListViewStyle(LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | LVS_EX_GRIDLINES | 0x80000000 /*LVS_EX_COLUMNOVERFLOW*/);
+		{
+			this->lvFiles.SetImageList(this->imgListLarge, LVSIL_SMALL);
+			this->lvFiles.SetImageList(this->imgListLarge, LVSIL_NORMAL);
+			this->lvFiles.SetImageList(this->imgListExtraLarge, LVSIL_NORMAL);
+		}
+
 		this->statusbar = CreateStatusWindow(WS_CHILD | SBT_TOOLTIPS, NULL, *this, IDC_STATUS_BAR);
 		int const rcStatusPaneWidths[] = { 360, -1 };
 		if ((this->statusbar.GetStyle() & WS_VISIBLE) != 0)
@@ -2206,14 +2348,25 @@ public:
 		WTL::CWaitCursor wait;
 		LPNM_LISTVIEW pLV = (LPNM_LISTVIEW)pnmh;
 		WTL::CHeaderCtrl header = this->lvFiles.GetHeader();
-		HDITEM hditem = {0};
-		hditem.mask = HDI_LPARAM;
+		HDITEM hditem = { HDI_LPARAM };
 		header.GetItem(pLV->iSubItem, &hditem);
+		bool const ctrl_pressed = GetKeyState(VK_CONTROL) < 0;
+		bool const shift_pressed = GetKeyState(VK_SHIFT) < 0;
+		bool const alt_pressed = GetKeyState(VK_MENU) < 0;
 		bool cancelled = false;
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0)
 		{
 			try
 			{
+				std::vector<Results::value_type::first_type::element_type *> indices;
+				for (Results::iterator i = this->results.begin(); i != this->results.end(); ++i)
+				{
+					if (std::find(indices.begin(), indices.end(), i->index.get()) == indices.end())
+					{ indices.push_back(i->index.get()); }
+				}
+				std::vector<lock_guard<mutex> > indices_locks(indices.size());
+				for (size_t i = 0; i != indices.size(); ++i)
+				{ lock_guard<mutex>(indices[i]->get_mutex()).swap(indices_locks[i]); }
 				std::vector<std::pair<std::tstring, std::tstring> > vnames(
 #ifdef _OPENMP
 					omp_get_max_threads()
@@ -2222,56 +2375,73 @@ public:
 #endif
 					);
 				int const subitem = pLV->iSubItem;
-				inplace_mergesort(this->results.begin(), this->results.end(), [this, subitem, &vnames](Results::value_type const &a, Results::value_type const &b)
+				bool const reversed = !!hditem.lParam;
+				inplace_mergesort(this->results.begin(), this->results.end(), [this, subitem, &vnames, reversed, shift_pressed, alt_pressed, ctrl_pressed](Results::value_type const &_a, Results::value_type const &_b)
 				{
+					Results::value_type const &a = reversed ? _b : _a, &b = reversed ? _a : _b;
 					std::pair<std::tstring, std::tstring> &names = *(vnames.begin()
 #ifdef _OPENMP
 						+ omp_get_thread_num()
 #endif
 						);
-					if (GetAsyncKeyState(VK_ESCAPE) < 0)
-					{
-						throw CStructured_Exception(ERROR_CANCELLED, NULL);
-					}
-					Results::value_type::first_type const
-						&index1 = a.first,
-						&index2 = b.first;
+					if (GetAsyncKeyState(VK_ESCAPE) < 0) { throw CStructured_Exception(ERROR_CANCELLED, NULL); }
+					boost::remove_cv<Results::value_type::first_type::element_type>::type const
+						*index1 = a.index->unvolatile(),
+						*index2 = b.index->unvolatile();
+					NtfsIndex::size_info a_size_info, b_size_info;
 					bool less = false;
-					switch (subitem)
+					bool further_test = true;
+					if (shift_pressed)
 					{
-					case COLUMN_INDEX_NAME:
-						names.first = index1->root_path(); index1->get_path(a.second.first, names.first, true);
-						names.second = index2->root_path(); index2->get_path(b.second.first, names.second, true);
-						less = std::less<std::tstring>()(names.first, names.second);
-						break;
-					case COLUMN_INDEX_PATH:
-						names.first = index1->root_path(); index1->get_path(a.second.first, names.first, false);
-						names.second = index2->root_path(); index2->get_path(b.second.first, names.second, false);
-						less = std::less<std::tstring>()(names.first, names.second);
-						break;
-					case COLUMN_INDEX_SIZE:
-						less = a.second.second.first < b.second.second.first;
-						break;
-					case COLUMN_INDEX_SIZE_ON_DISK:
-						less = a.second.second.second < b.second.second.second;
-						break;
-					case COLUMN_INDEX_CREATION_TIME:
-						less = index1->get_stdinfo(a.second.first.first.first).first.second < index2->get_stdinfo(b.second.first.first.first).first.second;
-						break;
-					case COLUMN_INDEX_MODIFICATION_TIME:
-						less = index1->get_stdinfo(a.second.first.first.first).second.first < index2->get_stdinfo(b.second.first.first.first).second.first;
-						break;
-					case COLUMN_INDEX_ACCESS_TIME:
-						less = index1->get_stdinfo(a.second.first.first.first).second.second < index2->get_stdinfo(b.second.first.first.first).second.second;
-						break;
-					default: break;
+						size_t const
+							a_depth = ctrl_pressed ? a.depth : a.depth / 2,
+							b_depth = ctrl_pressed ? b.depth : b.depth / 2;
+						if (a_depth < b_depth)
+						{
+							less = true;
+							further_test = false;
+						}
+						else if (b_depth < a_depth)
+						{
+							less = false;
+							further_test = false;
+						}
+					}
+					if (!less && further_test)
+					{
+						switch (subitem)
+						{
+						case COLUMN_INDEX_NAME:
+							names.first = index1->root_path(); index1->get_path(a.key, names.first, true);
+							names.second = index2->root_path(); index2->get_path(b.key, names.second, true);
+							less = names.first < names.second;
+							break;
+						case COLUMN_INDEX_PATH:
+							names.first = index1->root_path(); index1->get_path(a.key, names.first, false);
+							names.second = index2->root_path(); index2->get_path(b.key, names.second, false);
+							less = names.first < names.second;
+							break;
+						case COLUMN_INDEX_SIZE:
+							less = index1->get_sizes(a.key).length > index2->get_sizes(b.key).length;
+							break;
+						case COLUMN_INDEX_SIZE_ON_DISK:
+							a_size_info = index1->get_sizes(a.key), b_size_info = index2->get_sizes(b.key);
+							less = (alt_pressed ? a_size_info.bulkiness : a_size_info.allocated) > (alt_pressed ? b_size_info.bulkiness : b_size_info.allocated);
+							break;
+						case COLUMN_INDEX_CREATION_TIME:
+							less = index1->get_stdinfo(a.key.first.first).created > index2->get_stdinfo(b.key.first.first).created;
+							break;
+						case COLUMN_INDEX_MODIFICATION_TIME:
+							less = index1->get_stdinfo(a.key.first.first).written > index2->get_stdinfo(b.key.first.first).written;
+							break;
+						case COLUMN_INDEX_ACCESS_TIME:
+							less = index1->get_stdinfo(a.key.first.first).accessed > index2->get_stdinfo(b.key.first.first).accessed;
+							break;
+						default: less = false; break;
+						}
 					}
 					return less;
 				}, false /* parallelism BREAKS exception handling, and therefore user-cancellation */);
-				if (hditem.lParam)
-				{
-					std::reverse(this->results.begin(), this->results.end());
-				}
 			}
 			catch (CStructured_Exception &ex)
 			{
@@ -2283,22 +2453,6 @@ public:
 			}
 			this->lvFiles.SetItemCount(this->lvFiles.GetItemCount());
 		}
-		else
-		{
-			pLV->iItem = this->lastSortColumn == pLV->iSubItem ? !this->lastSortIsDescending : 0;
-			struct Sorting
-			{
-				CMainDlg *me; LPARAM lParamSort;
-				static int CALLBACK compare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
-				{
-					Sorting *p = (Sorting *)lParamSort;
-					return p->me->OnFilesSort(lParam1, lParam2, p->lParamSort);
-				}
-			} lParam = { this, (LPARAM)pnmh };
-			this->lvFiles.SortItemsEx(Sorting::compare, (LPARAM)&lParam);
-			this->lastSortIsDescending = pLV->iItem;
-			this->lastSortColumn = pLV->iSubItem;
-		}
 		if (!cancelled)
 		{
 			hditem.lParam = !hditem.lParam;
@@ -2306,18 +2460,12 @@ public:
 		}
 		return TRUE;
 	}
-	
-	int CALLBACK OnFilesSort(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
-	{
-		(void)lParam1;
-		(void)lParam2;
-		(void)lParamSort;
-		throw std::logic_error("not implemented");
-	}
 
 	void Search()
 	{
 		WTL::CWaitCursor wait;
+		bool const ctrl_pressed = GetKeyState(VK_CONTROL) < 0;
+		bool const shift_pressed = GetKeyState(VK_SHIFT) < 0;
 		int const selected = this->cmbDrive.GetCurSel();
 		if (selected != 0 && !this->cmbDrive.GetItemDataPtr(selected))
 		{
@@ -2342,8 +2490,9 @@ public:
 		bool const requires_root_path_match = is_path_pattern && !pattern.empty() && (is_regex
 			? *pattern.begin() != _T('.') && *pattern.begin() != _T('(') && *pattern.begin() != _T('[') && *pattern.begin() != _T('.')
 			: *pattern.begin() != _T('*') && *pattern.begin() != _T('?'));
+		typedef std::tstring::const_iterator It;
 #ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
-		typedef boost::xpressive::basic_regex<std::tstring::const_iterator> RE;
+		typedef boost::xpressive::basic_regex<It> RE;
 		boost::xpressive::match_results<RE::iterator_type> mr;
 		RE re;
 		if (is_regex)
@@ -2360,7 +2509,7 @@ public:
 		std::vector<uintptr_t> wait_handles;
 		std::vector<Results::value_type::first_type> wait_indices;
 		// TODO: What if they exceed maximum wait objects?
-		bool any_io_pending = true;
+		bool any_io_pending = false;
 		size_t overall_progress_numerator = 0, overall_progress_denominator = 0;
 		for (int ii = 0; ii < this->cmbDrive.GetCount(); ++ii)
 		{
@@ -2379,6 +2528,7 @@ public:
 			}
 		}
 		if (!any_io_pending) { overall_progress_denominator /= 2; }
+		if (any_io_pending) { dlg.ForceShow(); }
 		RaiseIoPriority set_priority;
 		while (!dlg.HasUserCancelled() && !wait_handles.empty())
 		{
@@ -2419,6 +2569,8 @@ public:
 			{
 				if (wait_result < wait_handles.size())
 				{
+					std::vector<Results> results_at_depths;
+					results_at_depths.reserve(std::numeric_limits<unsigned short>::max() + 1);
 					Results::value_type::first_type const i = wait_indices[wait_result];
 					size_t const old_size = this->results.size();
 					size_t current_progress_numerator = 0;
@@ -2428,25 +2580,32 @@ public:
 					while (!current_path.empty() && *(current_path.end() - 1) == _T('\\')) { current_path.erase(current_path.end() - 1); }
 					try
 					{
-						i->matches([&dlg, is_path_pattern, &root_path, &pattern, is_regex, this, i, &wait_indices,
+						i->matches([&dlg, is_path_pattern, &results_at_depths, &root_path, &pattern, is_regex, shift_pressed, ctrl_pressed, this, i, &wait_indices, any_io_pending,
 							&current_progress_numerator, current_progress_denominator,
 							overall_progress_numerator, overall_progress_denominator
 #ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN
 							, &re
 							, &mr
 #endif
-						](std::pair<std::tstring::const_iterator, std::tstring::const_iterator> const path, std::pair<unsigned long long, unsigned long long> const sizes, NtfsIndex::key_type const key)
+						](std::pair<It, It> const path, NtfsIndex::key_type const key, size_t const depth)
 						{
+							if (current_progress_numerator > current_progress_denominator)
+							{
+								throw std::logic_error("current_progress_numerator > current_progress_denominator");
+							}
 							if (dlg.ShouldUpdate() || current_progress_denominator - current_progress_numerator <= 1)
 							{
 								if (dlg.HasUserCancelled()) { throw CStructured_Exception(ERROR_CANCELLED, NULL); }
 								// this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), 0), this->lvFiles.UpdateWindow();
 								size_t temp_overall_progress_numerator = overall_progress_numerator;
-								for (size_t k = 0; k != wait_indices.size(); ++k)
+								if (any_io_pending)
 								{
-									Results::value_type::first_type const j = wait_indices[k];
-									size_t const records_so_far = j->records_so_far();
-									temp_overall_progress_numerator += records_so_far;
+									for (size_t k = 0; k != wait_indices.size(); ++k)
+									{
+										Results::value_type::first_type const j = wait_indices[k];
+										size_t const records_so_far = j->records_so_far();
+										temp_overall_progress_numerator += records_so_far;
+									}
 								}
 								std::tstring text(0x100 + root_path.size() + static_cast<ptrdiff_t>(path.second - path.first), _T('\0'));
 								text.resize(static_cast<size_t>(_stprintf(&*text.begin(), _T("Searching %.*s (%s of %s)...\r\n%.*s"),
@@ -2459,7 +2618,7 @@ public:
 								dlg.Flush();
 							}
 							++current_progress_numerator;
-							std::pair<std::tstring::const_iterator, std::tstring::const_iterator> needle = path;
+							std::pair<It, It> needle = path;
 							if (!is_path_pattern)
 							{
 								while (needle.first != needle.second && *(needle.second - 1) == _T('\\')) { --needle.second; }
@@ -2472,7 +2631,19 @@ public:
 								wildcard(pattern.begin(), pattern.end(), needle.first, needle.second, tchar_ci_traits())
 								;
 							if (match)
-							{ this->results.push_back(Results::value_type(i, Results::value_type::second_type(key, sizes))); }
+							{
+								size_t depth2 = depth * 4 /* dividing by 2 later should not mess up the actual depths; it should only affect files vs. directory sub-depths */;
+								if (ctrl_pressed && !(i->get_stdinfo(key.first.first).attributes & FILE_ATTRIBUTE_DIRECTORY)) { ++depth2; }
+								if (!shift_pressed)
+								{
+									if (depth2 >= results_at_depths.size()) { results_at_depths.resize(depth2 + 1); }
+									results_at_depths[depth2].push_back(Results::value_type(i, key, depth2));
+								}
+								else
+								{
+									this->results.push_back(Results::value_type(i, key, depth2));
+								}
+							}
 						}, current_path);
 					}
 					catch (CStructured_Exception &ex)
@@ -2481,6 +2652,12 @@ public:
 					}
 					if (any_io_pending) { overall_progress_numerator += i->total_records; }
 					if (current_progress_denominator) { overall_progress_numerator += static_cast<size_t>(static_cast<unsigned long long>(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) / static_cast<unsigned long long>(current_progress_denominator)); }
+					while (!results_at_depths.empty())
+					{
+						Results &r = results_at_depths.back();
+						this->results.insert(this->results.end(), r.begin(), r.end());
+						results_at_depths.pop_back();
+					}
 					std::reverse(this->results.begin() + static_cast<ptrdiff_t>(old_size), this->results.end());
 					this->lvFiles.SetItemCountEx(static_cast<int>(this->results.size()), 0);
 				}
@@ -2601,9 +2778,9 @@ public:
 		for (size_t i = 0; i < results.size(); ++i)
 		{
 			Results::const_iterator const row = results[i];
-			Results::value_type::first_type const &index = row->first;
+			Results::value_type::first_type const &index = row->index;
 			std::tstring path = index->root_path();
-			if (index->get_path(row->second.first, path, false))
+			if (index->get_path(row->key, path, false))
 			{
 				remove_path_stream_and_trailing_sep(path);
 			}
@@ -2687,7 +2864,7 @@ public:
 		{
 			std::basic_stringstream<TCHAR> ssName;
 			ssName.imbue(this->loc);
-			ssName << _T("File #") << (this->results.begin() + focused)->second.first.first.first;
+			ssName << _T("File #") << (this->results.begin() + focused)->key.first.first;
 			std::tstring name = ssName.str();
 			if (!name.empty())
 			{
@@ -2732,9 +2909,9 @@ public:
 	void DoubleClick(int index)
 	{
 		Results::const_iterator const result = this->results.begin() + static_cast<ptrdiff_t>(index);
-		Results::value_type::first_type const &i = result->first;
+		Results::value_type::first_type const &i = result->index;
 		std::tstring path;
-		path = i->root_path(), i->get_path(result->second.first, path, false);
+		path = i->root_path(), i->get_path(result->key, path, false);
 		remove_path_stream_and_trailing_sep(path);
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
 			new std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> >());
@@ -2815,20 +2992,19 @@ public:
 
 	std::tstring GetSubItemText(Results::const_iterator const result, int const subitem, std::tstring &path) const
 	{
-		Results::value_type::first_type const &i = result->first;
+		Results::value_type::first_type const &i = result->index;
 		path = i->root_path();
-		size_t const cch_root_path = path.size();
-		i->get_path(result->second.first, path, false);
+		i->get_path(result->key, path, false);
 		std::tstring text(0x100, _T('\0'));
 		switch (subitem)
 		{
-		case COLUMN_INDEX_NAME: if (path.size() == cch_root_path) { text = _T("."); } else { text = path; deldirsep(text); } text.erase(text.begin(), basename(text.begin(), text.end())); break;
+		case COLUMN_INDEX_NAME: text = path; deldirsep(text); text.erase(text.begin(), basename(text.begin(), text.end())); break;
 		case COLUMN_INDEX_PATH: text = path; break;
-		case COLUMN_INDEX_SIZE: text = nformat(result->second.second.first, this->loc, true); break;
-		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(result->second.second.second, this->loc, true); break;
-		case COLUMN_INDEX_CREATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).first.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
-		case COLUMN_INDEX_MODIFICATION_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.first, &text[0], text.size()); text = std::tstring(text.c_str()); break;
-		case COLUMN_INDEX_ACCESS_TIME: SystemTimeToString(i->get_stdinfo(result->second.first.first.first).second.second, &text[0], text.size()); text = std::tstring(text.c_str()); break;
+		case COLUMN_INDEX_SIZE: text = nformat(i->get_sizes(result->key).length, this->loc, true); break;
+		case COLUMN_INDEX_SIZE_ON_DISK: text = nformat(i->get_sizes(result->key).allocated, this->loc, true); break;
+		case COLUMN_INDEX_CREATION_TIME: SystemTimeToString(i->get_stdinfo(result->key.first.first).created, &text[0], text.size()); text = std::tstring(text.c_str()); break;
+		case COLUMN_INDEX_MODIFICATION_TIME: SystemTimeToString(i->get_stdinfo(result->key.first.first).written, &text[0], text.size()); text = std::tstring(text.c_str()); break;
+		case COLUMN_INDEX_ACCESS_TIME: SystemTimeToString(i->get_stdinfo(result->key.first.first).accessed, &text[0], text.size()); text = std::tstring(text.c_str()); break;
 		default: break;
 		}
 		return text;
@@ -2841,13 +3017,13 @@ public:
 		if ((this->lvFiles.GetStyle() & LVS_OWNERDATA) != 0 && (pLV->item.mask & LVIF_TEXT) != 0)
 		{
 			Results::const_iterator const result = this->results.begin() + static_cast<ptrdiff_t>(pLV->item.iItem);
-			Results::value_type::first_type const &i = result->first;
+			Results::value_type::first_type const &i = result->index;
 			std::tstring path;
 			std::tstring const text = this->GetSubItemText(result, pLV->item.iSubItem, path);
 			if (!text.empty()) { _tcsncpy(pLV->item.pszText, text.c_str(), pLV->item.cchTextMax); }
 			if (pLV->item.iSubItem == 0)
 			{
-				int iImage = this->CacheIcon(path, static_cast<int>(pLV->item.iItem), i->get_stdinfo(result->second.first.first.first).first.first, true);
+				int iImage = this->CacheIcon(path, static_cast<int>(pLV->item.iItem), i->get_stdinfo(result->key.first.first).attributes, true);
 				if (iImage >= 0) { pLV->item.iImage = iImage; }
 			}
 		}
@@ -2893,8 +3069,8 @@ public:
 		if (pLV->nmcd.dwItemSpec < this->results.size())
 		{
 			Results::const_iterator const item = this->results.begin() + static_cast<ptrdiff_t>(pLV->nmcd.dwItemSpec);
-			Results::value_type::first_type const &i = item->first;
-			unsigned long const attrs = i->get_stdinfo(item->second.first.first.first).first.first;
+			Results::value_type::first_type const &i = item->index;
+			unsigned long const attrs = i->get_stdinfo(item->key.first.first).attributes;
 			switch (pLV->nmcd.dwDrawStage)
 			{
 			case CDDS_PREPAINT:
@@ -2904,7 +3080,8 @@ public:
 				result = CDRF_NOTIFYSUBITEMDRAW;
 				break;
 			case CDDS_ITEMPREPAINT | CDDS_SUBITEM:
-				if (pLV->iSubItem == 1) { result = 0x8 /*CDRF_DOERASE*/ | CDRF_NOTIFYPOSTPAINT; }
+				if ((this->lvFiles.GetImageList(LVSIL_SMALL) == this->imgListLarge || this->lvFiles.GetImageList(LVSIL_SMALL) == this->imgListExtraLarge) && pLV->iSubItem == 1)
+				{ result = 0x8 /*CDRF_DOERASE*/ | CDRF_NOTIFYPOSTPAINT; }
 				else
 				{
 					if ((attrs & 0x40000000) != 0)
@@ -3084,7 +3261,22 @@ public:
 
 	LRESULT OnDriveSetItemData(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam)
 	{
+		if (this->indices_created >= this->cmbDrive.GetCount())
+		{
+			// throw std::logic_error("indices_created is broken!! avoid deleting entries in the list...");
+		}
 		this->cmbDrive.SetItemDataPtr(static_cast<int>(wParam), reinterpret_cast<NtfsIndex *>(lParam));
+		++this->indices_created;
+		if (this->indices_created == this->cmbDrive.GetCount() - 1)
+		{
+			for (int i = 1; i < this->cmbDrive.GetCount(); i++)
+			{
+				if (!this->cmbDrive.GetItemDataPtr(i))
+				{
+					this->cmbDrive.DeleteString(i--);
+				}
+			}
+		}
 		return 0;
 	}
 
@@ -3116,7 +3308,7 @@ public:
 			_T("\"Quantifiers\" can follow any expression:\r\n")
 			_T("*\t= Zero or more occurrences\r\n")
 			_T("+\t= One or more occurrences\r\n")
-			_T("{m,n}\t= Between m and n occurrences (n is optional)\r\n")
+			_T("{m,n}\t= Between m and n occurrences (n is optional)\r\n\r\n")
 			_T("Examples of regular expressions:\r\n")
 			_T("Hi{2,}.*Bye= At least two occurrences of \"Hi\", followed by any number of characters, followed by \"Bye\"\r\n")
 			_T(".*\t= At least zero characters\r\n")
@@ -3124,7 +3316,22 @@ public:
 		, _T("Regular expressions"), MB_ICONINFORMATION);
 	}
 
-	void OnFileFitColumns(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	void OnViewLargeIcons(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		bool const large = this->lvFiles.GetImageList(LVSIL_SMALL) != this->imgListLarge;
+		this->lvFiles.SetImageList(large ? this->imgListLarge : this->imgListSmall, LVSIL_SMALL);
+		this->lvFiles.RedrawWindow();
+		this->menu.CheckMenuItem(ID_VIEW_LARGEICONS, large ? MF_CHECKED : MF_UNCHECKED);
+	}
+
+	void OnViewGridlines(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
+	{
+		this->lvFiles.SetExtendedListViewStyle(this->lvFiles.GetExtendedListViewStyle() ^ LVS_EX_GRIDLINES);
+		this->lvFiles.RedrawWindow();
+		this->menu.CheckMenuItem(ID_VIEW_GRIDLINES, (this->lvFiles.GetExtendedListViewStyle() & LVS_EX_GRIDLINES) ? MF_CHECKED : MF_UNCHECKED);
+	}
+
+	void OnViewFitColumns(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
 	{
 		WTL::CListViewCtrl &wndListView = this->lvFiles;
 
@@ -3152,6 +3359,12 @@ public:
 
 	void OnRefresh(UINT /*uNotifyCode*/, int /*nID*/, CWindow /*wndCtl*/)
 	{
+		if (this->indices_created < this->cmbDrive.GetCount())
+		{
+			// Ignore the request due to potential race condition... at least wait until all the threads have started!
+			// Otherwise, if the user presses F5 we will delete some entries, which will invalidate threads' copies of their index in the combobox
+			return;
+		}
 		int const selected = this->cmbDrive.GetCurSel();
 		for (int ii = 0; ii < this->cmbDrive.GetCount(); ++ii)
 		{
@@ -3186,7 +3399,9 @@ public:
 		MESSAGE_HANDLER_EX(WM_CONTEXTMENU, OnContextMenu)
 		COMMAND_ID_HANDLER_EX(ID_HELP_ABOUT, OnHelpAbout)
 		COMMAND_ID_HANDLER_EX(ID_HELP_USINGREGULAREXPRESSIONS, OnHelpRegex)
-		COMMAND_ID_HANDLER_EX(ID_FILE_FITCOLUMNSTOWINDOW, OnFileFitColumns)
+		COMMAND_ID_HANDLER_EX(ID_VIEW_GRIDLINES, OnViewGridlines)
+		COMMAND_ID_HANDLER_EX(ID_VIEW_LARGEICONS, OnViewLargeIcons)
+		COMMAND_ID_HANDLER_EX(ID_VIEW_FITCOLUMNSTOWINDOW, OnViewFitColumns)
 		COMMAND_ID_HANDLER_EX(ID_FILE_EXIT, OnClose)
 		COMMAND_ID_HANDLER_EX(ID_ACCELERATOR40006, OnRefresh)
 		COMMAND_HANDLER_EX(IDCANCEL, BN_CLICKED, OnCancel)
