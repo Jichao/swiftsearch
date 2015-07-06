@@ -103,6 +103,8 @@ struct QUERY_FILE_LAYOUT_OUTPUT
 
 	// For alignment/later use.
 	DWORD               Reserved;
+	struct FILE_LAYOUT_ENTRY *FirstFile() { return this->FirstFileOffset ? reinterpret_cast<FILE_LAYOUT_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->FirstFileOffset) : NULL; }
+	struct FILE_LAYOUT_ENTRY const *FirstFile() const { return this->FirstFileOffset ? reinterpret_cast<FILE_LAYOUT_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->FirstFileOffset) : NULL; }
 };
 
 struct FILE_LAYOUT_ENTRY
@@ -135,6 +137,15 @@ struct FILE_LAYOUT_ENTRY
 	DWORD         Reserved;
 
 	// The structure may be extended here to support additional static fields (e.g. pointing to a FILE_BASIC_INFORMATION structure, etc.). This sort of change should coincide with a version number increase.
+
+	FILE_LAYOUT_ENTRY *NextFile() { return this->NextFileOffset ? reinterpret_cast<FILE_LAYOUT_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->NextFileOffset) : NULL; }
+	FILE_LAYOUT_ENTRY const *NextFile() const { return this->NextFileOffset ? reinterpret_cast<FILE_LAYOUT_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->NextFileOffset) : NULL; }
+	struct FILE_LAYOUT_NAME_ENTRY *FirstName() { return this->FirstNameOffset ? reinterpret_cast<FILE_LAYOUT_NAME_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->FirstNameOffset) : NULL; }
+	struct FILE_LAYOUT_NAME_ENTRY const *FirstName() const { return this->FirstNameOffset ? reinterpret_cast<FILE_LAYOUT_NAME_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->FirstNameOffset) : NULL; }
+	struct STREAM_LAYOUT_ENTRY *FirstStream() { return this->FirstStreamOffset ? reinterpret_cast<STREAM_LAYOUT_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->FirstStreamOffset) : NULL; }
+	struct STREAM_LAYOUT_ENTRY const *FirstStream() const { return this->FirstStreamOffset ? reinterpret_cast<STREAM_LAYOUT_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->FirstStreamOffset) : NULL; }
+	struct FILE_LAYOUT_INFO_ENTRY *ExtraInfo() { return this->ExtraInfoOffset ? reinterpret_cast<FILE_LAYOUT_INFO_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->ExtraInfoOffset) : NULL; }
+	struct FILE_LAYOUT_INFO_ENTRY const *ExtraInfo() const { return this->ExtraInfoOffset ? reinterpret_cast<FILE_LAYOUT_INFO_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->ExtraInfoOffset) : NULL; }
 };
 
 // Each file name entry may be one, both, or neither of
@@ -161,6 +172,9 @@ struct FILE_LAYOUT_NAME_ENTRY
 
 	// Starting point for the name itself (NOT null-terminated).
 	WCHAR         FileName[1];
+
+	FILE_LAYOUT_NAME_ENTRY *NextName() { return this->NextNameOffset ? reinterpret_cast<FILE_LAYOUT_NAME_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->NextNameOffset) : NULL; }
+	FILE_LAYOUT_NAME_ENTRY const *NextName() const { return this->NextNameOffset ? reinterpret_cast<FILE_LAYOUT_NAME_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->NextNameOffset) : NULL; }
 };
 
 struct FILE_LAYOUT_INFO_ENTRY
@@ -183,5 +197,75 @@ struct FILE_LAYOUT_INFO_ENTRY
 
 	// Update sequence number for this file.
 	USN                         Usn;
+};
+
+// This attribute/stream is known to the filesystem to be immovable.
+#define STREAM_LAYOUT_ENTRY_IMMOVABLE                                   (0x00000001)
+
+// This attribute/stream is currently pinned by another application.
+// It is unmovable for the duration of the pin.
+#define STREAM_LAYOUT_ENTRY_PINNED                                      (0x00000002)
+
+// This attribute is resident.
+#define STREAM_LAYOUT_ENTRY_RESIDENT                                    (0x00000004)
+
+// This attribute has no clusters allocated to it.
+#define STREAM_LAYOUT_ENTRY_NO_CLUSTERS_ALLOCATED                       (0x00000008)
+
+struct STREAM_LAYOUT_ENTRY
+{
+	// Version of this struct. Current version is 1.
+	DWORD         Version;
+
+	// Offset to the next stream entry (bytes).
+	DWORD         NextStreamOffset;
+
+	// FSCTL-specific flags.
+	DWORD         Flags;
+
+	// Offset to the extent information buffer for this stream, or zero if none exists.
+	// This is relative to the start of this stream record.
+	DWORD         ExtentInformationOffset;
+
+	// Total allocated size of this stream, in bytes.
+	LARGE_INTEGER AllocationSize;
+
+	// End of file location as a byte offset.
+	LARGE_INTEGER EndOfFile;
+
+	// For alignment purposes. Can be used for future expansion.
+	DWORDLONG     Reserved;
+
+	// Stream attribute flags.
+	DWORD         AttributeFlags;
+
+	// Length of the stream identifier, in bytes.
+	DWORD         StreamIdentifierLength;
+
+	// Starting point for the stream identifier buffer.
+	WCHAR         StreamIdentifier[1];
+
+	STREAM_LAYOUT_ENTRY *NextStream() { return this->NextStreamOffset ? reinterpret_cast<STREAM_LAYOUT_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->NextStreamOffset) : NULL; }
+	STREAM_LAYOUT_ENTRY const *NextStream() const { return this->NextStreamOffset ? reinterpret_cast<STREAM_LAYOUT_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->NextStreamOffset) : NULL; }
+	struct STREAM_EXTENT_ENTRY *ExtentInformation() { return this->ExtentInformationOffset ? reinterpret_cast<STREAM_EXTENT_ENTRY *>(reinterpret_cast<unsigned char *>(this) + this->NextStreamOffset) : NULL; }
+	struct STREAM_EXTENT_ENTRY const *ExtentInformation() const { return this->ExtentInformationOffset ? reinterpret_cast<STREAM_EXTENT_ENTRY const *>(reinterpret_cast<unsigned char const *>(this) + this->NextStreamOffset) : NULL; }
+};
+
+// Flag noting that the extent information may be interpreted as a RETRIEVAL_POINTERS_BUFFER structure
+#define STREAM_EXTENT_ENTRY_AS_RETRIEVAL_POINTERS                       (0x00000001)
+
+// Flag noting that all of the stream's extents are returned in this structure, even if only some of them fall within the caller's specified interest region(s).
+#define STREAM_EXTENT_ENTRY_ALL_EXTENTS                                 (0x00000002)
+
+struct STREAM_EXTENT_ENTRY
+{
+	// Extent-level flags for this entry.
+	DWORD        Flags;
+
+	union
+	{
+		// All that's defined for now is a retrieval pointers buffer, since this is what NTFS will use.
+		RETRIEVAL_POINTERS_BUFFER        RetrievalPointers;
+	} ExtentInformation;
 };
 #endif

@@ -2,7 +2,7 @@
 <VSPerformanceSession Version="1.00">
   <Options>
     <Solution>SwiftSearch.sln</Solution>
-    <CollectionMethod>Concurrency</CollectionMethod>
+    <CollectionMethod>Instrumentation</CollectionMethod>
     <AllocationMethod>None</AllocationMethod>
     <AddReport>true</AddReport>
     <ResourceBasedAnalysisSelected>true</ResourceBasedAnalysisSelected>
@@ -25,7 +25,7 @@
       </PdhCounters>
     </PdhSettings>
   </Options>
-  <ExcludeSmallFuncs>true</ExcludeSmallFuncs>
+  <ExcludeSmallFuncs>false</ExcludeSmallFuncs>
   <InteractionProfilingEnabled>false</InteractionProfilingEnabled>
   <JScriptProfilingEnabled>false</JScriptProfilingEnabled>
   <PreinstrumentEvent>
@@ -48,7 +48,7 @@
   </PostinstrumentEvent>
   <Binaries>
     <ProjBinary>
-      <Path>Release\SwiftSearch.exe</Path>
+      <Path>x64\Release\SwiftSearch.exe</Path>
       <ArgumentTimestamp>01/01/0001 00:00:00</ArgumentTimestamp>
       <Instrument>true</Instrument>
       <Sample>true</Sample>
@@ -66,7 +66,7 @@
       </Arguments>
       <NetAppHost>IIS</NetAppHost>
       <NetBrowser>InternetExplorer</NetBrowser>
-      <ExcludeSmallFuncs>true</ExcludeSmallFuncs>
+      <ExcludeSmallFuncs>false</ExcludeSmallFuncs>
       <JScriptProfilingEnabled>false</JScriptProfilingEnabled>
       <PreinstrumentEvent>
         <InstrEventExclude>false</InstrEventExclude>
