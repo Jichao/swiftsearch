@@ -812,6 +812,10 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 
 	LinkInfos::value_type *nameinfo(size_t const i) { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
 	LinkInfos::value_type const *nameinfo(size_t const i) const { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
+	LinkInfos::value_type *nameinfo(Records::iterator const i) { return this->nameinfo(i->first_name); }
+	LinkInfos::value_type const *nameinfo(Records::const_iterator const i) const { return this->nameinfo(i->first_name); }
+	StreamInfos::value_type *streaminfo(Records::iterator const i) const { assert(~i->first_stream.first.name.offset || (!i->first_stream.first.name.length && !i->first_stream.first.length)); return ~i->first_stream.first.name.offset ? &i->first_stream : NULL; }
+	StreamInfos::value_type const *streaminfo(Records::const_iterator const i) const { assert(~i->first_stream.first.name.offset || (!i->first_stream.first.name.length && !i->first_stream.first.length)); return ~i->first_stream.first.name.offset ? &i->first_stream : NULL; }
 public:
 	typedef key_type_internal key_type;
 	typedef StandardInfo standard_info;
@@ -1000,11 +1004,11 @@ public:
 								info.length = static_cast<unsigned long long>(fn->EndOfFile.QuadPart);
 								info.allocated = is_nonresident ? static_cast<unsigned long long>(fn->AllocationSize.QuadPart) : 0;
 								info.bulkiness = info.allocated;
-								if (~base_record->first_stream.first.name.offset)
+								if (StreamInfos::value_type *const si = this->streaminfo(base_record))
 								{
 									size_t const stream_index = this->streaminfos.size();
-									this->streaminfos.push_back(base_record->first_stream);
-									base_record->first_stream.second = static_cast<small_t<size_t>::type>(stream_index);
+									this->streaminfos.push_back(*si);
+									si->second = static_cast<small_t<size_t>::type>(stream_index);
 								}
 								base_record->first_stream.first = info;
 								this->_total_items += base_record->name_count;
@@ -1103,11 +1107,11 @@ public:
 									info.length = ah->IsNonResident ? static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... */ : ah->NonResident.DataSize) : ah->Resident.ValueLength;
 									info.allocated = ah->IsNonResident ? ah->NonResident.CompressionUnit ? static_cast<unsigned long long>(ah->NonResident.CompressedSize) : static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ? ah->NonResident.InitializedSize /* actually this is still wrong... should be looking at VCNs */ : ah->NonResident.AllocatedSize) : 0;
 									info.bulkiness = info.allocated;
-									if (~base_record->first_stream.first.name.offset)
+									if (StreamInfos::value_type *const si = this->streaminfo(base_record))
 									{
 										size_t const stream_index = this->streaminfos.size();
-										this->streaminfos.push_back(base_record->first_stream);
-										base_record->first_stream.second = static_cast<small_t<size_t>::type>(stream_index);
+										this->streaminfos.push_back(*si);
+										si->second = static_cast<small_t<size_t>::type>(stream_index);
 									}
 									base_record->first_stream.first = info;
 									this->_total_items += base_record->name_count;
@@ -1137,15 +1141,17 @@ public:
 		bool leaf = true;
 		while (~key.first.first)
 		{
+			Records::const_iterator const fr = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[key.first.first]);
 			bool found = false;
 			unsigned short ji = 0;
-			for (LinkInfos::value_type const *j = this->nameinfo(this->records_data[this->records_lookup[key.first.first]].first_name); !found && j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			for (LinkInfos::value_type const *j = this->nameinfo(fr); !found && j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
 				if (key.first.second == (std::numeric_limits<unsigned short>::max)() || ji == key.first.second)
 				{
 					unsigned short ki = 0;
-					for (StreamInfos::value_type const *k = &this->records_data[this->records_lookup[key.first.first]].first_stream; !found && k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+					for (StreamInfos::value_type const *k = this->streaminfo(fr); !found && k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
 					{
+						if (k->first.name.offset >= this->names.size()) { throw std::logic_error("invalid entry"); }
 						if (key.second.first == (std::numeric_limits<unsigned short>::max)() ? !k->first.type_name_id : ki == key.second.first)
 						{
 							found = true;
@@ -1215,7 +1221,7 @@ public:
 			Records::const_iterator const i = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[frs]);
 			unsigned short const jn = i->name_count;
 			unsigned short ji = 0;
-			for (LinkInfos::value_type *j = this->nameinfo(i->first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			for (LinkInfos::value_type const *j = this->nameinfo(i); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
 				std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> const
 					subresult = this->preprocess(key_type::first_type(frs, ji), jn, scratch);
@@ -1239,9 +1245,10 @@ public:
 			unsigned short ii = 0;
 			for (ChildInfos::value_type *i = &fr->first_child; i && ~i->first.first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
 			{
-				unsigned short const jn = this->records_data[this->records_lookup[i->first.first]].name_count;
+				Records::const_iterator const fr2 = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[i->first.first]);
+				unsigned short const jn = fr2->name_count;
 				unsigned short ji = 0;
-				for (LinkInfos::value_type *j = this->nameinfo(this->records_data[this->records_lookup[i->first.first]].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+				for (LinkInfos::value_type const *j = this->nameinfo(fr2); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 				{
 					if (j->first.parent == key_first.first && i->first.second == jn - static_cast<size_t>(1) - ji &&
 						(static_cast<unsigned int>(i->first.first) != key_first.first || ji != key_first.second))
@@ -1264,7 +1271,7 @@ public:
 			}
 			result = children_size;
 			unsigned short ki = 0;
-			for (StreamInfos::value_type *k = &fr->first_stream; k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+			for (StreamInfos::value_type *k = this->streaminfo(fr); k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
 			{
 				result.first.first += k->first.length * (key_first.second + 1) / total_names - k->first.length * key_first.second / total_names;
 				result.first.second += k->first.allocated * (key_first.second + 1) / total_names - k->first.allocated * key_first.second / total_names;
@@ -1303,7 +1310,7 @@ private:
 		{
 			Records::const_iterator const i = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[frs]);
 			unsigned short ji = 0;
-			for (LinkInfos::value_type const *j = this->nameinfo(i->first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+			for (LinkInfos::value_type const *j = this->nameinfo(i); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 			{
 				this->matches<F>(func, path, 0, key_type::first_type(frs, ji), &this->names[j->first.name.offset], j->first.name.length);
 				++ji;
@@ -1322,9 +1329,10 @@ private:
 			unsigned short ii = 0;
 			for (ChildInfos::value_type const *i = &fr->first_child; i && ~i->first.first; i = ~i->second ? &this->childinfos[i->second] : NULL, ++ii)
 			{
-				unsigned short const jn = this->records_data[this->records_lookup[i->first.first]].name_count;
+				Records::const_iterator const fr2 = this->records_data.begin() + static_cast<ptrdiff_t>(this->records_lookup[i->first.first]);
+				unsigned short const jn = fr2->name_count;
 				unsigned short ji = 0;
-				for (LinkInfos::value_type const *j = this->nameinfo(this->records_data[this->records_lookup[i->first.first]].first_name); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
+				for (LinkInfos::value_type const *j = this->nameinfo(fr2); j; j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji)
 				{
 					if (j->first.parent == key_first.first && i->first.second == jn - static_cast<size_t>(1) - ji)
 					{
@@ -1340,8 +1348,9 @@ private:
 				}
 			}
 			unsigned short ki = 0;
-			for (StreamInfos::value_type const *k = &fr->first_stream; k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
+			for (StreamInfos::value_type const *k = this->streaminfo(fr); k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
 			{
+				if (k->first.name.offset > this->names.size()) { throw std::logic_error("invalid entry"); }
 				size_t const old_size = path.size();
 				append(path, stream_prefix, stream_prefix_size);
 				if (fr->stdinfo.attributes & FILE_ATTRIBUTE_DIRECTORY && key_first.first != 0x00000005)
@@ -1361,7 +1370,7 @@ private:
 				}
 				func(
 					std::pair<std::tstring::const_iterator, std::tstring::const_iterator>(path.begin(), path.end()),
-					key_type(key_first, key_type::second_type(ki, k == &fr->first_stream ? ~static_cast<key_type::second_type::second_type>(islot) : static_cast<key_type::second_type::second_type>(k - &*this->streaminfos.begin()))),
+					key_type(key_first, key_type::second_type(ki, k == this->streaminfo(fr) ? ~static_cast<key_type::second_type::second_type>(islot) : static_cast<key_type::second_type::second_type>(k - &*this->streaminfos.begin()))),
 					depth);
 				path.erase(old_size);
 			}
@@ -2697,10 +2706,6 @@ public:
 #endif
 						](std::pair<It, It> const path, NtfsIndex::key_type const key, size_t const depth)
 						{
-							if (current_progress_numerator > current_progress_denominator)
-							{
-								throw std::logic_error("current_progress_numerator > current_progress_denominator");
-							}
 							if (dlg.ShouldUpdate() || current_progress_denominator - current_progress_numerator <= 1)
 							{
 								if (dlg.HasUserCancelled()) { throw CStructured_Exception(ERROR_CANCELLED, NULL); }
@@ -2726,6 +2731,10 @@ public:
 								dlg.Flush();
 							}
 							++current_progress_numerator;
+							if (current_progress_numerator > current_progress_denominator)
+							{
+								throw std::logic_error("current_progress_numerator > current_progress_denominator");
+							}
 							std::pair<It, It> needle = path;
 							if (!is_path_pattern)
 							{
