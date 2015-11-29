@@ -810,12 +810,12 @@ class NtfsIndex : public RefCounted<NtfsIndex>
 		return this->records_data.begin() + static_cast<ptrdiff_t>(*k);
 	}
 
-	LinkInfos::value_type *nameinfo(size_t const i) { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
-	LinkInfos::value_type const *nameinfo(size_t const i) const { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
-	LinkInfos::value_type *nameinfo(Records::iterator const i) { return this->nameinfo(i->first_name); }
-	LinkInfos::value_type const *nameinfo(Records::const_iterator const i) const { return this->nameinfo(i->first_name); }
-	StreamInfos::value_type *streaminfo(Records::iterator const i) const { assert(~i->first_stream.first.name.offset || (!i->first_stream.first.name.length && !i->first_stream.first.length)); return ~i->first_stream.first.name.offset ? &i->first_stream : NULL; }
-	StreamInfos::value_type const *streaminfo(Records::const_iterator const i) const { assert(~i->first_stream.first.name.offset || (!i->first_stream.first.name.length && !i->first_stream.first.length)); return ~i->first_stream.first.name.offset ? &i->first_stream : NULL; }
+	FORCEINLINE LinkInfos::value_type *nameinfo(size_t const i) { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
+	FORCEINLINE LinkInfos::value_type const *nameinfo(size_t const i) const { return i < this->nameinfos.size() ? &this->nameinfos[i] : NULL; }
+	FORCEINLINE LinkInfos::value_type *nameinfo(Records::iterator const i) { return this->nameinfo(i->first_name); }
+	FORCEINLINE LinkInfos::value_type const *nameinfo(Records::const_iterator const i) const { return this->nameinfo(i->first_name); }
+	FORCEINLINE StreamInfos::value_type *streaminfo(Records::iterator const i) const { assert(~i->first_stream.first.name.offset || (!i->first_stream.first.name.length && !i->first_stream.first.length)); return ~i->first_stream.first.name.offset ? &i->first_stream : NULL; }
+	FORCEINLINE StreamInfos::value_type const *streaminfo(Records::const_iterator const i) const { assert(~i->first_stream.first.name.offset || (!i->first_stream.first.name.length && !i->first_stream.first.length)); return ~i->first_stream.first.name.offset ? &i->first_stream : NULL; }
 public:
 	typedef key_type_internal key_type;
 	typedef StandardInfo standard_info;
@@ -1151,7 +1151,7 @@ public:
 					unsigned short ki = 0;
 					for (StreamInfos::value_type const *k = this->streaminfo(fr); !found && k; k = ~k->second ? &this->streaminfos[k->second] : NULL, ++ki)
 					{
-						if (k->first.name.offset >= this->names.size()) { throw std::logic_error("invalid entry"); }
+						if (k->first.name.offset + k->first.name.length > this->names.size()) { throw std::logic_error("invalid entry"); }
 						if (key.second.first == (std::numeric_limits<unsigned short>::max)() ? !k->first.type_name_id : ki == key.second.first)
 						{
 							found = true;
@@ -2975,7 +2975,7 @@ public:
 			MENUITEMINFO mii2 = { sizeof(mii2), MIIM_ID | MIIM_STRING | MIIM_STATE, MFT_STRING, MFS_ENABLED, openContainingFolderId, NULL, NULL, NULL, NULL, _T("Open &Containing Folder") };
 			menu.InsertMenuItem(ninserted++, TRUE, &mii2);
 
-			menu.SetMenuDefaultItem(openContainingFolderId, FALSE);
+			if (false) { menu.SetMenuDefaultItem(openContainingFolderId, FALSE); }
 		}
 		if (0 <= focused && static_cast<size_t>(focused) < this->results.size())
 		{
@@ -3033,7 +3033,8 @@ public:
 		std::auto_ptr<std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> > > p(
 			new std::pair<std::pair<CShellItemIDList, ATL::CComPtr<IShellFolder> >, std::vector<CShellItemIDList> >());
 		SFGAOF sfgao = 0;
-		HRESULT hr = SHParseDisplayName(std::tstring(path.begin(), dirname(path.begin(), path.end())).c_str(), NULL, &p->first.first, 0, &sfgao);
+		std::tstring const path_directory(path.begin(), dirname(path.begin(), path.end()));
+		HRESULT hr = SHParseDisplayName(path_directory.c_str(), NULL, &p->first.first, 0, &sfgao);
 		if (hr == S_OK)
 		{
 			ATL::CComPtr<IShellFolder> desktop;
@@ -3055,26 +3056,18 @@ public:
 			p->second.resize(1);
 			hr = SHParseDisplayName((path.c_str(), path.empty() ? NULL : &path[0]), NULL, &p->second.back().m_pidl, sfgao, &sfgao);
 		}
-		if (hr == S_OK)
-		{
-			if (QueueUserWorkItem(&SHOpenFolderAndSelectItemsThread, p.get(), WT_EXECUTEINUITHREAD))
-			{
-				p.release();
-			}
-		}
-		else { this->MessageBox(GetAnyErrorText(hr), _T("Error"), MB_ICONERROR); }
+		SHELLEXECUTEINFO shei = { sizeof(shei), SEE_MASK_INVOKEIDLIST | SEE_MASK_UNICODE, *this, NULL, NULL, NULL, path_directory.c_str(), SW_SHOWDEFAULT, 0, p->second.back().m_pidl };
+		ShellExecuteEx(&shei);
 	}
 
 	LRESULT OnFilesDoubleClick(LPNMHDR pnmh)
 	{
-		int index;
 		// Wow64Disable wow64Disabled;
 		WTL::CWaitCursor wait;
 		LPNMITEMACTIVATE pnmItem = (LPNMITEMACTIVATE) pnmh;
-		index = this->lvFiles.HitTest(pnmItem->ptAction, 0);
-		if (index >= 0)
+		if (this->lvFiles.GetSelectedCount() == 1)
 		{
-			this->DoubleClick(index);
+			this->DoubleClick(this->lvFiles.GetNextItem(-1, LVNI_SELECTED));
 		}
 		return 0;
 	}
