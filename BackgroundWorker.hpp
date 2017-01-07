@@ -225,9 +225,5 @@ public:
 		}
 	}
 };
-BackgroundWorker *BackgroundWorker::create(bool coInitialize)
-{
-	return new BackgroundWorkerImpl(coInitialize);
-}
 
 #endif

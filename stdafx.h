@@ -32,13 +32,43 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <time.h>
+#include <wchar.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <algorithm>
-#include <deque>
+#include <map>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
 namespace WTL { using std::min; using std::max; }
+
+#include <boost/atomic/atomic.hpp>
+#include <boost/range/iterator_range.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/smart_ptr/shared_ptr.hpp>
+#pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
+#ifndef _DEBUG
+#define clear() resize(0)
+#include <boost/exception/info.hpp>
+#undef clear
+#include <boost/xpressive/detail/dynamic/matchable.hpp>
+#define clear() resize(0)
+#define push_back(x) operator +=(x)
+#include <boost/xpressive/detail/dynamic/parser_traits.hpp>
+#undef  push_back
+#undef clear
+#include <boost/xpressive/match_results.hpp>
+#include <boost/xpressive/xpressive_dynamic.hpp>
+
+#endif
+
+#ifdef BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
+#define BOOST_XPRESSIVE_DYNAMIC_HPP_EAN BOOST_XPRESSIVE_DYNAMIC_HPP_EAN_10_04_2005
+#endif
 
 #ifndef _CPPLIB_VER
 #define __movsb __movsb_
@@ -53,14 +83,16 @@ namespace WTL { using std::min; using std::max; }
 #undef __movsd
 #undef __movsb
 #endif
-
+#include <Dbt.h>
+#include <ProvExce.h>
+#include <ShlObj.h>
 #include <atlbase.h>
 #include <atlapp.h>
 #include <atlcrack.h>
 #include <atlmisc.h>
 extern WTL::CAppModule _Module;
 #include <atlwin.h>
-// #include <atlframe.h>
+#include <atlframe.h>
 #include <atlctrls.h>
 #include <atlctrlx.h>
 #include <atltheme.h>

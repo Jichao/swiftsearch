@@ -119,6 +119,7 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalIncludeDirectories>D:\usr\lib\WTL90_4140_Final\Include;D:\usr\lib\boost_1_57_0</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -251,13 +252,34 @@ Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource H
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="basetypes.h" />
+    <ClInclude Include="fstypes.h" />
+    <ClInclude Include="globals.h" />
+    <ClInclude Include="maindlg.h" />
+    <ClInclude Include="maintypes.h" />
     <ClInclude Include="nformat.hpp" />
+    <ClInclude Include="ntfsindex.h" />
+    <ClInclude Include="overlap.h" />
+    <ClInclude Include="ProgressDialog.h" />
     <ClInclude Include="QueryFileLayout.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="searchpattern.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="nttypes.h" />
+    <ClInclude Include="utils.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="backgroundworker.cpp" />
+    <ClCompile Include="basetypes.cpp" />
+    <ClCompile Include="globals.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="maindlg.cpp" />
+    <ClCompile Include="nformat.cpp" />
+    <ClCompile Include="ntfsindex.cpp" />
+    <ClCompile Include="nttypes.cpp" />
+    <ClCompile Include="overlap.cpp" />
+    <ClCompile Include="ProgressDialog.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -266,13 +288,10 @@ Echo Embedding 64-bit version...&amp;&amp; Path %PATH%;%ProgramFiles%\Resource H
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release (Windows 2003 DDK)|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="SwiftSearch.cpp" />
+    <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SwiftSearch.rc" />
-  </ItemGroup>
-  <ItemGroup>
-    <Manifest Include="..\..\..\Programs\XP VisualStyles.xml.manifest" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="Search Drive.ico" />
