@@ -290,12 +290,12 @@ public:
 	Overlapped() : OVERLAPPED() { }
 	virtual int /* > 0 if re-queue requested, = 0 if no re-queue but no destruction, < 0 if destruction requested */
 		operator()(size_t const size, uintptr_t const /*key*/) = 0;
-	long long offset() const
+	int64_t offset() const
 	{
-		return (static_cast<long long>(this->OVERLAPPED::OffsetHigh) << (CHAR_BIT * sizeof(
+		return (static_cast<int64_t>(this->OVERLAPPED::OffsetHigh) << (CHAR_BIT * sizeof(
 			this->OVERLAPPED::Offset))) | this->OVERLAPPED::Offset;
 	}
-	void offset(long long const value)
+	void offset(int64_t const value)
 	{
 		this->OVERLAPPED::Offset = static_cast<unsigned long>(value);
 		this->OVERLAPPED::OffsetHigh = static_cast<unsigned long>(value >> (CHAR_BIT * sizeof(

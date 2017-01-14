@@ -13,7 +13,7 @@
 
 class OverlappedNtfsMftReadPayload::Operation : public Overlapped {
     boost::intrusive_ptr<OverlappedNtfsMftReadPayload volatile> q;
-    unsigned long long _voffset;
+    uint64_t _voffset;
     bool _is_file_layout;
     static void *operator new(size_t n)
     {
@@ -34,11 +34,11 @@ public:
     }
     explicit Operation(boost::intrusive_ptr<OverlappedNtfsMftReadPayload volatile> const &q) :
         Overlapped(), q(q), _voffset(), _is_file_layout() { }
-    unsigned long long voffset()
+    uint64_t voffset()
     {
         return this->_voffset;
     }
-    void voffset(unsigned long long const value)
+    void voffset(uint64_t const value)
     {
         this->_voffset = value;
     }
@@ -71,7 +71,7 @@ bool OverlappedNtfsMftReadPayload::queue_next() volatile
         unsigned int const cb = static_cast<unsigned int>(me->ret_ptrs[j].first.second *
                                 me->cluster_size);
         boost::intrusive_ptr<Operation> p(new(cb) Operation(this));
-        p->offset(me->ret_ptrs[j].second * static_cast<long long>(me->cluster_size));
+        p->offset(me->ret_ptrs[j].second * static_cast<int64_t>(me->cluster_size));
         p->voffset(me->ret_ptrs[j].first.first * me->cluster_size);
         QUERY_FILE_LAYOUT_INPUT input = { 1, QUERY_FILE_LAYOUT_INCLUDE_EXTENTS | QUERY_FILE_LAYOUT_INCLUDE_EXTRA_INFO | QUERY_FILE_LAYOUT_INCLUDE_NAMES | QUERY_FILE_LAYOUT_INCLUDE_STREAMS | QUERY_FILE_LAYOUT_RESTART | QUERY_FILE_LAYOUT_INCLUDE_STREAMS_WITH_NO_CLUSTERS_ALLOCATED, QUERY_FILE_LAYOUT_FILTER_TYPE_FILEID };
         input.Filter.FileReferenceRanges->StartingFileReferenceNumber =
@@ -126,17 +126,17 @@ int OverlappedNtfsMftReadPayload::operator()(size_t const /*size*/, uintptr_t co
                            p->mft_record_size);
         CheckAndThrow(!!CreateIoCompletionPort(volume, this->iocp,
                                                reinterpret_cast<uintptr_t>(&*p), 0));
-        long long llsize = 0;
-        typedef std::vector<std::pair<unsigned long long, long long> > RP;
+        int64_t llsize = 0;
+        typedef std::vector<std::pair<uint64_t, int64_t> > RP;
         RP const ret_ptrs = get_mft_retrieval_pointers(volume, _T("$MFT::$DATA"), &llsize,
                             info.MftStartLcn.QuadPart, p->mft_record_size);
         this->cluster_size = static_cast<unsigned int>(info.BytesPerCluster);
-        unsigned long long prev_vcn = 0;
+        uint64_t prev_vcn = 0;
         for (RP::const_iterator i = ret_ptrs.begin(); i != ret_ptrs.end(); ++i) {
-            long long const clusters_left = static_cast<long long>(std::max(i->first,
+            int64_t const clusters_left = static_cast<int64_t>(std::max(i->first,
                                             prev_vcn) - prev_vcn);
-            unsigned long long n;
-            for (long long m = 0; m < clusters_left; m += static_cast<long long>(n)) {
+            uint64_t n;
+            for (int64_t m = 0; m < clusters_left; m += static_cast<int64_t>(n)) {
                 n = std::min(i->first - prev_vcn, 1 + ((2ULL << 20) - 1) / this->cluster_size);
                 this->ret_ptrs.push_back(RetPtrs::value_type(RetPtrs::value_type::first_type(prev_vcn, n),
                                          i->second + m));

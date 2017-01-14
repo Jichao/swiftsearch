@@ -17,13 +17,13 @@ namespace ntfs {
 		unsigned long HiddenSectors;
 		unsigned long Unused2;
 		unsigned long Unused3;
-		long long TotalSectors;
-		long long MftStartLcn;
-		long long Mft2StartLcn;
+		int64_t TotalSectors;
+		int64_t MftStartLcn;
+		int64_t Mft2StartLcn;
 		signed char ClustersPerFileRecordSegment;
 		unsigned char Padding3[3];
 		unsigned long ClustersPerIndexBlock;
-		long long VolumeSerialNumber;
+		int64_t VolumeSerialNumber;
 		unsigned long Checksum;
 
 		unsigned char BootStrap[0x200 - 0x54];
@@ -109,15 +109,15 @@ namespace ntfs {
 				}
 			} Resident;
 			struct NONRESIDENT {
-				unsigned long long LowestVCN;
-				unsigned long long HighestVCN;
+				uint64_t LowestVCN;
+				uint64_t HighestVCN;
 				unsigned short MappingPairsOffset;
 				unsigned char CompressionUnit;
 				unsigned char Reserved[5];
-				long long AllocatedSize;
-				long long DataSize;
-				long long InitializedSize;
-				long long CompressedSize;
+				int64_t AllocatedSize;
+				int64_t DataSize;
+				int64_t InitializedSize;
+				int64_t CompressedSize;
 			} NonResident;
 		};
 		ATTRIBUTE_RECORD_HEADER *next()
@@ -147,14 +147,14 @@ namespace ntfs {
 	};
 	struct FILE_RECORD_SEGMENT_HEADER {
 		MULTI_SECTOR_HEADER MultiSectorHeader;
-		unsigned long long LogFileSequenceNumber;
+		uint64_t LogFileSequenceNumber;
 		unsigned short SequenceNumber;
 		unsigned short LinkCount;
 		unsigned short FirstAttributeOffset;
 		unsigned short Flags /* FILE_RECORD_HEADER_FLAGS */;
 		unsigned long BytesInUse;
 		unsigned long BytesAllocated;
-		unsigned long long BaseFileRecordSegment;
+		uint64_t BaseFileRecordSegment;
 		unsigned short NextAttributeNumber;
 		//http://blogs.technet.com/b/joscon/archive/2011/01/06/how-hard-links-work.aspx
 		unsigned short
@@ -182,13 +182,13 @@ namespace ntfs {
 		}
 	};
 	struct FILENAME_INFORMATION {
-		unsigned long long ParentDirectory;
-		long long CreationTime;
-		long long LastModificationTime;
-		long long LastChangeTime;
-		long long LastAccessTime;
-		long long AllocatedLength;
-		long long FileSize;
+		uint64_t ParentDirectory;
+		int64_t CreationTime;
+		int64_t LastModificationTime;
+		int64_t LastChangeTime;
+		int64_t LastAccessTime;
+		int64_t AllocatedLength;
+		int64_t FileSize;
 		unsigned long FileAttributes;
 		unsigned short PackedEaSize;
 		unsigned short Reserved;
@@ -197,10 +197,10 @@ namespace ntfs {
 		WCHAR FileName[1];
 	};
 	struct STANDARD_INFORMATION {
-		long long CreationTime;
-		long long LastModificationTime;
-		long long LastChangeTime;
-		long long LastAccessTime;
+		int64_t CreationTime;
+		int64_t LastModificationTime;
+		int64_t LastChangeTime;
+		int64_t LastAccessTime;
 		unsigned long FileAttributes;
 		// There's more, but only in newer versions
 	};
@@ -223,8 +223,8 @@ namespace ntfs {
 		unsigned short Length;
 		unsigned char NameLength;
 		unsigned char NameOffset;
-		unsigned long long StartVcn; // LowVcn
-		unsigned long long FileReferenceNumber;
+		uint64_t StartVcn; // LowVcn
+		uint64_t FileReferenceNumber;
 		unsigned short AttributeNumber;
 		unsigned short AlignmentOrReserved[3];
 	};

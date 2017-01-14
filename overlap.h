@@ -1,7 +1,7 @@
 #pragma once
 
 class OverlappedNtfsMftReadPayload : public Overlapped {
-    typedef std::vector<std::pair<std::pair<unsigned long long, unsigned long long>, long long> >
+    typedef std::vector<std::pair<std::pair<uint64_t, uint64_t>, int64_t> >
     RetPtrs;
     std::tstring path_name;
     Handle iocp;

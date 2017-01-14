@@ -85,11 +85,11 @@ std::basic_string<TCHAR> nformat64(V v, std::locale const &loc, bool is_numpunct
 }
 
 template<>
-std::basic_string<TCHAR> nformat<         long long>(         long long v, std::locale const &loc, bool is_numpunct_locale)
+std::basic_string<TCHAR> nformat<         int64_t>(         int64_t v, std::locale const &loc, bool is_numpunct_locale)
 { return nformat64(v, loc, is_numpunct_locale); }
 
 template<>
-std::basic_string<TCHAR> nformat<unsigned long long>(unsigned long long v, std::locale const &loc, bool is_numpunct_locale)
+std::basic_string<TCHAR> nformat<uint64_t>(uint64_t v, std::locale const &loc, bool is_numpunct_locale)
 { return nformat64(v, loc, is_numpunct_locale); }
 #endif
 

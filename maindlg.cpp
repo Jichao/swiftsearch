@@ -299,8 +299,8 @@ void CMainDlg::Search()
 				std::tstring const text = ss.str();
 				dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(),
 					text.data() + text.size()));
-				dlg.SetProgress(static_cast<long long>(temp_overall_progress_numerator),
-					static_cast<long long>(overall_progress_denominator));
+				dlg.SetProgress(static_cast<int64_t>(temp_overall_progress_numerator),
+					static_cast<int64_t>(overall_progress_denominator));
 				dlg.Flush();
 			}
 		}
@@ -352,10 +352,10 @@ void CMainDlg::Search()
 								path.first == path.second ? NULL : &*path.first)));
 							dlg.SetProgressText(boost::iterator_range<TCHAR const *>(text.data(),
 								text.data() + text.size()));
-							dlg.SetProgress(temp_overall_progress_numerator + static_cast<unsigned long long>
-								(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) /
-								static_cast<unsigned long long>(current_progress_denominator),
-								static_cast<long long>(overall_progress_denominator));
+							dlg.SetProgress(temp_overall_progress_numerator + static_cast<uint64_t>
+								(i->total_records) * static_cast<uint64_t>(current_progress_numerator) /
+								static_cast<uint64_t>(current_progress_denominator),
+								static_cast<int64_t>(overall_progress_denominator));
 							dlg.Flush();
 						}
 						++current_progress_numerator;
@@ -403,9 +403,9 @@ void CMainDlg::Search()
 					overall_progress_numerator += i->total_records;
 				}
 				if (current_progress_denominator) {
-					overall_progress_numerator += static_cast<size_t>(static_cast<unsigned long long>
-						(i->total_records) * static_cast<unsigned long long>(current_progress_numerator) /
-						static_cast<unsigned long long>(current_progress_denominator));
+					overall_progress_numerator += static_cast<size_t>(static_cast<uint64_t>
+						(i->total_records) * static_cast<uint64_t>(current_progress_numerator) /
+						static_cast<uint64_t>(current_progress_denominator));
 				}
 				while (!results_at_depths.empty()) {
 					Results &r = results_at_depths.back();

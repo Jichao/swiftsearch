@@ -11,11 +11,11 @@ class NtfsIndex : public RefCounted<NtfsIndex> {
 #pragma pack(push)
 #pragma pack(2)
     struct StandardInfo {
-        long long created, written, accessed;
+        int64_t created, written, accessed;
         unsigned long attributes;
     };
     struct SizeInfo {
-        unsigned long long length, allocated, bulkiness;
+        uint64_t length, allocated, bulkiness;
     };
     friend struct std::is_scalar<StandardInfo>;
     struct NameInfo {
@@ -65,7 +65,7 @@ class NtfsIndex : public RefCounted<NtfsIndex> {
     size_t _total_items;
     boost::atomic<bool> _cancelled;
     boost::atomic<unsigned int> _records_so_far;
-    typedef std::pair<std::pair<unsigned int, unsigned short>, std::pair<unsigned short, unsigned long long /* direct address */> >
+    typedef std::pair<std::pair<unsigned int, unsigned short>, std::pair<unsigned short, uint64_t /* direct address */> >
     key_type_internal;
 
     Records::iterator at(size_t const frs,
@@ -260,7 +260,7 @@ public:
                 arr[i] = arr[i];
             }
             typedef std::tstring::const_iterator It;
-            std::vector<unsigned long long> scratch;
+            std::vector<uint64_t> scratch;
             this->preprocess(0x000000000005, scratch);
             Handle().swap(this->_volume);
             _ftprintf(stderr, _T("Finished: %s (%u ms)\n"), this->_root_path.c_str(),
@@ -279,7 +279,7 @@ public:
             this->records_lookup.resize(records, ~RecordsLookup::value_type());
         }
     }
-    void load(unsigned long long const virtual_offset, void *const buffer, size_t const size,
+    void load(uint64_t const virtual_offset, void *const buffer, size_t const size,
               bool const is_file_layout) volatile
     {
         this_type *const me = this->unvolatile();
@@ -287,7 +287,7 @@ public:
         me->load(virtual_offset, buffer, size, is_file_layout);
     }
 
-	void load(unsigned long long const virtual_offset, void *const buffer, size_t const size,
+	void load(uint64_t const virtual_offset, void *const buffer, size_t const size,
 		bool const is_file_layout);
     
     size_t get_path(key_type key, std::tstring &result, bool const name_only) const volatile
@@ -346,7 +346,7 @@ public:
                                                j->first.parent /* ... | 0 | 0 (since we want the first name of all ancestors)*/,
                                                ~key_type::first_type::second_type()),
                                            key_type::second_type(~key_type::second_type::first_type(),
-                                                                 static_cast<key_type::second_type::second_type>(std::numeric_limits<long long>::max())));
+                                                                 static_cast<key_type::second_type::second_type>(std::numeric_limits<int64_t>::max())));
                         }
                     }
                 }
@@ -390,11 +390,11 @@ public:
         return this->records_data[this->records_lookup[frn]].stdinfo;
     }
 
-    std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long>
+    std::pair<std::pair<uint64_t, uint64_t>, uint64_t>
     preprocess(key_type::first_type::first_type const frs,
-               std::vector<unsigned long long> &scratch)
+               std::vector<uint64_t> &scratch)
     {
-        std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> result;
+        std::pair<std::pair<uint64_t, uint64_t>, uint64_t> result;
         if (frs < this->records_lookup.size()) {
             Records::const_iterator const i = this->records_data.begin() + static_cast<ptrdiff_t>
                                               (this->records_lookup[frs]);
@@ -402,7 +402,7 @@ public:
             unsigned short ji = 0;
             for (LinkInfos::value_type const *j = this->nameinfo(i); j;
                     j = ~j->second ? &this->nameinfos[j->second] : NULL, ++ji) {
-                std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> const
+                std::pair<std::pair<uint64_t, uint64_t>, uint64_t> const
                 subresult = this->preprocess(key_type::first_type(frs, ji), jn, scratch);
                 result.first.first += subresult.first.first;
                 result.first.second += subresult.first.second;
@@ -413,16 +413,16 @@ public:
         return result;
     }
 
-    std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long>
+    std::pair<std::pair<uint64_t, uint64_t>, uint64_t>
     preprocess(key_type::first_type const key_first, unsigned short const total_names,
-               std::vector<unsigned long long> &scratch)
+               std::vector<uint64_t> &scratch)
     {
         size_t const old_scratch_size = scratch.size();
-        std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> result;
+        std::pair<std::pair<uint64_t, uint64_t>, uint64_t> result;
         if (key_first.first < this->records_lookup.size()) {
             Records::iterator const fr = this->records_data.begin() + static_cast<ptrdiff_t>
                                          (this->records_lookup[key_first.first]);
-            std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long>
+            std::pair<std::pair<uint64_t, uint64_t>, uint64_t>
             children_size;
             unsigned short ii = 0;
             for (ChildInfos::value_type *i = &fr->first_child; i
@@ -437,7 +437,7 @@ public:
                             && i->first.second == jn - static_cast<size_t>(1) - ji &&
                             (static_cast<unsigned int>(i->first.first) != key_first.first
                              || ji != key_first.second)) {
-                        std::pair<std::pair<unsigned long long, unsigned long long>, unsigned long long> const
+                        std::pair<std::pair<uint64_t, uint64_t>, uint64_t> const
                         subresult = this->preprocess(key_type::first_type(static_cast<unsigned int>
                                                      (i->first.first), ji), jn, scratch);
                         scratch.push_back(subresult.second);
@@ -448,7 +448,7 @@ public:
                 }
             }
             std::sort(scratch.begin() + static_cast<ptrdiff_t>(old_scratch_size), scratch.end());
-            unsigned long long const threshold = children_size.first.second / 100;
+            uint64_t const threshold = children_size.first.second / 100;
             while (scratch.size() > old_scratch_size && scratch.back() >= threshold) {
                 children_size.second -= scratch.back();
                 scratch.pop_back();

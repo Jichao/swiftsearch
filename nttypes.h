@@ -28,7 +28,7 @@ namespace winnt {
 
 	enum IO_PRIORITY_HINT { IoPriorityVeryLow = 0, IoPriorityLow, IoPriorityNormal, IoPriorityHigh, IoPriorityCritical, MaxIoPriorityTypes };
 	struct FILE_FS_SIZE_INFORMATION {
-		long long TotalAllocationUnits, ActualAvailableAllocationUnits;
+		int64_t TotalAllocationUnits, ActualAvailableAllocationUnits;
 		unsigned long SectorsPerAllocationUnit, BytesPerSector;
 	};
 	struct FILE_FS_ATTRIBUTE_INFORMATION {
@@ -39,7 +39,7 @@ namespace winnt {
 	};
 	union FILE_IO_PRIORITY_HINT_INFORMATION {
 		IO_PRIORITY_HINT PriorityHint;
-		unsigned long long _alignment;
+		uint64_t _alignment;
 	};
 
 	template<class T> struct identity {

@@ -205,10 +205,10 @@ public:
         }
     }
 
-    void SetProgress(long long current, long long total)
+    void SetProgress(int64_t current, int64_t total)
     {
         if (total > INT_MAX) {
-            current = static_cast<long long>((static_cast<double>(current) / total) * INT_MAX);
+            current = static_cast<int64_t>((static_cast<double>(current) / total) * INT_MAX);
             total = INT_MAX;
         }
         this->invalidated |= this->lastProgress != current || this->lastProgressTotal != total;

@@ -52,14 +52,14 @@ static void append(std::tstring &str, TCHAR const sz[])
 }
 
 
-void read(void *const file, unsigned long long const offset, void *const buffer,
+void read(void *const file, uint64_t const offset, void *const buffer,
           size_t const size, HANDLE const event_handle = NULL);
 
 unsigned int get_cluster_size(void *const volume);
 
-std::vector<std::pair<unsigned long long, long long> > get_mft_retrieval_pointers(
-	void *const volume, TCHAR const path[], long long *const size,
-	long long const mft_start_lcn, unsigned int const file_record_size);
+std::vector<std::pair<uint64_t, int64_t> > get_mft_retrieval_pointers(
+	void *const volume, TCHAR const path[], int64_t *const size,
+	int64_t const mft_start_lcn, unsigned int const file_record_size);
 
 class iless {
     mutable std::basic_string<TCHAR> s1, s2;

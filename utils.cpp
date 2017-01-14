@@ -113,7 +113,7 @@ unsigned int get_cluster_size(void *const volume)
 	return info.BytesPerSector * info.SectorsPerAllocationUnit;
 }
 
-void read(void *const file, unsigned long long const offset, void *const buffer, size_t const size, HANDLE const event_handle /*= NULL*/)
+void read(void *const file, uint64_t const offset, void *const buffer, size_t const size, HANDLE const event_handle /*= NULL*/)
 {
 	if (!event_handle || event_handle == INVALID_HANDLE_VALUE) {
 		read(file, offset, buffer, size, Handle(CreateEvent(NULL, TRUE, FALSE, NULL)));
@@ -132,19 +132,19 @@ void read(void *const file, unsigned long long const offset, void *const buffer,
 	}
 }
 
-std::vector<std::pair<unsigned long long, long long> > get_mft_retrieval_pointers(
-    void *const volume, TCHAR const path[], long long *const size,
-    long long const mft_start_lcn, unsigned int const file_record_size)
+std::vector<std::pair<uint64_t, int64_t> > get_mft_retrieval_pointers(
+    void *const volume, TCHAR const path[], int64_t *const size,
+    int64_t const mft_start_lcn, unsigned int const file_record_size)
 {
     (void) mft_start_lcn;
     (void) file_record_size;
-    typedef std::vector<std::pair<unsigned long long, long long> > Result;
+    typedef std::vector<std::pair<uint64_t, int64_t> > Result;
     Result result;
     Handle handle;
     {
         Handle root_dir;
         {
-            unsigned long long root_dir_id = 0x0005000000000005;
+            uint64_t root_dir_id = 0x0005000000000005;
             winnt::UNICODE_STRING us = { sizeof(root_dir_id), sizeof(root_dir_id), reinterpret_cast<wchar_t *>(&root_dir_id) };
             winnt::OBJECT_ATTRIBUTES oa = { sizeof(oa), volume, &us };
             winnt::IO_STATUS_BLOCK iosb;

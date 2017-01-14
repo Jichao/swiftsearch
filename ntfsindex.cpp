@@ -2,7 +2,7 @@
 #include "ntfsindex.h"
 #include "QueryFileLayout.h"
 
-void NtfsIndex::load(unsigned long long const virtual_offset, void *const buffer, size_t const size,
+void NtfsIndex::load(uint64_t const virtual_offset, void *const buffer, size_t const size,
 	bool const is_file_layout)
 {
 	if (is_file_layout) {
@@ -62,8 +62,8 @@ void NtfsIndex::load(unsigned long long const virtual_offset, void *const buffer
 									fn->StreamIdentifierLength / sizeof(*fn->StreamIdentifier));
 							}
 							info.type_name_id = static_cast<unsigned char>(isI30 ? ntfs::AttributeIndexRoot : 0);
-							info.length = static_cast<unsigned long long>(fn->EndOfFile.QuadPart);
-							info.allocated = is_nonresident ? static_cast<unsigned long long>
+							info.length = static_cast<uint64_t>(fn->EndOfFile.QuadPart);
+							info.allocated = is_nonresident ? static_cast<uint64_t>
 								(fn->AllocationSize.QuadPart) : 0;
 							info.bulkiness = info.allocated;
 							if (StreamInfos::value_type *const si = this->streaminfo(base_record)) {
@@ -168,13 +168,13 @@ void NtfsIndex::load(unsigned long long const virtual_offset, void *const buffer
 								}
 								info.type_name_id = static_cast<unsigned char>((ah->Type == ntfs::AttributeIndexRoot
 									|| ah->Type == ntfs::AttributeIndexAllocation) && isI30 ? 0 : ah->Type >> (CHAR_BIT / 2));
-								info.length = ah->IsNonResident ? static_cast<unsigned long long>
+								info.length = ah->IsNonResident ? static_cast<uint64_t>
 									(frs_base == 0x000000000008 /* $BadClus */ ?
 									ah->NonResident.InitializedSize /* actually this is still wrong... */ :
 									ah->NonResident.DataSize) : ah->Resident.ValueLength;
 								info.allocated = ah->IsNonResident ? ah->NonResident.CompressionUnit ?
-									static_cast<unsigned long long>(ah->NonResident.CompressedSize) :
-									static_cast<unsigned long long>(frs_base == 0x000000000008 /* $BadClus */ ?
+									static_cast<uint64_t>(ah->NonResident.CompressedSize) :
+									static_cast<uint64_t>(frs_base == 0x000000000008 /* $BadClus */ ?
 									ah->NonResident.InitializedSize /* actually this is still wrong... should be looking at VCNs */ :
 									ah->NonResident.AllocatedSize) : 0;
 								info.bulkiness = info.allocated;
